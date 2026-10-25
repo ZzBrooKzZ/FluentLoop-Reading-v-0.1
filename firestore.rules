@@ -1,0 +1,274 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        request.auth.token.email == 'megritarek19@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidLevel(level) {
+      return level is string && level.size() == 2 && (
+        level == 'A1' || level == 'A2' || level == 'B1' || level == 'B2' || level == 'C1'
+      );
+    }
+
+    // Entity Blueprints
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+        'uid', 'displayName', 'preferredLevel', 'showArabicTranslation',
+        'fontSize', 'completedCount', 'averageAccuracy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
+        'fontSize', 'completedCount', 'averageAccuracy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+      data.uid == request.auth.uid &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+      isValidLevel(data.preferredLevel) &&
+      (!data.keys().hasAny(['startingLevel']) || isValidLevel(data.startingLevel)) &&
+      (!data.keys().hasAny(['placementLevel']) || isValidLevel(data.placementLevel)) &&
+      data.showArabicTranslation is bool &&
+      data.fontSize is string && data.fontSize.size() == 2 && (
+        data.fontSize == 'sm' || data.fontSize == 'md' || data.fontSize == 'lg' || data.fontSize == 'xl'
+      ) &&
+      data.completedCount is int && data.completedCount >= 0 && data.completedCount <= 100000 &&
+      data.averageAccuracy is number && data.averageAccuracy >= 0 && data.averageAccuracy <= 100 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidLesson(data) {
+      return data.keys().hasAll([
+        'id', 'title', 'level', 'topic', 'status', 'estimatedMinutes',
+        'introduction', 'passage', 'illustrationUrl', 'illustrationAlt',
+        'vocabularyJson', 'questionsJson', 'authorId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'title', 'level', 'topic', 'status', 'estimatedMinutes',
+        'introduction', 'passage', 'illustrationUrl', 'illustrationAlt',
+        'vocabularyJson', 'questionsJson', 'authorId', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
+      isValidLevel(data.level) &&
+      data.topic is string && data.topic.size() >= 1 && data.topic.size() <= 120 &&
+      data.status is string && data.status.size() >= 5 && data.status.size() <= 12 && (
+        data.status == 'draft' || data.status == 'published' || data.status == 'archived'
+      ) &&
+      data.estimatedMinutes is int && data.estimatedMinutes >= 1 && data.estimatedMinutes <= 180 &&
+      data.introduction is string && data.introduction.size() >= 1 && data.introduction.size() <= 1500 &&
+      data.passage is string && data.passage.size() >= 1 && data.passage.size() <= 25000 &&
+      data.illustrationUrl is string && data.illustrationUrl.size() >= 1 && data.illustrationUrl.size() <= 2000 &&
+      data.illustrationAlt is string && data.illustrationAlt.size() >= 1 && data.illustrationAlt.size() <= 500 &&
+      data.vocabularyJson is string && data.vocabularyJson.size() >= 2 && data.vocabularyJson.size() <= 150000 &&
+      data.questionsJson is string && data.questionsJson.size() >= 2 && data.questionsJson.size() <= 150000 &&
+      isValidId(data.authorId) && data.authorId == request.auth.uid &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAttempt(data) {
+      return data.keys().hasAll([
+        'id', 'userId', 'lessonId', 'lessonTitle', 'level', 'topic',
+        'status', 'score', 'totalQuestions', 'accuracy',
+        'answersJson', 'questionTypeStatsJson', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'userId', 'lessonId', 'lessonTitle', 'level', 'topic',
+        'status', 'score', 'totalQuestions', 'accuracy',
+        'answersJson', 'questionTypeStatsJson', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.userId) && data.userId == request.auth.uid &&
+      isValidId(data.lessonId) &&
+      data.lessonTitle is string && data.lessonTitle.size() >= 1 && data.lessonTitle.size() <= 300 &&
+      isValidLevel(data.level) &&
+      data.topic is string && data.topic.size() >= 1 && data.topic.size() <= 120 &&
+      data.status is string && data.status.size() >= 9 && data.status.size() <= 12 && (
+        data.status == 'in_progress' || data.status == 'completed'
+      ) &&
+      data.score is int && data.score >= 0 && data.score <= 200 &&
+      data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 200 &&
+      data.accuracy is number && data.accuracy >= 0 && data.accuracy <= 100 &&
+      data.answersJson is string && data.answersJson.size() >= 2 && data.answersJson.size() <= 25000 &&
+      data.questionTypeStatsJson is string && data.questionTypeStatsJson.size() >= 2 && data.questionTypeStatsJson.size() <= 10000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidVocab(data) {
+      return data.keys().hasAll([
+        'id', 'userId', 'lessonId', 'lessonTitle', 'word', 'partOfSpeech',
+        'simpleDefinition', 'contextMeaning', 'originalSentence', 'exampleSentence',
+        'synonyms', 'arabicTranslation', 'masteryLevel', 'nextReviewAt',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'userId', 'lessonId', 'lessonTitle', 'word', 'partOfSpeech',
+        'simpleDefinition', 'contextMeaning', 'originalSentence', 'exampleSentence',
+        'synonyms', 'arabicTranslation', 'masteryLevel', 'nextReviewAt',
+        'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.userId) && data.userId == request.auth.uid &&
+      isValidId(data.lessonId) &&
+      data.lessonTitle is string && data.lessonTitle.size() >= 1 && data.lessonTitle.size() <= 300 &&
+      data.word is string && data.word.size() >= 1 && data.word.size() <= 150 &&
+      data.partOfSpeech is string && data.partOfSpeech.size() >= 1 && data.partOfSpeech.size() <= 60 &&
+      data.simpleDefinition is string && data.simpleDefinition.size() >= 1 && data.simpleDefinition.size() <= 600 &&
+      data.contextMeaning is string && data.contextMeaning.size() >= 1 && data.contextMeaning.size() <= 600 &&
+      data.originalSentence is string && data.originalSentence.size() >= 1 && data.originalSentence.size() <= 1000 &&
+      data.exampleSentence is string && data.exampleSentence.size() >= 1 && data.exampleSentence.size() <= 1000 &&
+      data.synonyms is string && data.synonyms.size() >= 0 && data.synonyms.size() <= 300 &&
+      data.arabicTranslation is string && data.arabicTranslation.size() >= 0 && data.arabicTranslation.size() <= 300 &&
+      data.masteryLevel is int && data.masteryLevel >= 0 && data.masteryLevel <= 5 &&
+      data.nextReviewAt is string && data.nextReviewAt.size() >= 1 && data.nextReviewAt.size() <= 64 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 1. Admins Collection (Read-only for self/admin; managed via console/bootstrap)
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // 2. Users Collection (Strict Owner / Admin Isolation)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if false;
+      allow create: if isVerified() && isValidId(userId) && request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(userId) && isValidUserProfile(incoming()) && (
+        (
+          request.auth.uid == userId &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
+            'fontSize', 'completedCount', 'averageAccuracy', 'updatedAt'
+          ]) &&
+          (!existing().keys().hasAny(['startingLevel']) || incoming().startingLevel == existing().startingLevel)
+        ) || isAdmin()
+      );
+      allow delete: if false;
+    }
+
+    // 3. Lessons Collection (Public read for published lessons; Admin-only write)
+    match /lessons/{lessonId} {
+      allow get: if isValidId(lessonId) && (existing().status == 'published' || isAdmin());
+      allow list: if existing().status == 'published' || (
+        isVerified() && request.auth.token.email == 'megritarek19@gmail.com'
+      );
+      allow create: if isValidId(lessonId) && isValidLesson(incoming()) &&
+        incoming().id == lessonId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isValidId(lessonId) && isValidLesson(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'level', 'topic', 'status', 'estimatedMinutes',
+          'introduction', 'passage', 'illustrationUrl', 'illustrationAlt',
+          'vocabularyJson', 'questionsJson', 'authorId', 'updatedAt'
+        ]);
+      allow delete: if isValidId(lessonId) && isAdmin();
+    }
+
+    // 4. Attempts Collection (Owner-scoped queries and terminal state lock)
+    match /attempts/{attemptId} {
+      allow get: if isSignedIn() && isValidId(attemptId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        (isVerified() && request.auth.token.email == 'megritarek19@gmail.com')
+      );
+      allow create: if isVerified() && isValidId(attemptId) && isValidAttempt(incoming()) &&
+        incoming().id == attemptId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(attemptId) && isValidAttempt(incoming()) && (
+        (
+          existing().userId == request.auth.uid &&
+          existing().status == 'in_progress' &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().lessonId == existing().lessonId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'score', 'totalQuestions', 'accuracy',
+            'answersJson', 'questionTypeStatsJson', 'updatedAt'
+          ])
+        ) || isAdmin()
+      );
+      allow delete: if isVerified() && isValidId(attemptId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // 5. Vocabulary Collection (Owner-scoped personal vocabulary bank)
+    match /vocabulary/{vocabId} {
+      allow get: if isSignedIn() && isValidId(vocabId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        (isVerified() && request.auth.token.email == 'megritarek19@gmail.com')
+      );
+      allow create: if isVerified() && isValidId(vocabId) && isValidVocab(incoming()) &&
+        incoming().id == vocabId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(vocabId) && isValidVocab(incoming()) && (
+        (
+          existing().userId == request.auth.uid &&
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().lessonId == existing().lessonId &&
+          incoming().word == existing().word &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'masteryLevel', 'nextReviewAt', 'updatedAt'
+          ])
+        ) || isAdmin()
+      );
+      allow delete: if isVerified() && isValidId(vocabId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+  }
+}
+

@@ -1,0 +1,6 @@
+{
+  "name": "FluentLoop Reading — Academic & IELTS Reading Platform",
+  "description": "Interactive academic English reading comprehension, contextual English-to-English vocabulary explanations, adaptive CEFR progression, and IELTS Academic Reading preparation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

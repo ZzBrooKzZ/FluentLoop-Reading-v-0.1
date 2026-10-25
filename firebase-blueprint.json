@@ -1,0 +1,471 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Administrator privilege record mapped by UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "User UID of the administrator.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "description": "Admin email address.",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Learner reading preferences and progress summary.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Authenticated user UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the learner.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "preferredLevel": {
+          "type": "string",
+          "description": "Selected CEFR reading level.",
+          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "startingLevel": {
+          "type": "string",
+          "description": "Initial CEFR level when the learner started the course.",
+          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "placementLevel": {
+          "type": "string",
+          "description": "Recommended CEFR level from the 3-passage adaptive placement test.",
+          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "showArabicTranslation": {
+          "type": "boolean",
+          "description": "Optional toggle to display secondary Arabic translations alongside English explanations."
+        },
+        "fontSize": {
+          "type": "string",
+          "description": "Preferred passage typography scale.",
+          "enum": ["sm", "md", "lg", "xl"],
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "completedCount": {
+          "type": "integer",
+          "description": "Total completed reading passages."
+        },
+        "averageAccuracy": {
+          "type": "number",
+          "description": "Average percentage accuracy across completed lessons."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account initialization timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last preference update timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "preferredLevel",
+        "showArabicTranslation",
+        "fontSize",
+        "completedCount",
+        "averageAccuracy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LessonDocument": {
+      "title": "LessonDocument",
+      "description": "Published or draft academic reading lesson managed by administrators.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique stable lesson slug/identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Passage title.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "level": {
+          "type": "string",
+          "description": "CEFR reading level.",
+          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "topic": {
+          "type": "string",
+          "description": "Academic subject category.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "description": "Publication workflow status.",
+          "enum": ["draft", "published", "archived"],
+          "minLength": 5,
+          "maxLength": 12
+        },
+        "estimatedMinutes": {
+          "type": "integer",
+          "description": "Estimated reading and assessment time in minutes."
+        },
+        "introduction": {
+          "type": "string",
+          "description": "Learning objective and brief passage introduction.",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "passage": {
+          "type": "string",
+          "description": "Full reading passage divided by paragraph breaks.",
+          "minLength": 1,
+          "maxLength": 25000
+        },
+        "illustrationUrl": {
+          "type": "string",
+          "description": "Asset URL or path for the 16:9 editorial illustration.",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "illustrationAlt": {
+          "type": "string",
+          "description": "Accessible alt text for the illustration.",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "vocabularyJson": {
+          "type": "string",
+          "description": "Serialized contextual vocabulary annotations array.",
+          "minLength": 2,
+          "maxLength": 150000
+        },
+        "questionsJson": {
+          "type": "string",
+          "description": "Serialized comprehension questions array.",
+          "minLength": 2,
+          "maxLength": 150000
+        },
+        "authorId": {
+          "type": "string",
+          "description": "UID of the administrator who created or updated the lesson.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "level",
+        "topic",
+        "status",
+        "estimatedMinutes",
+        "introduction",
+        "passage",
+        "illustrationUrl",
+        "illustrationAlt",
+        "vocabularyJson",
+        "questionsJson",
+        "authorId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LessonAttempt": {
+      "title": "LessonAttempt",
+      "description": "Learner progress and assessment attempt for a specific reading lesson.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique attempt identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authenticated learner UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lessonId": {
+          "type": "string",
+          "description": "Target lesson identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lessonTitle": {
+          "type": "string",
+          "description": "Snapshot of lesson title.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "level": {
+          "type": "string",
+          "description": "CEFR level of the lesson.",
+          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "topic": {
+          "type": "string",
+          "description": "Academic topic category.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "description": "Attempt state.",
+          "enum": ["in_progress", "completed"],
+          "minLength": 9,
+          "maxLength": 12
+        },
+        "score": {
+          "type": "integer",
+          "description": "Number of correct answers."
+        },
+        "totalQuestions": {
+          "type": "integer",
+          "description": "Total number of questions in the exercise."
+        },
+        "accuracy": {
+          "type": "number",
+          "description": "Percentage score from 0 to 100."
+        },
+        "answersJson": {
+          "type": "string",
+          "description": "Serialized learner answers by question ID.",
+          "minLength": 2,
+          "maxLength": 25000
+        },
+        "questionTypeStatsJson": {
+          "type": "string",
+          "description": "Serialized breakdown of accuracy by question type.",
+          "minLength": 2,
+          "maxLength": 10000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Attempt start timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last save or submission timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "lessonId",
+        "lessonTitle",
+        "level",
+        "topic",
+        "status",
+        "score",
+        "totalQuestions",
+        "accuracy",
+        "answersJson",
+        "questionTypeStatsJson",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SavedVocabularyItem": {
+      "title": "SavedVocabularyItem",
+      "description": "Personal vocabulary entry saved from a reading passage.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique saved vocabulary ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authenticated learner UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lessonId": {
+          "type": "string",
+          "description": "Source lesson identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lessonTitle": {
+          "type": "string",
+          "description": "Source lesson title.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "word": {
+          "type": "string",
+          "description": "Original English word or expression.",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "partOfSpeech": {
+          "type": "string",
+          "description": "Grammatical part of speech.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "simpleDefinition": {
+          "type": "string",
+          "description": "Short, beginner-friendly English definition.",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "contextMeaning": {
+          "type": "string",
+          "description": "Specific meaning in the passage context.",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "originalSentence": {
+          "type": "string",
+          "description": "Sentence from the reading passage containing the word.",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "exampleSentence": {
+          "type": "string",
+          "description": "Clear example sentence demonstrating usage.",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "synonyms": {
+          "type": "string",
+          "description": "Comma-separated useful English synonyms.",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "arabicTranslation": {
+          "type": "string",
+          "description": "Optional contextual Arabic translation.",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "masteryLevel": {
+          "type": "integer",
+          "description": "Spaced repetition mastery score from 0 to 5."
+        },
+        "nextReviewAt": {
+          "type": "string",
+          "description": "ISO date string for next spaced-repetition review.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Date saved."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last review timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "lessonId",
+        "lessonTitle",
+        "word",
+        "partOfSpeech",
+        "simpleDefinition",
+        "contextMeaning",
+        "originalSentence",
+        "exampleSentence",
+        "synonyms",
+        "arabicTranslation",
+        "masteryLevel",
+        "nextReviewAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Administrator privilege records."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Learner reading preferences and progress profiles."
+    },
+    "/lessons/{lessonId}": {
+      "schema": { "$ref": "#/entities/LessonDocument" },
+      "description": "Reading lessons managed by administrators."
+    },
+    "/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/LessonAttempt" },
+      "description": "Learner reading lesson attempts and comprehension scores."
+    },
+    "/vocabulary/{vocabId}": {
+      "schema": { "$ref": "#/entities/SavedVocabularyItem" },
+      "description": "Personal saved vocabulary entries with English-to-English explanations."
+    }
+  }
+}

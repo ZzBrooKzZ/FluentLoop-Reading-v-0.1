@@ -1,0 +1,619 @@
+# Build FluentLoop Reading — Complete IELTS Academic Reading Platform
+
+Act as a senior full-stack developer, UI/UX designer, database architect, and AI integration engineer.
+
+Your task is to implement a complete, polished reading-learning module inside my existing FluentLoop application. The application is intended to help English learners improve their reading comprehension, academic vocabulary, and preparation for IELTS Academic Reading.
+
+**Important: inspect the existing project before changing anything.** Understand its framework, routing, styling, authentication, database, component structure, and existing features. Extend the current application instead of rebuilding it from scratch. Preserve its established visual identity and avoid breaking existing functionality.
+
+Do not stop after producing a plan or mockup. Implement the working application, database changes, reading interface, content-management tools, and necessary documentation.
+
+# 1. Main product concept
+
+Create an interactive English reading platform inspired by adaptive reading-learning websites, with a stronger emphasis on academic English and IELTS preparation.
+
+The experience should follow this learning cycle:
+
+1. Select a reading level.
+2. Choose a passage.
+3. Read an illustrated academic text.
+4. Tap or hover over selected difficult words to understand their meaning.
+5. Answer comprehension questions.
+6. Receive a score and detailed explanations.
+7. Save vocabulary and track progress.
+8. Gradually practise more challenging passages as proficiency improves.
+
+The platform must be useful without requiring an AI API call every time a user reads a passage.
+
+All published lessons should be stored and reusable. Gemini is an optional tool for generating new content, not a dependency for displaying existing lessons.
+
+# 2. Reading levels and initial content library
+
+Create five reading levels:
+
+- A1 — Beginner
+- A2 — Elementary
+- B1 — Intermediate
+- B2 — Upper-intermediate
+- C1 — Advanced
+
+Prepare an initial library of 50 unique reading lessons: 10 for each level.
+
+Use these approximate passage lengths as guidelines:
+
+| Level | Suggested length |
+|---|---:|
+| A1 | 150–250 words |
+| A2 | 200–350 words |
+| B1 | 300–450 words |
+| B2 | 450–650 words |
+| C1 | 600–800 words |
+
+These are initial guidelines, not rigid restrictions. Adapt the passage length to the topic and learning objectives.
+
+A1 and A2 should provide general academic-reading foundations rather than pretending to reproduce the difficulty of the real IELTS Academic test. B1–C1 lessons should progressively introduce academic vocabulary, complex sentence structures, inference, and critical reading.
+
+Organize the content around diverse subjects:
+
+- Science and technology
+- Environmental science
+- Psychology and human behaviour
+- History and archaeology
+- Education and learning
+- Biology and animal behaviour
+- Public health
+- Economics and society
+- Astronomy and space exploration
+- Architecture and urban development
+
+Avoid repetitive passages, identical question sets, and superficial rewrites of the same topic.
+
+Every lesson must have a unique ID, title, level, topic, passage, illustration, vocabulary annotations, questions, answer keys, explanations, estimated reading time, and publication status.
+
+## Content generation requirements
+
+Generate the initial library in manageable batches, such as 10 lessons at a time. Do not put all 50 long passages into a single enormous model response if that risks truncation or malformed content.
+
+If the project has a working Gemini API integration, reuse its existing configuration where appropriate. Otherwise, implement a clearly separated, optional Gemini content-generation service.
+
+Use structured JSON output and a consistent schema. Validate generated content before importing or publishing it.
+
+For each batch, provide a downloadable or importable JSON file if the development environment supports creating files, along with the corresponding illustrations and an import process.
+
+Do not claim that all 50 lessons or images have been generated if only a subset is complete. Track the generation status of every lesson and image.
+
+# 3. One large illustration per reading lesson
+
+Every published passage should have one attractive, wide illustration representing its central topic.
+
+Requirements:
+
+- Prefer a landscape image with a 16:9 aspect ratio.
+- Use a consistent editorial illustration style throughout the platform.
+- Avoid text embedded inside images, logos, watermarks, and unnecessary decorative clutter.
+- Store each image as a reusable asset.
+- Associate each image with its lesson using a database field or stable asset path.
+- Optimize image sizes and use lazy loading for performance.
+- Include appropriate alternative text.
+- Provide a fallback image or graceful missing-image state.
+
+Use an image-generation service or model that is actually available in the project. If Gemini image generation is available, use it through a suitable integration. If not, support manually uploading an image.
+
+Do not require image generation when a user manually creates a lesson. A manually uploaded image or a lesson without an image must still be supported.
+
+Generate images in batches where possible. Keep image generation separate from text generation so that a failed image request does not destroy or duplicate an otherwise valid lesson.
+
+# 4. Reading library page
+
+Build an attractive reading-library page that fits FluentLoop's existing design.
+
+Include:
+
+- A clear introduction to reading practice.
+- A level selector for A1, A2, B1, B2, and C1.
+- Search by title or topic.
+- Filters by level, category, completion status, and difficulty where appropriate.
+- Lesson cards with the title, illustration, level, topic, estimated reading time, and completion state.
+- A progress indicator showing how many lessons the user has completed.
+- A way to resume an unfinished lesson.
+- Empty, loading, and error states.
+
+The library should be responsive on desktop, tablet, and mobile.
+
+Avoid excessive animations, cluttered cards, and unnecessary interface elements. Use smooth transitions, readable typography, generous spacing, and accessible contrast.
+
+# 5. Reading lesson interface
+
+Each lesson page must include:
+
+1. A large illustration.
+2. The passage title.
+3. The CEFR level and topic category.
+4. A short introduction or learning objective.
+5. Estimated reading time.
+6. The full reading passage, divided into readable paragraphs.
+7. Interactive vocabulary annotations.
+8. A clear action to begin or continue the questions.
+
+Make the passage the main focus of the page. The illustration should enhance the learning experience without occupying so much space that readers must scroll excessively before reaching the text.
+
+Support comfortable reading on narrow screens. Preserve paragraph spacing, punctuation, and original wording when rendering vocabulary annotations.
+
+Provide a way to increase or decrease reading text size if it can be implemented cleanly.
+
+# 6. Contextual vocabulary and translations
+
+This is one of the most important features.
+
+Do not annotate every word. Annotate only selected challenging, useful, or academically important words and expressions.
+
+Aim for approximately 8–15 annotated items per passage, adjusted for the length and level.
+
+For every vocabulary item, store:
+
+- The exact word or expression.
+- Its contextual meaning in simple English.
+- Its Arabic translation appropriate to the sentence.
+- Part of speech.
+- The original sentence or enough context to identify the meaning.
+- An example sentence where useful.
+- The position or occurrence of the word within the passage.
+
+Example:
+
+Passage sentence:
+
+"The researchers observed a substantial increase in plant growth."
+
+Annotated word: substantial
+
+Contextual meaning: Large or important in amount.
+
+Arabic translation: كبير / ملحوظ
+
+Example: The project requires a substantial investment.
+
+## Interaction behaviour
+
+On desktop, hovering over an annotated word should display a small tooltip containing its translation and contextual meaning.
+
+On mobile, tapping the word should display the same information.
+
+Make annotated words visually distinguishable without turning the passage into a colourful mess.
+
+The tooltip must be accessible by keyboard and must not obstruct the text unnecessarily. Support dismissal and touch interaction.
+
+Use a robust annotation-rendering method that preserves punctuation and does not accidentally highlight substrings inside unrelated words.
+
+If a word appears several times, associate annotations with specific occurrences or intentionally selected occurrences rather than blindly highlighting every match.
+
+## Personal vocabulary collection
+
+Authenticated users should be able to save a word from the passage.
+
+Store:
+
+- Word or expression.
+- Arabic translation.
+- Contextual definition.
+- Original example sentence.
+- Source lesson.
+- Date saved.
+
+Create a personal vocabulary page where users can search, filter, review, and remove saved words.
+
+Design the data model so spaced repetition can be added later.
+
+Do not require Gemini to translate words that already have translations stored with the lesson.
+
+# 7. Comprehension questions and assessment
+
+Every lesson should include approximately 8–12 questions, adapted to the level and passage.
+
+Use suitable formats:
+
+- Multiple choice.
+- True / False / Not Given.
+- Matching headings.
+- Matching information to paragraphs.
+- Sentence completion.
+- Summary completion.
+- Short-answer questions.
+- Vocabulary-in-context questions.
+
+Do not force every format into every lesson. Match the question types to the passage and difficulty.
+
+For each question, store:
+
+- Question ID.
+- Question type.
+- Question text.
+- Answer options where relevant.
+- Correct answer or complete set of correct answers.
+- Explanation of the correct answer.
+- Evidence from the passage.
+- Marking rules.
+
+Ensure that every question has an unambiguous answer supported by the passage. Distractors should be plausible but incorrect.
+
+Pay particular attention to the distinction between True, False, and Not Given:
+
+- True: the passage supports the statement.
+- False: the passage contradicts the statement.
+- Not Given: the passage does not establish whether the statement is true or false.
+
+Do not use ambiguous questions that require outside knowledge when the intended task is reading comprehension.
+
+## Assessment behaviour
+
+- Let users answer questions without revealing the answer key.
+- Support selecting and changing answers before submission.
+- Provide a clear submission action.
+- Score objectively marked questions automatically.
+- Show the user's answer, correct answer, explanation, and relevant passage evidence after submission.
+- Allow users to review incorrect answers.
+- Save the attempt, score, and completion status.
+- Prevent accidental duplicate submissions from creating duplicate attempts.
+
+For short-answer questions, implement sensible answer normalization where appropriate, such as trimming whitespace and ignoring capitalization. Do not use overly broad matching that marks semantically incorrect responses as correct.
+
+For an IELTS-style exercise, show the number of correct answers out of the total. Do not present the result as an official IELTS band score unless a separately validated scoring method supports that claim.
+
+# 8. Adaptive reading difficulty
+
+Build a simple, transparent adaptive system.
+
+Initially, users should be able to select their preferred level manually.
+
+Record relevant performance information, including:
+
+- Accuracy across multiple lessons.
+- Recent performance.
+- Question difficulty.
+- Lesson completion.
+- Topics or question types where the user struggles.
+
+Use configurable rules to recommend an easier, similar, or harder passage.
+
+Do not automatically change a user's selected level after a single result. Require a sufficient pattern of performance and explain recommendations clearly.
+
+Keep the adaptation algorithm separate from the interface so it can be improved later without rewriting the reading pages.
+
+Treat CEFR level and IELTS band score as different concepts.
+
+# 9. User accounts and personal dashboard
+
+Reuse FluentLoop's existing authentication system if available.
+
+If authentication has not yet been implemented, use an appropriate authentication solution such as Supabase Auth or another compatible service.
+
+Users should be able to:
+
+- Register and sign in.
+- Sign out securely.
+- View their reading dashboard.
+- Resume unfinished lessons.
+- See completed lessons.
+- Review previous scores.
+- Save and review vocabulary.
+- Track reading progress over time.
+- Change their preferred level.
+- Manage basic account preferences.
+
+The dashboard should include useful indicators such as completed passages, average accuracy, saved vocabulary count, and recent activity.
+
+Do not invent performance statistics for new users.
+
+If authentication is required for progress tracking, let unauthenticated visitors preview publicly available lessons where appropriate, but require sign-in before saving personal progress.
+
+# 10. Simple content-management system — essential requirement
+
+I must be able to add, edit, replace, unpublish, and publish lessons myself without changing source code.
+
+Create a protected admin area for managing reading content.
+
+Only authorized administrators must be able to access content-management actions. Do not expose administrator privileges through a frontend-only flag or a public registration form.
+
+The admin interface should provide the following tools.
+
+## A. Create a lesson manually
+
+Provide a form with:
+
+- Lesson title.
+- Unique slug or ID.
+- CEFR level.
+- Topic category.
+- Short introduction.
+- Full passage with paragraph breaks.
+- Estimated reading time.
+- Learning objectives.
+- Vocabulary annotations.
+- Questions and answer options.
+- Correct answers.
+- Explanations and passage evidence.
+- Cover illustration.
+- Publication status.
+
+Allow me to paste an entire passage into a text editor.
+
+Allow me to save a draft before the questions, vocabulary, or image are ready.
+
+## B. Manage vocabulary annotations
+
+Allow me to add a vocabulary item by entering the word or phrase and its translation.
+
+Let me specify its contextual meaning, example sentence, and exact occurrence in the passage.
+
+Where practical, let me select a word or phrase in the passage editor and use an action such as "Add vocabulary annotation" to populate the annotation form.
+
+Validate that annotations correspond to the intended passage text. Warn me if a word cannot be located.
+
+## C. Manage questions
+
+Allow me to add, edit, reorder, duplicate, and delete questions.
+
+The form should adapt to the question type. For example, multiple-choice questions need options, whereas short-answer questions need accepted answers.
+
+Allow me to preview questions as learners will see them.
+
+Validate that each question has the necessary fields and a valid answer key before publishing.
+
+## D. Upload and replace illustrations
+
+Allow me to upload a new image, preview it, replace it, and remove it.
+
+Store uploaded images in persistent storage rather than a temporary local folder.
+
+Automatically associate the image with the lesson being edited.
+
+## E. Publish and organize lessons
+
+Support draft, published, and archived or unpublished states.
+
+Provide search, filters, and pagination in the admin library.
+
+Display missing-content warnings, such as:
+
+- Missing illustration.
+- No vocabulary annotations.
+- No questions.
+- Invalid answer key.
+- Incomplete metadata.
+
+Do not allow an incomplete lesson to be published unless explicitly configured as an allowed exception.
+
+Unpublishing a lesson must not silently erase existing user progress or saved vocabulary.
+
+## F. Bulk import and export
+
+This is essential for making future content additions easy.
+
+Support importing a single lesson or multiple lessons from validated JSON files.
+
+Support exporting selected lessons or the complete library to JSON.
+
+Include a downloadable example JSON template and document the schema.
+
+Validate imports before committing them. Report exactly which records succeeded or failed and why.
+
+Do not overwrite existing lessons with matching IDs unless I explicitly choose to update or replace them.
+
+Support uploading an illustration alongside a lesson or assigning an existing uploaded image.
+
+Where possible, support a ZIP import containing a manifest and associated images, with clear rules for mapping image files to lesson IDs.
+
+Allow me to create lessons in Gemini, export the structured content, and import the resulting files without editing application source code.
+
+# 11. Gemini-powered content generation
+
+Implement an optional, administrator-only AI content-generation workflow if Gemini is configured.
+
+It should help me create new lessons rather than requiring me to generate and enter every field manually.
+
+The workflow should support:
+
+- Selecting the target level.
+- Choosing a topic or entering a custom topic.
+- Specifying the number of lessons to generate.
+- Generating passages, vocabulary, questions, answer keys, explanations, and image prompts.
+- Generating or uploading illustrations through an available image-generation service.
+- Previewing generated lessons.
+- Editing generated content before publishing.
+- Regenerating a passage, a question set, vocabulary, or an illustration independently.
+- Generating lessons in manageable batches.
+- Importing validated content into the lesson library.
+
+Use structured JSON responses with a defined schema. Validate both the structure and the actual content.
+
+Keep the Gemini API key on the server. Never expose secret keys in browser code or commit them to version control.
+
+If no API key is configured, the application must continue to work fully with existing lessons and manual content management.
+
+Do not call the Gemini API when a user simply opens a published passage.
+
+Do not automatically publish AI-generated lessons without a review step, unless I explicitly enable a trusted automated publishing workflow.
+
+## Image generation
+
+Keep image generation modular so I can change providers later.
+
+Use a supported image-generation model or API, with configuration for model selection, image dimensions, and generation settings where supported.
+
+Store generated images persistently and record the generation status of each asset.
+
+If an image request fails, allow it to be retried independently without losing the passage and question data.
+
+# 12. Database design
+
+Inspect the existing database before creating tables. Reuse compatible existing structures where practical.
+
+Design a normalized schema with suitable relationships for:
+
+- Lessons.
+- Vocabulary annotations.
+- Questions.
+- Question options or accepted answers.
+- Lesson attempts.
+- Individual question responses.
+- Saved vocabulary.
+- User reading preferences.
+- Lesson generation and validation status.
+- Administrator permissions.
+
+Use stable lesson IDs rather than relying on titles as identifiers.
+
+Store passage text and structured question data in an appropriate format. Choose relational tables or JSON columns according to the existing architecture and query requirements.
+
+Store image paths or storage keys in the database, not large image binaries directly in ordinary lesson records.
+
+Add suitable indexes, foreign keys, timestamps, and validation constraints.
+
+User progress must remain associated with the correct authenticated account.
+
+If using Supabase, implement and test Row Level Security policies so users cannot read or modify other users' private progress or saved vocabulary. Publicly published lessons may be readable by everyone, while draft lessons and administrative operations must remain restricted.
+
+Use database migrations or a repeatable schema setup process. Document the steps needed to configure the database in a fresh environment.
+
+# 13. Suggested frontend and backend architecture
+
+First inspect the existing technology stack and reuse it wherever possible.
+
+If the project does not already establish a stack, a reasonable default is:
+
+- Next.js and React for the frontend and server-side routes.
+- TypeScript for type safety.
+- Tailwind CSS or the project's existing styling system.
+- Supabase for authentication, PostgreSQL, and persistent image storage.
+- A server-side Gemini integration for optional content generation.
+
+Do not introduce unnecessary frameworks or duplicate existing services.
+
+Keep the following concerns separated:
+
+- Reading-library presentation.
+- Lesson rendering.
+- Vocabulary annotations.
+- Question rendering and grading.
+- User progress.
+- Admin content management.
+- Content import and export.
+- AI text generation.
+- Image generation.
+- Database access and permissions.
+
+Use reusable components and clear interfaces.
+
+Handle loading, empty, validation, authentication, and API error states properly.
+
+# 14. Security, accessibility, and performance
+
+Implement the following requirements:
+
+- Validate user input on the server.
+- Sanitize imported rich text and prevent script injection.
+- Keep private credentials on the server.
+- Enforce administrator permissions on every privileged endpoint.
+- Protect private user data.
+- Prevent users from accessing draft lessons without permission.
+- Avoid exposing answer keys before submission.
+- Add reasonable rate limits to expensive AI-generation endpoints.
+- Limit upload file sizes and validate file types.
+- Avoid generating duplicate records when retrying failed requests.
+- Use accessible keyboard navigation and focus indicators.
+- Ensure vocabulary tooltips work with touch, mouse, and keyboard.
+- Use semantic HTML and appropriate labels.
+- Optimize images and load them only when needed.
+- Keep the reading interface responsive.
+- Avoid unnecessary database requests and AI API calls.
+
+Do not implement fake authentication, fake persistence, or buttons that only display success messages without performing the underlying action.
+
+# 15. Visual design
+
+Follow FluentLoop's existing visual identity.
+
+Aim for a polished, modern educational experience with:
+
+- A clean reading layout.
+- Excellent typography and line spacing.
+- A restrained colour palette.
+- Attractive editorial illustrations.
+- Clear progress indicators.
+- Smooth but subtle animations.
+- Well-designed question cards and answer feedback.
+- A consistent visual distinction between annotated vocabulary and ordinary text.
+- Responsive layouts for mobile and desktop.
+
+Prioritize usability over decorative complexity. The user should be able to focus on reading rather than navigating the interface.
+
+Respect reduced-motion preferences where animations are used.
+
+# 16. Testing and quality assurance
+
+Test the complete user journey, including:
+
+1. Viewing the reading library.
+2. Filtering lessons by level.
+3. Opening a published passage.
+4. Using vocabulary tooltips on desktop and mobile.
+5. Saving and removing vocabulary.
+6. Answering and submitting questions.
+7. Viewing scores and explanations.
+8. Saving and resuming progress.
+9. Registering and signing in.
+10. Manually creating and editing a lesson.
+11. Uploading and replacing an illustration.
+12. Importing and exporting lesson JSON.
+13. Generating content through Gemini when configured.
+14. Confirming that non-admin users cannot access admin operations.
+15. Confirming that users cannot access each other's private data.
+16. Confirming that missing API keys do not break ordinary reading.
+17. Confirming that failed imports or image generation do not corrupt existing lessons.
+
+Run the project's available tests, linting, type checks, and production build. Fix errors introduced by the implementation.
+
+Do not claim that a test passed unless it was actually run.
+
+# 17. Implementation order
+
+Implement the work in this order:
+
+Phase 1: Inspect the current project and identify reusable architecture.
+
+Phase 2: Build the database schema, authentication integration, lesson model, and content-management foundations.
+
+Phase 3: Build the reading library and responsive lesson interface.
+
+Phase 4: Implement vocabulary annotations, translations, questions, scoring, and explanations.
+
+Phase 5: Implement personal vocabulary, progress tracking, and the adaptive recommendation rules.
+
+Phase 6: Implement the protected admin area, manual lesson creation, image uploads, and editing.
+
+Phase 7: Implement validated JSON import/export and optional Gemini content generation.
+
+Phase 8: Generate and import the initial A1–C1 lesson library in manageable batches, including illustrations where the available tools support it.
+
+Phase 9: Run tests, resolve bugs, verify security rules, and document setup and maintenance.
+
+Do not spend the entire implementation effort generating sample content while leaving the actual application incomplete. Build the reusable system first, then populate it.
+
+# 18. Final deliverables
+
+When finished, provide:
+
+- A summary of implemented functionality.
+- A list of files and database changes.
+- Setup instructions and required environment variables.
+- Instructions for creating an administrator account securely.
+- Instructions for adding a lesson manually.
+- Instructions for generating lessons with Gemini.
+- Instructions for importing and exporting lessons.
+- The current count of completed lessons and illustrations.
+- A list of anything that remains incomplete.
+- Test and build results.
+
+The final application must let me maintain the reading library myself without changing source code. It must also remain usable if Gemini is unavailable, unconfigured, or temporarily out of quota.
+
+**Final priority:** build a maintainable reading platform, not a one-time collection of generated stories. New lessons must be easy to add, edit, validate, publish, and reuse.
