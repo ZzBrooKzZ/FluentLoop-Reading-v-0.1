@@ -170,25 +170,25 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   );
 
   return (
-    <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 sm:p-6 shadow-xs">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EAE3D5] pb-4">
+    <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 sm:p-6 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E3D7C3] pb-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="font-display text-lg font-bold text-[#141413]">
+            <h3 className="font-display text-lg font-bold text-[#171615]">
               IELTS Academic Comprehension Assessment
             </h3>
             {activeMode === 'review' && (
-              <span className="rounded bg-[#EAE3D5] px-2 py-0.5 font-mono-code text-[10px] font-bold uppercase tracking-wider text-[#57534E]">
+              <span className="rounded bg-[#F2EDE3] px-2 py-0.5 font-mono-code text-[10px] font-bold uppercase tracking-wider text-[#76675B]">
                 Review Mode
               </span>
             )}
             {activeMode === 'practice' && (
-              <span className="rounded bg-[#FEF3C7] px-2 py-0.5 font-mono-code text-[10px] font-bold uppercase tracking-wider text-[#92400E]">
+              <span className="rounded bg-[#F7E9DC] px-2 py-0.5 font-mono-code text-[10px] font-bold uppercase tracking-wider text-[#946200]">
                 Practice Again
               </span>
             )}
           </div>
-          <p className="text-xs text-[#57534E] tabular-nums">
+          <p className="text-xs text-[#76675B] tabular-nums">
             {questions.length} Questions · {answeredCount}/{questions.length} Answered
           </p>
         </div>
@@ -198,10 +198,10 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
             <span
               className={`font-mono-code text-sm font-bold tabular-nums px-2.5 py-1 rounded-md ${
                 submittedResult.accuracy >= 80
-                  ? 'bg-[#DCFCE7] text-[#15803D]'
+                  ? 'bg-[#E6F2EC] text-[#287A52]'
                   : submittedResult.accuracy >= 60
-                  ? 'bg-[#FEF3C7] text-[#B45309]'
-                  : 'bg-[#FEE2E2] text-[#B91C1C]'
+                  ? 'bg-[#FEF3C7] text-[#946200]'
+                  : 'bg-[#FEE2E2] text-[#B42318]'
               }`}
             >
               Score: {submittedResult.accuracy}% ({submittedResult.score}/
@@ -212,27 +212,27 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
       </div>
 
       {submittedResult && (
-        <div className="mt-4 rounded-lg border border-[#D8CFC2] bg-[#FAF7F2] p-4 space-y-3">
+        <div className="mt-4 rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <Award
                 className={`h-6 w-6 shrink-0 ${
                   submittedResult.accuracy >= 80
-                    ? 'text-[#15803D]'
+                    ? 'text-[#287A52]'
                     : submittedResult.accuracy >= 60
-                    ? 'text-[#D97706]'
-                    : 'text-[#B91C1C]'
+                    ? 'text-[#946200]'
+                    : 'text-[#B42318]'
                 }`}
               />
               <div>
-                <h4 className="text-sm font-bold text-[#141413]">
+                <h4 className="text-sm font-bold text-[#171615]">
                   {submittedResult.accuracy >= 80
                     ? 'Strong IELTS Academic Comprehension'
                     : submittedResult.accuracy >= 60
                     ? 'Solid Progress — Review Evidence Quotes Below'
                     : 'Review Passage Evidence & Contextual Definitions'}
                 </h4>
-                <p className="text-xs text-[#57534E]">
+                <p className="text-xs text-[#76675B]">
                   Click “Locate in Passage” on any question below to highlight the exact proof sentence.
                 </p>
               </div>
@@ -243,7 +243,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                   type="button"
                   disabled={isEvaluating}
                   onClick={handleRetryNeedsReview}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#D97706] bg-[#FEF3C7] px-3 py-1.5 text-xs font-semibold text-[#92400E] hover:bg-[#FDE68A] disabled:opacity-50 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#946200]/40 bg-[#FEF3C7] px-3 py-1.5 text-xs font-semibold text-[#946200] hover:bg-[#FDE68A] disabled:opacity-50 cursor-pointer"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${isEvaluating ? 'animate-spin' : ''}`} />
                   Retry Semantic Check
@@ -252,7 +252,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
               <button
                 type="button"
                 onClick={handleRetake}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6] cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 Practice Again
@@ -261,7 +261,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                 <button
                   type="button"
                   onClick={onNextLesson}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#9A3412] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#7C2D12] cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63816] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#842B12] cursor-pointer"
                 >
                   Next Lesson
                   <ArrowRight className="h-3.5 w-3.5" />
@@ -304,26 +304,26 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
 
           const cardBorderClass = qResult
             ? qResult.verdict === 'correct'
-              ? 'border-[#15803D]/40 bg-[#DCFCE7]/15'
+              ? 'border-[#287A52]/40 bg-[#E6F2EC]/25'
               : qResult.verdict === 'partially_correct'
-              ? 'border-[#D97706]/50 bg-[#FEF3C7]/20'
+              ? 'border-[#946200]/45 bg-[#FEF3C7]/25'
               : qResult.verdict === 'needs_review'
-              ? 'border-[#0284C7]/40 bg-[#E0F2FE]/25'
-              : 'border-[#B91C1C]/40 bg-[#FEE2E2]/15'
-            : 'border-[#E5DEC9] bg-[#FAF7F2]/60';
+              ? 'border-[#946200]/40 bg-[#F7E9DC]/50'
+              : 'border-[#B42318]/40 bg-[#FEE2E2]/15'
+            : 'border-[#E3D7C3] bg-[#FAF7F1]/75';
 
           return (
             <div
               key={q.id}
-              className={`rounded-lg border p-4 transition-colors ${cardBorderClass}`}
+              className={`rounded-xl border p-4 transition-colors ${cardBorderClass}`}
             >
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#78716C] mb-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#76675B] mb-1.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono-code font-semibold text-[#9A3412] tabular-nums">
+                  <span className="font-mono-code font-semibold text-[#A63816] tabular-nums">
                     Question {idx + 1} · {QUESTION_TYPE_LABELS[q.type] || q.type}
                   </span>
                   {instructionBadgeText && (
-                    <span className="font-mono-code text-[11px] font-bold uppercase tracking-wide text-[#141413] bg-[#EAE3D5] px-2 py-0.5 rounded">
+                    <span className="font-mono-code text-[11px] font-bold uppercase tracking-wide text-[#171615] bg-[#F2EDE3] px-2 py-0.5 rounded">
                       {instructionBadgeText}
                     </span>
                   )}
@@ -333,12 +333,12 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                   <span
                     className={`inline-flex items-center gap-1 font-semibold ${
                       qResult.verdict === 'correct'
-                        ? 'text-[#15803D]'
+                        ? 'text-[#287A52]'
                         : qResult.verdict === 'partially_correct'
-                        ? 'text-[#B45309]'
+                        ? 'text-[#946200]'
                         : qResult.verdict === 'needs_review'
-                        ? 'text-[#0369A1]'
-                        : 'text-[#B91C1C]'
+                        ? 'text-[#946200]'
+                        : 'text-[#B42318]'
                     }`}
                   >
                     {qResult.verdict === 'correct' && (
@@ -369,7 +369,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                 )}
               </div>
 
-              <p className="text-sm font-semibold text-[#141413] leading-snug mb-3">
+              <p className="text-sm font-semibold text-[#171615] leading-snug mb-3">
                 {q.prompt}
               </p>
 
@@ -400,13 +400,13 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                         className={`flex items-start gap-2.5 rounded-lg border p-2.5 text-xs sm:text-sm cursor-pointer transition-colors ${
                           submittedResult
                             ? isCorrectOption
-                              ? 'border-[#15803D] bg-[#DCFCE7]/50 font-semibold text-[#14532D]'
+                              ? 'border-[#287A52] bg-[#E6F2EC]/60 font-semibold text-[#1E5C3D]'
                               : isSelected && !isCorrectOption
-                              ? 'border-[#B91C1C] bg-[#FEE2E2]/50 text-[#7F1D1D]'
-                              : 'border-[#E5DEC9] bg-white opacity-75'
+                              ? 'border-[#B42318] bg-[#FEE2E2]/50 text-[#7F1D1D]'
+                              : 'border-[#E3D7C3] bg-[#FFFDFA] opacity-75'
                             : isSelected
-                            ? 'border-[#9A3412] bg-[#FEF3C7]/40 font-medium text-[#141413]'
-                            : 'border-[#E5DEC9] bg-white hover:border-[#D8CFC2]'
+                            ? 'border-[#A63816] bg-[#F7E9DC]/70 font-medium text-[#171615]'
+                            : 'border-[#E3D7C3] bg-[#FFFDFA] hover:border-[#A63816]/50'
                         }`}
                       >
                         <input
@@ -414,7 +414,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                           checked={isSelected}
                           disabled={Boolean(submittedResult || isEvaluating)}
                           onChange={() => handleToggleTwoChoice(q.id, optionText)}
-                          className="mt-0.5 accent-[#9A3412]"
+                          className="mt-0.5 accent-[#A63816]"
                         />
                         <span className="leading-relaxed">{optionText}</span>
                       </label>
@@ -437,13 +437,13 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                         className={`flex items-start gap-2.5 rounded-lg border p-2.5 text-xs sm:text-sm cursor-pointer transition-colors ${
                           submittedResult
                             ? isCorrectOption
-                              ? 'border-[#15803D] bg-[#DCFCE7]/50 font-semibold text-[#14532D]'
+                              ? 'border-[#287A52] bg-[#E6F2EC]/60 font-semibold text-[#1E5C3D]'
                               : isSelected && !qResult?.isCorrect
-                              ? 'border-[#B91C1C] bg-[#FEE2E2]/50 text-[#7F1D1D]'
-                              : 'border-[#E5DEC9] bg-white opacity-75'
+                              ? 'border-[#B42318] bg-[#FEE2E2]/50 text-[#7F1D1D]'
+                              : 'border-[#E3D7C3] bg-[#FFFDFA] opacity-75'
                             : isSelected
-                            ? 'border-[#9A3412] bg-[#FEF3C7]/40 font-medium text-[#141413]'
-                            : 'border-[#E5DEC9] bg-white hover:border-[#D8CFC2]'
+                            ? 'border-[#A63816] bg-[#F7E9DC]/70 font-medium text-[#171615]'
+                            : 'border-[#E3D7C3] bg-[#FFFDFA] hover:border-[#A63816]/50'
                         }`}
                       >
                         <input
@@ -453,7 +453,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                           checked={isSelected}
                           disabled={Boolean(submittedResult || isEvaluating)}
                           onChange={() => handleSelectAnswer(q.id, optionText)}
-                          className="mt-0.5 accent-[#9A3412]"
+                          className="mt-0.5 accent-[#A63816]"
                         />
                         <span className="leading-relaxed">{optionText}</span>
                       </label>
@@ -464,8 +464,8 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                 /* Format 3: Completion (Note / Summary / Sentence) & Short-Answer Comprehension */
                 <div className="space-y-2.5">
                   {Array.isArray(q.wordBank) && q.wordBank.length > 0 && (
-                    <div className="rounded-lg border border-[#EAE3D5] bg-white p-2.5">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-[#78716C] mb-1.5">
+                    <div className="rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] p-2.5">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-[#76675B] mb-1.5">
                         Word Bank (Click a phrase or type below):
                       </div>
                       <div className="flex flex-wrap gap-1.5">
@@ -480,8 +480,8 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                               onClick={() => handleSelectAnswer(q.id, bankItem)}
                               className={`rounded border px-2.5 py-1 text-xs font-mono-code transition-colors cursor-pointer ${
                                 isChosen
-                                  ? 'border-[#9A3412] bg-[#9A3412] text-white font-semibold'
-                                  : 'border-[#D8CFC2] bg-[#FAF7F2] text-[#141413] hover:border-[#9A3412]'
+                                  ? 'border-[#A63816] bg-[#A63816] text-white font-semibold'
+                                  : 'border-[#E3D7C3] bg-[#FAF7F1] text-[#171615] hover:border-[#A63816]'
                               }`}
                             >
                               {bankItem}
@@ -505,14 +505,14 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                           ? `Type up to ${maxWordsLimit} word${maxWordsLimit > 1 ? 's' : ''} from the passage...`
                           : 'Type exact word or phrase from passage...'
                       }
-                      className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3.5 py-2 text-sm text-[#141413] placeholder-[#A8A29E] focus:border-[#9A3412] focus:outline-none disabled:bg-[#F3EFE6]"
+                      className="w-full rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3.5 py-2 text-sm text-[#171615] placeholder-[#76675B]/70 focus:border-[#A63816] focus:outline-none disabled:bg-[#F2EDE3]"
                     />
                     {maxWordsLimit && currentAnswer.trim().length > 0 && (
                       <span
                         className={`mt-1 block text-right font-mono-code text-[11px] tabular-nums ${
                           typedWords > maxWordsLimit
-                            ? 'text-[#B91C1C] font-bold'
-                            : 'text-[#78716C]'
+                            ? 'text-[#B42318] font-bold'
+                            : 'text-[#76675B]'
                         }`}
                       >
                         {typedWords}/{maxWordsLimit} word{maxWordsLimit > 1 ? 's' : ''}
@@ -524,9 +524,9 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
               )}
 
               {qResult && (
-                <div className="mt-3.5 space-y-2 border-t border-[#E5DEC9] pt-3 text-xs">
+                <div className="mt-3.5 space-y-2 border-t border-[#E3D7C3] pt-3 text-xs">
                   {qResult.verdict !== 'correct' && resolvedCorrectAnswer && (
-                    <div className="text-[#B91C1C]">
+                    <div className="text-[#B42318]">
                       <span className="font-semibold">Expected Answer Key: </span>
                       <span className="font-mono-code font-semibold">{resolvedCorrectAnswer}</span>
                     </div>
@@ -536,11 +536,11 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                     <div
                       className={`rounded-md px-3 py-2 font-medium ${
                         qResult.verdict === 'correct'
-                          ? 'bg-[#DCFCE7]/60 text-[#14532D]'
+                          ? 'bg-[#E6F2EC] text-[#1E5C3D]'
                           : qResult.verdict === 'partially_correct'
-                          ? 'bg-[#FEF3C7] text-[#92400E]'
+                          ? 'bg-[#FEF3C7] text-[#946200]'
                           : qResult.verdict === 'needs_review'
-                          ? 'bg-[#E0F2FE] text-[#0369A1]'
+                          ? 'bg-[#F7E9DC] text-[#946200]'
                           : 'bg-[#FEE2E2]/60 text-[#7F1D1D]'
                       }`}
                     >
@@ -557,34 +557,40 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                   )}
 
                   {resolvedExplanation && (
-                    <div className="text-[#57534E] leading-relaxed">
-                      <span className="font-semibold text-[#141413]">Explanation: </span>
+                    <div className="text-[#76675B] leading-relaxed">
+                      <span className="font-semibold text-[#171615]">Explanation: </span>
                       {resolvedExplanation}
                     </div>
                   )}
-                  {(qResult.passageEvidence || q.passageEvidence) && (() => {
-                    const evidenceText = (qResult.passageEvidence || q.passageEvidence || '').trim();
-                    const isNotGivenNote = /^(no\s+(?:mention|information|comparison|claim|price|requirement)|the passage does not)/i.test(
-                      evidenceText
-                    );
-                    return (
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[#F3EFE6] px-3 py-2 text-[#57534E]">
-                        <span className="italic">
-                          {isNotGivenNote ? evidenceText : `“${evidenceText}”`}
-                        </span>
-                        {!isNotGivenNote && (
-                          <button
-                            type="button"
-                            onClick={() => onHighlightEvidence(evidenceText)}
-                            className="inline-flex items-center gap-1 font-semibold text-[#9A3412] hover:underline shrink-0 cursor-pointer"
-                          >
-                            <Search className="h-3.5 w-3.5" />
-                            Locate in Passage
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {(qResult.passageEvidence || q.passageEvidence) &&
+                    (() => {
+                      const evidenceText = (
+                        qResult.passageEvidence ||
+                        q.passageEvidence ||
+                        ''
+                      ).trim();
+                      const isNotGivenNote =
+                        /^(no\s+(?:mention|information|comparison|claim|price|requirement)|the passage does not)/i.test(
+                          evidenceText
+                        );
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[#F2EDE3] px-3 py-2 text-[#76675B]">
+                          <span className="italic">
+                            {isNotGivenNote ? evidenceText : `“${evidenceText}”`}
+                          </span>
+                          {!isNotGivenNote && (
+                            <button
+                              type="button"
+                              onClick={() => onHighlightEvidence(evidenceText)}
+                              className="inline-flex items-center gap-1 font-semibold text-[#A63816] hover:underline shrink-0 cursor-pointer"
+                            >
+                              <Search className="h-3.5 w-3.5" />
+                              Locate in Passage
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                 </div>
               )}
             </div>
@@ -592,7 +598,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
         })}
 
         {validationMessage && (
-          <div className="rounded-lg border border-[#D97706] bg-[#FEF3C7] px-4 py-2.5 text-xs font-medium text-[#92400E]">
+          <div className="rounded-lg border border-[#946200]/50 bg-[#FEF3C7] px-4 py-2.5 text-xs font-medium text-[#946200]">
             {validationMessage}
           </div>
         )}
@@ -601,7 +607,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
           <button
             type="submit"
             disabled={isEvaluating}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-[#9A3412] px-4 py-3 text-sm font-semibold text-white shadow-xs hover:bg-[#7C2D12] transition-colors cursor-pointer disabled:opacity-60"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#A63816] px-4 py-3 text-sm font-semibold text-white shadow-xs hover:bg-[#842B12] transition-colors cursor-pointer disabled:opacity-60"
           >
             {isEvaluating ? (
               <>

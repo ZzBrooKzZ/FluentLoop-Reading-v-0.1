@@ -3,17 +3,17 @@ import { verifyBearerToken } from '@/src/server/firebaseAdmin';
 
 export const runtime = 'nodejs';
 
+// Maximum raw file size for inline data-URL storage (700 KB raw -> ~933 KB base64, safely under Firestore's 1 MiB document limit)
+const MAX_INLINE_IMAGE_BYTES = 700 * 1024;
+
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization');
-    if (authHeader) {
-      const verified = await verifyBearerToken(authHeader);
-      if (!verified || !verified.isAdmin) {
-        return NextResponse.json(
-          { error: 'Forbidden: Administrator verification required.' },
-          { status: 403 }
-        );
-      }
+    const verified = await verifyBearerToken(req.headers.get('authorization'));
+    if (!verified || !verified.isAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Verified administrator token required.' },
+        { status: 403 }
+      );
     }
 
     const body = await req.json();
@@ -25,15 +25,23 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (typeof sizeBytes === 'number' && sizeBytes > 4 * 1024 * 1024) {
+    if (typeof sizeBytes === 'number' && sizeBytes > MAX_INLINE_IMAGE_BYTES) {
       return NextResponse.json(
-        { error: 'Image file exceeds the 4MB maximum size limit.' },
+        {
+          error:
+            'Image file exceeds the 700KB inline storage limit for Firestore documents. Please compress the image or use SVG/WebP.',
+        },
         { status: 400 }
       );
     }
-    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    if (
+      !dataUrl ||
+      typeof dataUrl !== 'string' ||
+      !dataUrl.startsWith('data:image/') ||
+      dataUrl.length > 950_000
+    ) {
       return NextResponse.json(
-        { error: 'Invalid image data payload.' },
+        { error: 'Invalid or oversized image data payload.' },
         { status: 400 }
       );
     }

@@ -21,6 +21,10 @@ import {
   Sun,
   Moon,
   RotateCcw,
+  Menu,
+  X,
+  ArrowRight,
+  Sparkles,
 } from 'lucide-react';
 import {
   signInWithPopup,
@@ -59,17 +63,20 @@ import {
   SavedVocabularyItem,
   VocabularyAnnotation,
 } from './types/reading';
-import { INITIAL_LESSONS } from './data/initialLessons';
-import { addLessonVocabulary } from './data/vocabularyExpansion';
-import {
-  CEFR_TARGET_WORD_RANGES,
-  upgradeLessonToIeltsAcademic,
-} from './data/ieltsAcademicUpgrade';
 import { InteractivePassage } from './components/InteractivePassage';
 import { QuestionAssessment } from './components/QuestionAssessment';
 import { AssignedPassagePreview } from './components/AssignedPassagePreview';
 import { PlacementAssessmentView } from './components/PlacementAssessmentView';
 import { PublicFooter } from './components/PublicFooter';
+import { BrandLogo } from './components/BrandLogo';
+import {
+  AutumnBranchIllustration,
+  BooksAndTeaIllustration,
+  CornerBotanicalSprig,
+  CozyBookStackIllustration,
+  LeafSeparator,
+  OliveTerracottaLeafCluster,
+} from './components/BotanicalIllustrations';
 import {
   GradedAttemptSummary,
   GradedQuestionResult,
@@ -83,6 +90,7 @@ import {
   getLessonDifficulty,
   selectNextLesson,
 } from './services/adaptiveLearning';
+import { getPassagePhotoMetadata } from './utils/illustrations';
 
 // Lazy-load heavy administrator and documentation views so ordinary learners don't download them
 const AdminStudio = dynamic(
@@ -90,7 +98,7 @@ const AdminStudio = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-8 text-center text-xs text-[#57534E]">
+      <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-8 text-center text-xs text-[#76675B]">
         Loading Content Studio...
       </div>
     ),
@@ -102,7 +110,7 @@ const DocumentationView = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-8 text-center text-xs text-[#57534E]">
+      <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-8 text-center text-xs text-[#76675B]">
         Loading Architecture & Schema Guide...
       </div>
     ),
@@ -167,6 +175,7 @@ interface AppProps {
 
 export default function App({ initialSanitizedLessons }: AppProps) {
   const [activeTab, setActiveTab] = useState<NavTab>('library');
+  const [mobileNavOpen, setMobileNavOpen] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [geminiConfigured, setGeminiConfigured] = useState<boolean>(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -339,14 +348,6 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   useEffect(() => {
     testConnection();
-    fetch('/api/health')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data && typeof data.geminiConfigured === 'boolean') {
-          setGeminiConfigured(data.geminiConfigured);
-        }
-      })
-      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -457,23 +458,34 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       currentUser.email.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
   );
 
-  // Load authoritative lessons and diagnostic passages with answer keys from protected /api/admin/lessons only when admin is verified
+  // Load authoritative lessons, diagnostic passages, and admin health status when admin is verified
   useEffect(() => {
     if (!currentUser || !isAdminVerified || activeTab !== 'admin') return;
     currentUser
       .getIdToken()
-      .then((token) =>
-        fetch('/api/admin/lessons', {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-      )
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && Array.isArray(data.lessons)) {
-          setAdminAuthoritativeLessons(data.lessons);
+      .then(async (token) => {
+        const [lessonsResp, healthResp] = await Promise.all([
+          fetch('/api/admin/lessons', {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch('/api/health', {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+        if (lessonsResp.ok) {
+          const data = await lessonsResp.json();
+          if (data && Array.isArray(data.lessons)) {
+            setAdminAuthoritativeLessons(data.lessons);
+          }
+          if (data && Array.isArray(data.diagnosticPassages)) {
+            setAdminDiagnosticPassages(data.diagnosticPassages);
+          }
         }
-        if (data && Array.isArray(data.diagnosticPassages)) {
-          setAdminDiagnosticPassages(data.diagnosticPassages);
+        if (healthResp.ok) {
+          const healthData = await healthResp.json();
+          if (healthData && typeof healthData.geminiConfigured === 'boolean') {
+            setGeminiConfigured(healthData.geminiConfigured);
+          }
         }
       })
       .catch(() => {});
@@ -585,40 +597,27 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     if (isAdminVerified && adminAuthoritativeLessons && adminAuthoritativeLessons.length > 0) {
       return adminAuthoritativeLessons;
     }
-    if (initialSanitizedLessons && initialSanitizedLessons.length > 0) {
-      return initialSanitizedLessons;
-    }
-    return INITIAL_LESSONS;
+    return initialSanitizedLessons || [];
   }, [isAdminVerified, adminAuthoritativeLessons, initialSanitizedLessons]);
 
   const allLessons: ReadingLesson[] = useMemo(() => {
     const map = new Map<string, ReadingLesson>();
-    const initialById = new Map<string, ReadingLesson>();
     baseSourceLessons.forEach((lesson) => {
-      initialById.set(lesson.id, lesson);
       if (!deletedLessonIds.has(lesson.id)) {
         map.set(lesson.id, lesson);
       }
     });
     Object.values(customLessonsMap).forEach((lesson) => {
       if (!deletedLessonIds.has(lesson.id)) {
-        const wc = lesson.passage ? lesson.passage.split(/\s+/).filter(Boolean).length : 0;
-        const targetRange = CEFR_TARGET_WORD_RANGES[lesson.level];
-        const builtIn = initialById.get(lesson.id);
-        if (
-          builtIn &&
-          ((targetRange && wc < targetRange.min) ||
-            (lesson.vocabulary?.length || 0) < builtIn.vocabulary.length)
-        ) {
+        const builtIn = map.get(lesson.id);
+        if (builtIn && (lesson.vocabulary?.length || 0) < builtIn.vocabulary.length) {
           map.set(lesson.id, builtIn);
-        } else if (targetRange && wc < targetRange.min) {
-          map.set(lesson.id, upgradeLessonToIeltsAcademic(lesson));
         } else {
           map.set(lesson.id, lesson);
         }
       }
     });
-    return Array.from(map.values()).map(addLessonVocabulary);
+    return Array.from(map.values());
   }, [baseSourceLessons, customLessonsMap, deletedLessonIds]);
 
   const publishedLessons = useMemo(
@@ -716,6 +715,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     if (!activeLesson) return new Set<string>();
     const savedSet = new Set<string>();
     const lessonItems = savedVocab.filter((v) => v.lessonId === activeLesson.id);
+    lessonItems.forEach((item) => {
+      const lower = item.word.toLowerCase();
+      savedSet.add(lower);
+      savedSet.add(`lookup-${activeLesson.id}-${lower}`);
+    });
     activeLesson.vocabulary.forEach((v) => {
       if (lessonItems.some((item) => item.word.toLowerCase() === v.word.toLowerCase())) {
         savedSet.add(v.id);
@@ -1236,13 +1240,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const finalUid = linkedUser && !linkedUser.isAnonymous ? linkedUser.uid : auth.currentUser?.uid;
     if (finalUid) {
       try {
+        const token =
+          linkedUser && !linkedUser.isAnonymous
+            ? await linkedUser.getIdToken()
+            : await auth.currentUser?.getIdToken();
         const recoverySteps = placementSession.steps.map((s) => ({
           passageId: s.passageId,
           answers: s.answers || {},
         }));
         const linkResp = await fetch('/api/placement/link', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             sessionId: placementSession.id,
             targetUserId: finalUid,
@@ -1473,43 +1484,39 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   }, [activeLesson]);
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] text-[#141413] flex flex-col">
-      {/* TOP BAR CONTRACT: 3 distinct zones on a single horizontal plane (h-16) */}
-      <header className="sticky top-0 z-40 h-16 border-b border-[#E5DEC9] bg-[#FAF7F2]/95 backdrop-blur-xs">
-        <div className="mx-auto flex h-full max-w-[1440px] items-center justify-between px-4 sm:px-8 gap-4">
-          {/* Zone 1: Brand Wordmark */}
+    <div className="min-h-screen bg-[#FAF7F1] text-[#171615] flex flex-col">
+      {/* TOP BAR CONTRACT: 3 distinct zones on a single horizontal plane */}
+      <header className="sticky top-0 z-40 border-b border-[#E3D7C3] bg-[#FAF7F1]/95 backdrop-blur-xs">
+        <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between px-4 sm:px-8 gap-3">
+          {/* Zone 1: Official FluentLoop Brand Logo */}
           <button
             type="button"
-            onClick={() => setActiveTab('library')}
-            className="flex items-center gap-2.5 text-left whitespace-nowrap cursor-pointer"
+            onClick={() => {
+              setActiveTab('library');
+              setMobileNavOpen(false);
+            }}
+            className="flex items-center text-left whitespace-nowrap cursor-pointer"
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#9A3412] text-white font-display font-bold text-lg">
-              F
-            </div>
-            <div>
-              <span className="font-display text-lg font-bold tracking-tight text-[#141413]">
-                FluentLoop
-              </span>
-              <span className="hidden sm:inline-block ml-1.5 text-xs font-medium text-[#57534E]">
-                Academic Reading
-              </span>
-            </div>
+            <BrandLogo variant="full" subtitle="READ · LEARN · IMPROVE" />
           </button>
 
-          {/* Zone 2: Primary Navigation Links */}
+          {/* Zone 2: Primary Navigation Links (Desktop) */}
           {startingLevel !== null ? (
-            <nav className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
+            <nav
+              className="hidden lg:flex items-center gap-1 xl:gap-1.5 overflow-x-auto"
+              aria-label="Learner workspace navigation"
+            >
               <button
                 type="button"
                 onClick={() => setActiveTab('library')}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'library' || activeTab === 'preview' || activeTab === 'reader'
-                    ? 'bg-[#141413] text-[#FAF7F2]'
-                    : 'text-[#57534E] hover:bg-[#F3EFE6] hover:text-[#141413]'
+                    ? 'bg-[#A63816] text-white'
+                    : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
               >
                 <BookOpen className="h-4 w-4" />
-                <span>Library</span>
+                <span>My Reading</span>
               </button>
 
               <button
@@ -1517,8 +1524,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 onClick={() => setActiveTab('history')}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'history'
-                    ? 'bg-[#141413] text-white'
-                    : 'text-[#57534E] hover:bg-[#F3EFE6]'
+                    ? 'bg-[#A63816] text-white'
+                    : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
               >
                 <Clock className="h-4 w-4" />
@@ -1530,8 +1537,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 onClick={() => setActiveTab('vocabulary')}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'vocabulary'
-                    ? 'bg-[#141413] text-[#FAF7F2]'
-                    : 'text-[#57534E] hover:bg-[#F3EFE6] hover:text-[#141413]'
+                    ? 'bg-[#A63816] text-white'
+                    : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
               >
                 <Bookmark className="h-4 w-4" />
@@ -1543,77 +1550,84 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 onClick={() => setActiveTab('analytics')}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'analytics'
-                    ? 'bg-[#141413] text-[#FAF7F2]'
-                    : 'text-[#57534E] hover:bg-[#F3EFE6] hover:text-[#141413]'
+                    ? 'bg-[#A63816] text-white'
+                    : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
               >
                 <BarChart3 className="h-4 w-4" />
                 <span>Progress & Level</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('admin')}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeTab === 'admin'
-                    ? 'bg-[#141413] text-[#FAF7F2]'
-                    : 'text-[#57534E] hover:bg-[#F3EFE6] hover:text-[#141413]'
-                }`}
-              >
-                <Sliders className="h-4 w-4" />
-                <span>Content Studio</span>
-              </button>
+              {isAdminVerified && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('admin')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeTab === 'admin'
+                        ? 'bg-[#A63816] text-white'
+                        : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
+                    }`}
+                  >
+                    <Sliders className="h-4 w-4" />
+                    <span>Content Studio</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('docs')}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeTab === 'docs'
-                    ? 'bg-[#141413] text-[#FAF7F2]'
-                    : 'text-[#57534E] hover:bg-[#F3EFE6] hover:text-[#141413]'
-                }`}
-              >
-                <FileText className="h-4 w-4" />
-                <span>Guide</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('docs')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeTab === 'docs'
+                        ? 'bg-[#A63816] text-white'
+                        : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
+                    }`}
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span>Guide</span>
+                  </button>
+                </>
+              )}
             </nav>
           ) : (
-            <nav className="hidden md:flex items-center gap-2 text-xs font-semibold text-[#57534E]">
+            <nav
+              className="hidden md:flex items-center gap-1 lg:gap-2 text-xs font-semibold text-[#76675B]"
+              aria-label="Public educational navigation"
+            >
               <Link
                 href="/guides/ielts-academic-reading"
-                className="rounded-lg px-3 py-1.5 hover:bg-[#F3EFE6] hover:text-[#141413]"
+                className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 IELTS Reading Guide
               </Link>
               <Link
                 href="/guides/cefr-reading-levels"
-                className="rounded-lg px-3 py-1.5 hover:bg-[#F3EFE6] hover:text-[#141413]"
+                className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 CEFR A1–C1 Levels
               </Link>
               <Link
                 href="/guides/vocabulary-in-context"
-                className="rounded-lg px-3 py-1.5 hover:bg-[#F3EFE6] hover:text-[#141413]"
+                className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 Contextual Vocabulary
               </Link>
               <Link
                 href="/sample-lessons"
-                className="rounded-lg px-3 py-1.5 hover:bg-[#F3EFE6] hover:text-[#141413]"
+                className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 Sample Passages
               </Link>
             </nav>
           )}
 
-          {/* Zone 3: Single Primary Action / Auth */}
+          {/* Zone 3: Single Primary Action / Auth & Mobile Menu Toggle */}
           <div className="flex items-center gap-2 whitespace-nowrap">
             {(startingLevel !== null || placementSession !== null) && (
               <button
                 type="button"
                 onClick={handleResetAsNewUser}
                 title="Clear cached progress and restart as a new user"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#57534E] hover:bg-[#F3EFE6] hover:text-[#141413] cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-2.5 py-1.5 text-xs font-semibold text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615] cursor-pointer transition-colors"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Start as New User</span>
@@ -1624,7 +1638,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               onClick={handleToggleTheme}
               aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#D8CFC2] bg-white text-[#57534E] transition hover:bg-[#F3EFE6] focus:outline-none focus:ring-2 focus:ring-[#9A3412] cursor-pointer"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] text-[#76675B] transition hover:bg-[#F2EDE3] hover:text-[#171615] focus:outline-none focus:ring-2 focus:ring-[#A63816] cursor-pointer"
             >
               {theme === 'light' ? (
                 <Moon className="h-4 w-4" aria-hidden="true" />
@@ -1636,38 +1650,128 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               </span>
             </button>
             {currentUser && !currentUser.isAnonymous ? (
-              <div className="flex items-center gap-2.5">
-                <span className="hidden md:inline-block text-xs text-[#57534E]">
+              <div className="flex items-center gap-2">
+                <span className="hidden md:inline-block text-xs text-[#76675B]">
                   {currentUser.displayName || currentUser.email} ·{' '}
-                  <strong className="font-mono-code text-[#9A3412]">{currentLevel}</strong>
+                  <strong className="font-mono-code text-[#A63816]">{currentLevel}</strong>
                 </span>
                 <button
                   type="button"
                   onClick={handleSignOut}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6] cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer transition-colors"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  <span>Sign Out</span>
+                  <span className="hidden sm:inline">Sign Out</span>
                 </button>
               </div>
             ) : (
               <button
                 type="button"
                 onClick={handleSignIn}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#9A3412] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#7C2D12] cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#A63816] px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#842B12] cursor-pointer transition-colors"
               >
                 <LogIn className="h-3.5 w-3.5" />
                 <span>Sign In with Google</span>
               </button>
             )}
+
+            {/* Mobile Menu Button */}
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen((prev) => !prev)}
+              aria-expanded={mobileNavOpen}
+              aria-label="Toggle navigation menu"
+              className="inline-flex lg:hidden h-9 w-9 items-center justify-center rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615] cursor-pointer"
+            >
+              {mobileNavOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </button>
           </div>
         </div>
+
+        {/* Collapsible Mobile Navigation Drawer */}
+        {mobileNavOpen && (
+          <nav
+            aria-label="Mobile navigation"
+            className="lg:hidden border-t border-[#E3D7C3] bg-[#FAF7F1] px-4 py-3 space-y-1"
+          >
+            {startingLevel !== null ? (
+              <>
+                {(
+                  [
+                    ['library', 'My Reading', BookOpen],
+                    ['history', 'Reading History', Clock],
+                    ['vocabulary', `Vocabulary Bank (${savedVocab.length})`, Bookmark],
+                    ['analytics', 'Progress & Level', BarChart3],
+                    ...(isAdminVerified
+                      ? ([
+                          ['admin', 'Content Studio', Sliders],
+                          ['docs', 'Guide', FileText],
+                        ] as const)
+                      : []),
+                  ] as const
+                ).map(([tabKey, label, IconComponent]) => (
+                  <button
+                    key={tabKey}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(tabKey);
+                      setMobileNavOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-semibold text-left transition-colors ${
+                      activeTab === tabKey
+                        ? 'bg-[#A63816] text-white'
+                        : 'text-[#171615] hover:bg-[#F2EDE3]'
+                    }`}
+                  >
+                    <IconComponent className="h-4 w-4" />
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/guides/ielts-academic-reading"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                >
+                  <BookOpen className="h-4 w-4 text-[#A63816]" />
+                  <span>IELTS Reading Guide</span>
+                </Link>
+                <Link
+                  href="/guides/cefr-reading-levels"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                >
+                  <Compass className="h-4 w-4 text-[#A63816]" />
+                  <span>CEFR A1–C1 Levels</span>
+                </Link>
+                <Link
+                  href="/guides/vocabulary-in-context"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                >
+                  <FileText className="h-4 w-4 text-[#A63816]" />
+                  <span>Contextual Vocabulary</span>
+                </Link>
+                <Link
+                  href="/sample-lessons"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                >
+                  <Sparkles className="h-4 w-4 text-[#A63816]" />
+                  <span>Sample Passages</span>
+                </Link>
+              </>
+            )}
+          </nav>
+        )}
       </header>
 
       {/* MAIN CONTENT WORKSPACE */}
       <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 sm:px-8 py-6 sm:py-8">
         {completionNotice && (
-          <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-[#D97706] bg-[#FEF3C7] px-4 py-3 text-xs font-medium text-[#92400E]">
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-[#946200]/45 bg-[#FEF3C7] px-4 py-3 text-xs font-medium text-[#946200]">
             <span>{completionNotice}</span>
             <button
               type="button"
@@ -1703,60 +1807,84 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           />
         ) : startingLevel === null ? (
           <section
-            className="mx-auto w-full max-w-6xl py-8 sm:py-14"
+            className="mx-auto w-full max-w-6xl py-6 sm:py-12"
             aria-labelledby="landing-title"
           >
-            <div className="overflow-hidden rounded-3xl border border-[#E5DEC9] bg-[#F3EFE6] shadow-sm">
-              <div className="grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.05fr_0.95fr] lg:p-14">
+            {/* HERO SECTION: Warm Editorial Reading Journal */}
+            <div className="relative overflow-hidden rounded-3xl border border-[#E3D7C3] bg-[#F2EDE3] shadow-xs">
+              {/* Decorative hand-drawn botanical foliage in corners */}
+              <AutumnBranchIllustration className="pointer-events-none absolute -right-6 -top-4 h-28 w-52 opacity-70" />
+              <CornerBotanicalSprig className="pointer-events-none absolute -bottom-5 -left-5 h-28 w-28 rotate-180 opacity-45" />
+
+              <div className="relative z-10 grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.06fr_0.94fr] lg:p-14">
                 <div className="animate-[fadeIn_.45s_ease-out]">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-[#D8CFC2] bg-[#FAF7F2] px-3 py-1.5 font-mono-code text-[10px] font-bold uppercase tracking-[0.16em] text-[#9A3412]">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-[#E3D7C3] bg-[#FAF7F1] px-3.5 py-1.5 font-mono-code text-[10px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
                     English reading, one passage at a time
                   </span>
                   <h1
                     id="landing-title"
-                    className="mt-5 max-w-2xl font-display text-4xl font-bold leading-[1.08] tracking-tight text-[#141413] sm:text-5xl lg:text-6xl"
+                    className="mt-5 max-w-2xl font-display text-4xl font-bold leading-[1.07] tracking-tight text-[#171615] sm:text-5xl lg:text-6xl"
                   >
-                    Grow your English through <span className="text-[#9A3412]">reading.</span>
+                    Grow your English through <span className="text-[#A63816]">reading.</span>
                   </h1>
-                  <p className="mt-5 max-w-xl text-base leading-relaxed text-[#57534E] sm:text-lg">
-                    Take a short, adaptive 3-passage placement check to discover your recommended
-                    CEFR reading level, then build contextual vocabulary and comprehension with
-                    guided practice tailored to you.
+                  <p className="mt-5 max-w-xl text-base leading-relaxed text-[#76675B] sm:text-lg">
+                    Practice with level-matched passages, understand vocabulary in context, and
+                    build confidence for real-world English and IELTS-style reading. Take a short,
+                    adaptive 3-passage placement check to discover your recommended CEFR level.
                   </p>
                   <div className="mt-7 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
                       onClick={() => handleStartPlacementAssessment(false)}
-                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#9A3412] px-6 py-3 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#7C2D12] focus:outline-none focus:ring-4 focus:ring-[#9A3412]/30 cursor-pointer"
+                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#A63816] px-6 py-3.5 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#842B12] focus:outline-none focus:ring-4 focus:ring-[#A63816]/30 cursor-pointer"
                     >
                       {placementSession && placementSession.steps.length > 0
                         ? 'Resume Your Placement Check'
                         : 'Start Your Reading Journey'}{' '}
                       <span aria-hidden="true">→</span>
                     </button>
+
+                    <Link
+                      href="/sample-lessons"
+                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] px-5 py-3.5 text-sm font-semibold text-[#171615] transition hover:bg-[#FAF7F1] hover:border-[#A63816]/50"
+                    >
+                      <span>Explore Sample Passages</span>
+                    </Link>
                   </div>
-                  <p className="mt-3 text-xs text-[#78716C]">
+                  <p className="mt-3.5 text-xs text-[#76675B]">
                     Up to 3 short passages · ~5–8 minutes · Instant CEFR level recommendation before
                     sign-in
                   </p>
                 </div>
-                <div className="relative overflow-hidden rounded-2xl border border-[#D8CFC2] bg-[#0D5B48] shadow-lg transition-transform duration-300 hover:scale-[1.01]">
-                  <img
-                    src={INITIAL_LESSONS[0]?.illustrationUrl}
-                    alt="Illustration from a FluentLoop reading passage"
-                    className="aspect-[4/3] w-full object-cover"
-                  />
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-5 pt-16 text-white">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-white/80">
+
+                {/* Right Column: Editorial Reading Journal & Books Illustration Card */}
+                <div className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 sm:p-6 shadow-md">
+                  <div className="flex items-center justify-between border-b border-[#E3D7C3] pb-3 mb-2">
+                    <span className="font-mono-code text-[10px] font-bold uppercase tracking-[0.18em] text-[#A63816]">
                       Read · Understand · Grow
                     </span>
-                    <p className="mt-1 font-display text-xl font-bold">
-                      Explore ideas through English
-                    </p>
+                    <span className="rounded-full bg-[#F7E9DC] px-2.5 py-0.5 font-mono-code text-[10px] font-semibold text-[#842B12]">
+                      CEFR A1–C1 Journal
+                    </span>
+                  </div>
+
+                  <CozyBookStackIllustration className="w-full h-auto" />
+
+                  <div className="mt-2 rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-3.5 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-display text-base font-bold text-[#171615]">
+                        Explore ideas through English
+                      </p>
+                      <p className="text-xs text-[#76675B]">
+                        Every word in every passage includes a contextual English-to-English definition.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
+
+            {/* FEATURE CARDS SECTION */}
             <section
               className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
               aria-label="FluentLoop benefits"
@@ -1781,50 +1909,266 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               ].map(([title, description], i) => (
                 <article
                   key={title}
-                  className="rounded-2xl border border-[#E5DEC9] bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md"
+                  className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md"
                 >
-                  <span className="font-mono-code text-xs font-bold text-[#9A3412]">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-[#F7E9DC] font-mono-code text-xs font-bold text-[#A63816]">
                     0{i + 1}
                   </span>
-                  <h2 className="mt-3 font-display text-lg font-bold text-[#141413]">{title}</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-[#57534E]">{description}</p>
+                  <h2 className="mt-3.5 font-display text-lg font-bold text-[#171615]">{title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-[#76675B]">{description}</p>
                 </article>
               ))}
             </section>
-            <section className="mt-8 rounded-2xl border border-[#E5DEC9] bg-[#FAF7F2] p-6 sm:p-8">
-              <h2 className="font-display text-2xl font-bold text-[#141413]">
-                How your personalized reading journey works
-              </h2>
-              <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+
+            <LeafSeparator className="my-10" />
+
+            {/* HOW IT WORKS SECTION */}
+            <section className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-9 shadow-xs">
+              <OliveTerracottaLeafCluster className="pointer-events-none absolute -right-2 -top-2 h-16 w-16 opacity-50" />
+              <div className="max-w-2xl">
+                <span className="font-mono-code text-[11px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
+                  Calm, Structured Progression
+                </span>
+                <h2 className="mt-1.5 font-display text-2xl sm:text-3xl font-bold text-[#171615]">
+                  How your personalized reading journey works
+                </h2>
+              </div>
+
+              <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
                 {[
-                  ['01', 'Complete up to 3 short placement texts'],
-                  ['02', 'See your recommended CEFR level'],
-                  ['03', 'Continue with Google to save your level'],
-                  ['04', 'Read adaptive passages at your pace'],
-                ].map(([n, title]) => (
-                  <div key={n} className="flex gap-3">
-                    <span className="font-mono-code text-xs font-bold text-[#9A3412]">{n}</span>
-                    <p className="text-sm font-semibold text-[#141413]">{title}</p>
+                  [
+                    '01',
+                    'Complete up to 3 short placement texts',
+                    'Read brief diagnostic passages that adapt to your answers in real time.',
+                  ],
+                  [
+                    '02',
+                    'See your recommended CEFR level',
+                    'Receive an honest A1–C1 starting recommendation with passage-by-passage evidence.',
+                  ],
+                  [
+                    '03',
+                    'Continue with Google to save your level',
+                    'Unlock your personalized course and keep your reading history and vocabulary synced.',
+                  ],
+                  [
+                    '04',
+                    'Read adaptive passages at your pace',
+                    'Look up any word in English and answer IELTS-style questions with proof quotes.',
+                  ],
+                ].map(([n, title, detail]) => (
+                  <div
+                    key={n}
+                    className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4 space-y-2"
+                  >
+                    <span className="font-mono-code text-xs font-bold text-[#A63816]">{n}</span>
+                    <h3 className="text-sm font-bold text-[#171615]">{title}</h3>
+                    <p className="text-xs leading-relaxed text-[#76675B]">{detail}</p>
                   </div>
                 ))}
               </div>
-              <p className="mt-4 max-w-3xl text-sm leading-relaxed text-[#57534E]">
-                FluentLoop starts with a quick 3-passage diagnostic check to estimate your ideal
-                starting level, then guides your next reading and gradually introduces more
-                demanding passages while keeping your reading history and vocabulary bank synced.
-              </p>
+            </section>
+
+            <LeafSeparator className="my-10" />
+
+            {/* SAMPLE PASSAGES PREVIEW SECTION */}
+            <section aria-labelledby="sample-passages-heading" className="space-y-6">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <span className="font-mono-code text-[11px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
+                    Inside the Reading Journal
+                  </span>
+                  <h2
+                    id="sample-passages-heading"
+                    className="mt-1 font-display text-2xl sm:text-3xl font-bold text-[#171615]"
+                  >
+                    Explore authentic passages across CEFR levels
+                  </h2>
+                </div>
+                <Link
+                  href="/sample-lessons"
+                  className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-[#A63816] hover:text-[#842B12] hover:underline"
+                >
+                  <span>View all public sample lessons</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+
+              <div className="grid gap-5 md:grid-cols-3">
+                {[
+                  {
+                    slug: 'a1-sci-solar-lamps',
+                    level: 'A1',
+                    title: 'Solar Lamps in Remote Villages',
+                    topic: 'Renewable Energy & Daily Life',
+                    photo: '/photos/a1-sci-solar-lamps.jpg',
+                    summary:
+                      'How compact solar-powered lamps replace kerosene lanterns and support evening study.',
+                  },
+                  {
+                    slug: 'b1-sci-sodium-batteries',
+                    level: 'B1',
+                    title: 'Sodium-Ion Salt Batteries',
+                    topic: 'Clean Energy & Chemistry',
+                    photo: '/photos/b1-sci-sodium-batteries.jpg',
+                    summary:
+                      'Why abundant sea-salt sodium is emerging as a practical partner to lithium battery storage.',
+                  },
+                  {
+                    slug: 'c1-01-neuromorphic-computing',
+                    level: 'C1',
+                    title: 'Neuromorphic Silicon Architectures',
+                    topic: 'Computer Architecture & Neuroscience',
+                    photo: '/photos/c1-01-neuromorphic-computing.jpg',
+                    summary:
+                      'How event-driven spiking neural hardware emulates biological synapses to cut energy use.',
+                  },
+                ].map((sample) => (
+                  <Link
+                    key={sample.slug}
+                    href={`/sample-lessons/${sample.slug}`}
+                    className="group overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-xs transition duration-200 hover:-translate-y-1 hover:shadow-md flex flex-col"
+                  >
+                    <div className="relative aspect-video w-full overflow-hidden bg-[#F2EDE3]">
+                      <img
+                        src={sample.photo}
+                        alt={sample.title}
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      />
+                      <span className="absolute top-3 left-3 rounded-full bg-[#FAF7F1]/95 px-2.5 py-1 font-mono-code text-[11px] font-bold text-[#A63816]">
+                        CEFR {sample.level}
+                      </span>
+                    </div>
+                    <div className="p-5 flex-1 flex flex-col justify-between space-y-3">
+                      <div>
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-[#76675B]">
+                          {sample.topic}
+                        </span>
+                        <h3 className="mt-1 font-display text-lg font-bold text-[#171615] group-hover:text-[#A63816] transition-colors">
+                          {sample.title}
+                        </h3>
+                        <p className="mt-1.5 text-xs leading-relaxed text-[#76675B]">
+                          {sample.summary}
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-[#A63816]">
+                        Read sample passage <ArrowRight className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </section>
+
+            <LeafSeparator className="my-10" />
+
+            {/* IELTS GUIDANCE & FAQ SECTION */}
+            <section className="grid gap-6 lg:grid-cols-2" aria-label="IELTS reading guidance and FAQ">
+              <div className="rounded-2xl border border-[#E3D7C3] bg-[#F2EDE3] p-6 sm:p-8 space-y-4">
+                <span className="font-mono-code text-[11px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
+                  Academic & Exam Readiness
+                </span>
+                <h2 className="font-display text-2xl font-bold text-[#171615]">
+                  Thoughtful preparation for IELTS Academic Reading
+                </h2>
+                <p className="text-sm leading-relaxed text-[#76675B]">
+                  Instead of isolated drills, FluentLoop pairs authentic science, history, and
+                  environmental passages with the exact question structures used in academic reading
+                  assessments:
+                </p>
+                <ul className="space-y-2 text-xs sm:text-sm text-[#171615]">
+                  <li className="flex items-start gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-[#287A52] shrink-0 mt-0.5" />
+                    <span>
+                      <strong>True / False / Not Given & Yes / No / Not Given</strong> with direct
+                      sentence evidence verification.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-[#287A52] shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Sentence, Note & Summary Completion</strong> enforcing strict IELTS
+                      word-count rules (<em>One Word Only</em>, <em>No More Than Two Words</em>).
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-[#287A52] shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Paragraph Information Matching & Multiple Choice</strong> with detailed
+                      explanations for every question.
+                    </span>
+                  </li>
+                </ul>
+                <div className="pt-2 flex flex-wrap gap-3">
+                  <Link
+                    href="/guides/ielts-academic-reading"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3.5 py-2 text-xs font-semibold text-[#171615] hover:border-[#A63816]"
+                  >
+                    <span>Read the IELTS Strategy Guide</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-[#A63816]" />
+                  </Link>
+                  <Link
+                    href="/guides/cefr-reading-levels"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3.5 py-2 text-xs font-semibold text-[#171615] hover:border-[#A63816]"
+                  >
+                    <span>Explore CEFR A1–C1 Levels</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-[#A63816]" />
+                  </Link>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-8 space-y-4">
+                <span className="font-mono-code text-[11px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
+                  Common Questions
+                </span>
+                <h2 className="font-display text-2xl font-bold text-[#171615]">
+                  How FluentLoop supports your reading habit
+                </h2>
+                <div className="space-y-3.5 divide-y divide-[#E3D7C3]">
+                  <div className="pt-1">
+                    <h3 className="text-sm font-bold text-[#171615]">
+                      Why are all word definitions in English only?
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-[#76675B]">
+                      Understanding unfamiliar words through clear, level-appropriate English
+                      definitions and sentence context builds direct reading fluency without the
+                      mental pause of translating back and forth.
+                    </p>
+                  </div>
+                  <div className="pt-3.5">
+                    <h3 className="text-sm font-bold text-[#171615]">
+                      Can I look up any word in a passage?
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-[#76675B]">
+                      Yes. Key academic terms are highlighted, and every other word in every passage
+                      can also be hovered, double-clicked, or tapped for an instant offline
+                      English-to-English definition.
+                    </p>
+                  </div>
+                  <div className="pt-3.5">
+                    <h3 className="text-sm font-bold text-[#171615]">
+                      Do I need an account before taking the placement check?
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-[#76675B]">
+                      No. You can complete the 3-passage adaptive placement check and view your
+                      recommended CEFR starting level first, then sign in with Google when you are
+                      ready to save your result.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </section>
           </section>
         ) : (
           <>
-            {/* Returning user one-time placement calibration prompt (if user has history but no recorded placementLevel) */}
+            {/* Returning user one-time placement calibration prompt */}
             {!placementLevel && attempts.length > 0 && !dismissedPlacementPrompt && (
-              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#9A3412]/30 bg-[#FEF3C7]/45 px-5 py-4 text-xs sm:text-sm text-[#141413]">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#A63816]/30 bg-[#F7E9DC]/70 px-5 py-4 text-xs sm:text-sm text-[#171615]">
                 <div className="space-y-0.5 max-w-2xl">
-                  <div className="font-bold text-[#9A3412]">
+                  <div className="font-bold text-[#A63816]">
                     Calibrate Your Reading Level (One-Time 3-Passage Check)
                   </div>
-                  <p className="text-xs text-[#57534E]">
+                  <p className="text-xs text-[#76675B]">
                     We noticed you have prior reading activity but no recorded placement check. Take
                     our 5-minute, 3-passage adaptive placement check once to confirm your ideal CEFR
                     level while keeping all your existing reading history and saved vocabulary.
@@ -1834,14 +2178,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   <button
                     type="button"
                     onClick={() => handleStartPlacementAssessment(true)}
-                    className="rounded-xl bg-[#9A3412] px-4 py-2 text-xs font-bold text-white hover:bg-[#7C2D12] cursor-pointer"
+                    className="rounded-xl bg-[#A63816] px-4 py-2 text-xs font-bold text-white hover:bg-[#842B12] cursor-pointer"
                   >
                     Take 3-Passage Placement Check
                   </button>
                   <button
                     type="button"
                     onClick={() => setDismissedPlacementPrompt(true)}
-                    className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#57534E] hover:text-[#141413] cursor-pointer"
+                    className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#76675B] hover:text-[#171615] cursor-pointer"
                   >
                     Later
                   </button>
@@ -1852,30 +2196,38 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             {/* VIEW 1: PERSONALIZED READING DASHBOARD */}
             {activeTab === 'library' && (
               <div className="space-y-8">
-                <section className="rounded-2xl border border-[#E5DEC9] bg-[#F3EFE6] p-6 sm:p-8">
-                  <div className="grid gap-6 lg:grid-cols-12 items-center">
+                {/* Warm Editorial Welcome Banner */}
+                <section className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#F2EDE3] p-6 sm:p-8">
+                  <CornerBotanicalSprig className="pointer-events-none absolute -right-4 -top-4 h-28 w-28 opacity-45" />
+                  <div className="relative z-10 grid gap-6 lg:grid-cols-12 items-center">
                     <div className="lg:col-span-7 space-y-3">
-                      <div className="font-mono-code text-xs uppercase tracking-widest text-[#9A3412]">
-                        Personalized Reading Journey · English-to-English Contextual Lexicon
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="font-mono-code text-xs font-bold uppercase tracking-[0.16em] text-[#A63816]">
+                          Your Reading Space · English-to-English Journal
+                        </div>
                       </div>
-                      <h1 className="font-display text-2xl sm:text-4xl font-bold tracking-tight text-[#141413] leading-[1.15]">
-                        Build Deep Reading Stamina Through Contextual English Explanations.
-                      </h1>
-                      <p className="text-sm sm:text-base text-[#57534E] max-w-[62ch] leading-relaxed">
-                        Every passage highlights essential academic words explained in clear,
-                        familiar English tailored to that exact sentence—training you to think
-                        directly in English without relying on default bilingual translation.
-                      </p>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                        <div className="space-y-2.5 flex-1">
+                          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-[#171615] leading-[1.12]">
+                            Small steps. Big progress.
+                          </h1>
+                          <p className="text-sm sm:text-base text-[#76675B] max-w-[60ch] leading-relaxed">
+                            Read a short passage, explore key words in context, and answer a few
+                            questions to keep moving forward.
+                          </p>
+                        </div>
+                        <BooksAndTeaIllustration className="hidden sm:block w-32 h-24 shrink-0" />
+                      </div>
 
                       <div className="pt-2 flex flex-wrap items-center gap-2.5">
-                        <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413]">
-                          <span className="text-[#57534E]">Assigned Level:</span>
-                          <strong className="font-mono-code text-sm font-bold text-[#9A3412]">
+                        <span className="inline-flex items-center gap-2 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-semibold text-[#171615]">
+                          <span className="text-[#76675B]">Assigned Level:</span>
+                          <strong className="font-mono-code text-sm font-bold text-[#A63816]">
                             {LEVEL_DESCRIPTIONS[currentLevel].split(' (')[0]}
                           </strong>
                         </span>
                         {placementLevel && (
-                          <span className="inline-flex items-center gap-1 rounded-lg bg-[#DCFCE7] px-2.5 py-1 font-mono-code text-[11px] font-bold text-[#14532D]">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-[#E6F2EC] px-2.5 py-1 font-mono-code text-[11px] font-bold text-[#287A52]">
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             Placement Calibrated ({placementLevel})
                           </span>
@@ -1884,42 +2236,47 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     </div>
 
                     {/* Adaptive Recommendation Card */}
-                    <div className="lg:col-span-5 rounded-xl border border-[#D8CFC2] bg-[#FAF7F2] p-5 space-y-3">
+                    <div className="lg:col-span-5 rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-5 space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#9A3412]">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#A63816]">
                           <Compass className="h-4 w-4" />
                           Adaptive Level Advisor
                         </span>
-                        <span className="font-mono-code text-xs text-[#57534E] tabular-nums">
+                        <span className="font-mono-code text-xs text-[#76675B] tabular-nums">
                           {adaptiveRecommendation.completedAtCurrentLevel}/3 Passages at{' '}
                           {currentLevel}
                         </span>
                       </div>
 
-                      <p className="text-xs sm:text-sm text-[#141413] leading-relaxed font-medium">
+                      <p className="text-xs sm:text-sm text-[#171615] leading-relaxed font-medium">
                         {adaptiveRecommendation.reason}
                       </p>
 
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E5DEC9] pt-3 text-xs text-[#57534E] tabular-nums">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E3D7C3] pt-3 text-xs text-[#76675B] tabular-nums">
                         <span>
-                          Recent Avg: <strong>{adaptiveRecommendation.recentAverageAccuracy}%</strong>
+                          Recent Avg:{' '}
+                          <strong className="text-[#171615]">
+                            {adaptiveRecommendation.recentAverageAccuracy}%
+                          </strong>
                         </span>
                         <span>·</span>
                         <span>
-                          Completed: <strong>{attempts.length} Passages</strong>
+                          Completed:{' '}
+                          <strong className="text-[#171615]">{attempts.length} Passages</strong>
                         </span>
                         <span>·</span>
                         <span>
-                          Saved Words: <strong>{savedVocab.length}</strong>
+                          Saved Words:{' '}
+                          <strong className="text-[#171615]">{savedVocab.length}</strong>
                         </span>
                       </div>
                     </div>
                   </div>
                 </section>
 
-                {/* Prominent next passage card */}
+                {/* Prominent Next Passage Card */}
                 {dashboardLesson && (
-                  <section className="group overflow-hidden rounded-2xl border border-[#D8CFC2] bg-white shadow-md transition-shadow hover:shadow-lg">
+                  <section className="group overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-sm transition-shadow hover:shadow-md">
                     <div className="grid md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
                       <button
                         type="button"
@@ -1933,7 +2290,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                             ? 'Continue reading ' + dashboardLesson.title
                             : 'Start reading ' + dashboardLesson.title
                         }
-                        className="relative block min-h-56 w-full overflow-hidden bg-[#EAE3D5] text-left md:min-h-72"
+                        className="relative block min-h-56 w-full overflow-hidden bg-[#F2EDE3] text-left md:min-h-72 cursor-pointer"
                       >
                         <img
                           src={dashboardLesson.illustrationUrl}
@@ -1941,37 +2298,39 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                           className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
-                        <span className="absolute bottom-4 left-5 rounded-full bg-white/95 px-3 py-1 text-xs font-bold text-[#9A3412]">
+                        <span className="absolute bottom-4 left-5 rounded-full bg-[#FAF7F1]/95 px-3 py-1 text-xs font-bold text-[#A63816]">
                           {dashboardLesson.level} · {dashboardLesson.estimatedMinutes} min read
                         </span>
                       </button>
                       <div className="flex flex-col justify-center p-6 sm:p-8">
-                        <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#9A3412]">
+                        <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#A63816]">
                           {dashboardAttempt ? 'Pick up where you left off' : 'Your next passage'}
                         </span>
-                        <h2 className="mt-3 font-display text-2xl font-bold leading-tight text-[#141413] sm:text-3xl">
+                        <h2 className="mt-3 font-display text-2xl font-bold leading-tight text-[#171615] sm:text-3xl">
                           {dashboardLesson.title}
                         </h2>
-                        <p className="mt-3 text-sm leading-relaxed text-[#57534E]">
+                        <p className="mt-3 text-sm leading-relaxed text-[#76675B]">
                           {dashboardLesson.introduction}
                         </p>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            dashboardAttempt
-                              ? handleOpenLesson(dashboardLesson, 'first', dashboardAttempt)
-                              : handleStartNextPassage(dashboardLesson)
-                          }
-                          className="mt-6 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#9A3412] px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#7C2D12] focus:outline-none focus:ring-4 focus:ring-[#9A3412]/25"
-                        >
-                          {dashboardAttempt
-                            ? 'Continue Reading'
-                            : attempts.length === 0
-                            ? 'Start Reading'
-                            : 'Start Next Passage'}{' '}
-                          <span aria-hidden="true">→</span>
-                        </button>
-                        <p className="mt-2 text-xs text-[#78716C]">
+                        <div className="mt-6 flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              dashboardAttempt
+                                ? handleOpenLesson(dashboardLesson, 'first', dashboardAttempt)
+                                : handleStartNextPassage(dashboardLesson)
+                            }
+                            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#A63816] px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#842B12] focus:outline-none focus:ring-4 focus:ring-[#A63816]/25 cursor-pointer"
+                          >
+                            {dashboardAttempt
+                              ? 'Continue Reading'
+                              : attempts.length === 0
+                              ? 'Start Reading'
+                              : 'Start Next Passage'}{' '}
+                            <span aria-hidden="true">→</span>
+                          </button>
+                        </div>
+                        <p className="mt-3 text-xs text-[#76675B]">
                           {dashboardLesson.topic} ·{' '}
                           {dashboardLesson.wordCount ||
                             dashboardLesson.passage.split(/\s+/).length}{' '}
@@ -1980,6 +2339,153 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       </div>
                     </div>
                   </section>
+                )}
+
+                {/* Admin-Only Full Passage Browser (Learners only receive their adaptively assigned passage above) */}
+                {isAdminVerified && (
+                  <>
+                    <LeafSeparator className="my-6" />
+
+                    <section className="space-y-5" aria-labelledby="reading-library-heading">
+                      <div className="flex flex-wrap items-end justify-between gap-4">
+                        <div>
+                          <span className="font-mono-code text-[11px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
+                            Admin Catalog View · {publishedLessons.length} Passages
+                          </span>
+                          <h2
+                            id="reading-library-heading"
+                            className="mt-1 font-display text-2xl font-bold text-[#171615]"
+                          >
+                            All Passages (Admin-Only Browser)
+                          </h2>
+                        </div>
+
+                        {/* Filters */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-1 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-1">
+                            {(['ALL', ...CEFR_LEVELS] as const).map((lvl) => (
+                              <button
+                                key={lvl}
+                                type="button"
+                                onClick={() => setSelectedLevelFilter(lvl)}
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                                  selectedLevelFilter === lvl
+                                    ? 'bg-[#A63816] text-white'
+                                    : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
+                                }`}
+                              >
+                                {lvl === 'ALL' ? 'All Levels' : lvl}
+                              </button>
+                            ))}
+                          </div>
+
+                          <select
+                            value={selectedTopicFilter}
+                            onChange={(e) => setSelectedTopicFilter(e.target.value)}
+                            aria-label="Filter passages by topic"
+                            className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-medium text-[#171615] focus:border-[#A63816] focus:outline-none"
+                          >
+                            <option value="ALL">All Topics</option>
+                            {availableTopics.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            value={completionFilter}
+                            onChange={(e) => setCompletionFilter(e.target.value as any)}
+                            aria-label="Filter passages by completion status"
+                            className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-medium text-[#171615] focus:border-[#A63816] focus:outline-none"
+                          >
+                            <option value="ALL">All Status</option>
+                            <option value="UNREAD">Unread</option>
+                            <option value="COMPLETED">Completed</option>
+                          </select>
+
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-[#76675B]" />
+                            <input
+                              type="text"
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              placeholder="Search passages..."
+                              className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] pl-8 pr-3 py-1.5 text-xs text-[#171615] placeholder-[#76675B]/70 focus:border-[#A63816] focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                        {filteredLibraryLessons.map((lesson) => {
+                          const isDone = completedLessonIds.has(lesson.id);
+                          const bestScore = bestScoreByLessonId[lesson.id];
+                          return (
+                            <article
+                              key={lesson.id}
+                              className="group overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-xs transition duration-200 hover:-translate-y-0.5 hover:shadow-md flex flex-col"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handlePreviewLesson(lesson)}
+                                className="relative aspect-video w-full overflow-hidden bg-[#F2EDE3] text-left cursor-pointer"
+                              >
+                                <img
+                                  src={lesson.illustrationUrl}
+                                  alt={lesson.illustrationAlt || lesson.title}
+                                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                />
+                                <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                                  <span className="rounded-full bg-[#FAF7F1]/95 px-2.5 py-0.5 font-mono-code text-[11px] font-bold text-[#A63816]">
+                                    {lesson.level}
+                                  </span>
+                                  <span className="rounded-full bg-black/65 px-2.5 py-0.5 text-[11px] font-medium text-white">
+                                    {lesson.estimatedMinutes} min
+                                  </span>
+                                </div>
+                                {isDone && (
+                                  <span className="absolute top-3 right-3 inline-flex items-center gap-1 rounded-full bg-[#287A52] px-2.5 py-0.5 font-mono-code text-[10px] font-bold text-white">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    {bestScore !== undefined ? `${bestScore}%` : 'Read'}
+                                  </span>
+                                )}
+                              </button>
+                              <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                                <div>
+                                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#76675B]">
+                                    {lesson.topic}
+                                  </span>
+                                  <h3 className="mt-1 font-display text-lg font-bold text-[#171615] group-hover:text-[#A63816] transition-colors">
+                                    {lesson.title}
+                                  </h3>
+                                  <p className="mt-1.5 text-xs leading-relaxed text-[#76675B] line-clamp-2">
+                                    {lesson.introduction}
+                                  </p>
+                                </div>
+                                <div className="flex items-center justify-between border-t border-[#E3D7C3] pt-3 text-xs">
+                                  <span className="text-[#76675B] tabular-nums">
+                                    {lesson.wordCount || lesson.passage.split(/\s+/).length} words ·{' '}
+                                    {lesson.questions.length} Qs
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenLesson(lesson, isDone ? 'practice' : 'first')
+                                    }
+                                    className="inline-flex items-center gap-1 font-bold text-[#A63816] hover:text-[#842B12] cursor-pointer"
+                                  >
+                                    <span>{isDone ? 'Practice Again' : 'Read Passage'}</span>
+                                    <ArrowRight className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  </>
                 )}
               </div>
             )}
@@ -1998,19 +2504,22 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             {/* VIEW 2: INTERACTIVE READING WORKSPACE */}
             {activeTab === 'reader' && activeLesson && (
               <div className="space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E5DEC9] pb-4">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E3D7C3] pb-4">
                   <button
                     type="button"
                     onClick={() => setActiveTab('library')}
-                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-[#57534E] hover:text-[#141413] cursor-pointer"
+                    className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-[#76675B] hover:text-[#171615] cursor-pointer"
                   >
                     <ArrowLeft className="h-4 w-4" />
                     Back to Reading Library
                   </button>
 
                   <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-1 rounded-lg border border-[#D8CFC2] bg-[#FFFDF9] p-1">
-                      <span className="px-2 text-[11px] font-semibold text-[#78716C]">
+                    <span className="text-xs text-[#76675B]">
+                      Hover, double-click, or tap any word for an English definition
+                    </span>
+                    <div className="flex items-center gap-1 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] p-1">
+                      <span className="px-2 text-[11px] font-semibold text-[#76675B]">
                         Text Size:
                       </span>
                       {(['sm', 'md', 'lg', 'xl'] as const).map((sz, i) => (
@@ -2018,52 +2527,42 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                           key={sz}
                           type="button"
                           onClick={() => setFontSize(sz)}
-                          className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${
+                          className={`rounded px-2 py-1 text-xs font-semibold transition-colors cursor-pointer ${
                             fontSize === sz
-                              ? 'bg-[#141413] text-white'
-                              : 'text-[#57534E] hover:bg-[#F3EFE6]'
+                              ? 'bg-[#A63816] text-white'
+                              : 'text-[#76675B] hover:bg-[#F2EDE3]'
                           }`}
                         >
                           {['A-', 'A', 'A+', 'A++'][i]}
                         </button>
                       ))}
                     </div>
-
-                    <label className="inline-flex items-center gap-2 text-xs text-[#57534E] cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={showArabicTranslation}
-                        onChange={(e) => setShowArabicTranslation(e.target.checked)}
-                        className="accent-[#9A3412]"
-                      />
-                      <span>Optional Arabic Support in Tooltips</span>
-                    </label>
                   </div>
                 </div>
 
                 <div className="grid gap-8 lg:grid-cols-12 items-start">
                   <div className="lg:col-span-7 xl:col-span-7 space-y-6">
                     <div className="space-y-3">
-                      <div className="text-xs sm:text-sm text-[#57534E] tabular-nums">
-                        <strong className="font-mono-code font-bold text-[#9A3412]">
+                      <div className="text-xs sm:text-sm text-[#76675B] tabular-nums">
+                        <strong className="font-mono-code font-bold text-[#A63816]">
                           CEFR {activeLesson.level}
                         </strong>{' '}
                         · {activeLesson.topic} ·{' '}
                         {activeLesson.wordCount || activeLesson.passage.split(/\s+/).length} words
                         · {activeLesson.estimatedMinutes} min read ·{' '}
-                        {activeLesson.vocabulary.length} highlighted terms
+                        {activeLesson.vocabulary.length} highlighted terms · 100% words defined
                       </div>
 
-                      <h1 className="font-display text-2xl sm:text-4xl font-bold text-[#141413] leading-[1.16]">
+                      <h1 className="font-display text-2xl sm:text-4xl font-bold text-[#171615] leading-[1.16]">
                         {activeLesson.title}
                       </h1>
 
-                      <p className="text-sm sm:text-base text-[#57534E] leading-relaxed">
+                      <p className="text-sm sm:text-base text-[#76675B] leading-relaxed">
                         {activeLesson.introduction}
                       </p>
                     </div>
 
-                    <figure className="overflow-hidden rounded-xl border border-[#E5DEC9] bg-[#F3EFE6]">
+                    <figure className="overflow-hidden rounded-xl border border-[#E3D7C3] bg-[#F2EDE3]">
                       <div className="aspect-video w-full overflow-hidden">
                         <img
                           src={activeLesson.illustrationUrl}
@@ -2071,17 +2570,34 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                           className="h-full w-full object-cover"
                         />
                       </div>
+                      {(() => {
+                        const photoMeta = getPassagePhotoMetadata(activeLesson.id);
+                        if (!photoMeta) return null;
+                        return (
+                          <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E3D7C3] bg-[#FAF7F1] px-4 py-2 text-[11px] text-[#76675B]">
+                            <span>Photo: {photoMeta.photographer}</span>
+                            <a
+                              href={photoMeta.sourceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:text-[#A63816] hover:underline"
+                            >
+                              {photoMeta.sourceName} ({photoMeta.license})
+                            </a>
+                          </figcaption>
+                        );
+                      })()}
                     </figure>
 
-                    <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-6 sm:p-8 shadow-xs">
+                    <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-8 shadow-xs">
                       <InteractivePassage
                         lessonId={activeLesson.id}
+                        lessonLevel={activeLesson.level}
                         paragraphs={activePassageParagraphs}
                         vocabulary={activeLesson.vocabulary}
                         fontSize={fontSize}
                         savedWordIds={savedVocabWordsForActiveLesson}
                         onToggleSaveWord={handleToggleSaveWord}
-                        showArabicTranslation={showArabicTranslation}
                         highlightedEvidenceQuote={highlightedEvidenceQuote}
                       />
                     </div>
@@ -2114,14 +2630,16 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             {activeTab === 'history' && (
               <section className="mx-auto max-w-4xl space-y-4">
                 <div>
-                  <h1 className="font-display text-3xl font-bold">Reading History</h1>
-                  <p className="mt-1 text-sm text-[#57534E]">
+                  <h1 className="font-display text-3xl font-bold text-[#171615]">
+                    Reading History
+                  </h1>
+                  <p className="mt-1 text-sm text-[#76675B]">
                     Your completed and unfinished passages. Reviewing or practicing again preserves
                     your original score and adaptive level progression.
                   </p>
                 </div>
                 {attempts.length === 0 ? (
-                  <p className="rounded-xl border border-[#E5DEC9] bg-white p-6 text-sm text-[#57534E]">
+                  <p className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 text-sm text-[#76675B]">
                     Your reading activity will appear here.
                   </p>
                 ) : (
@@ -2131,18 +2649,18 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     return (
                       <article
                         key={attempt.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E5DEC9] bg-white p-4"
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-4"
                       >
                         <div>
                           <div className="flex items-center gap-2">
-                            <h2 className="font-semibold text-[#141413]">{attempt.lessonTitle}</h2>
+                            <h2 className="font-semibold text-[#171615]">{attempt.lessonTitle}</h2>
                             {isPractice && (
-                              <span className="rounded bg-[#FEF3C7] px-2 py-0.5 font-mono-code text-[10px] font-bold uppercase text-[#92400E]">
+                              <span className="rounded bg-[#F7E9DC] px-2 py-0.5 font-mono-code text-[10px] font-bold uppercase text-[#946200]">
                                 Practice Attempt
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-[#57534E]">
+                          <p className="text-xs text-[#76675B]">
                             {attempt.level} ·{' '}
                             {attempt.status === 'in_progress'
                               ? 'In progress'
@@ -2156,7 +2674,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                               <button
                                 type="button"
                                 onClick={() => handleOpenLesson(lesson, 'first', attempt)}
-                                className="rounded-lg bg-[#9A3412] px-3 py-2 text-xs font-semibold text-white hover:bg-[#7C2D12] cursor-pointer"
+                                className="rounded-lg bg-[#A63816] px-3 py-2 text-xs font-semibold text-white hover:bg-[#842B12] cursor-pointer"
                               >
                                 Continue
                               </button>
@@ -2165,14 +2683,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                                 <button
                                   type="button"
                                   onClick={() => handleOpenLesson(lesson, 'review', attempt)}
-                                  className="rounded-lg bg-[#141413] px-3 py-2 text-xs font-semibold text-white hover:bg-[#292524] cursor-pointer"
+                                  className="rounded-lg bg-[#171615] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2E2A27] cursor-pointer"
                                 >
                                   Review
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => handleOpenLesson(lesson, 'practice')}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6] cursor-pointer"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer"
                                 >
                                   <RotateCcw className="h-3.5 w-3.5" />
                                   Practice Again
@@ -2191,12 +2709,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             {/* VIEW 3: PERSONAL VOCABULARY BANK */}
             {activeTab === 'vocabulary' && (
               <div className="space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E5DEC9] pb-5">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E3D7C3] pb-5">
                   <div>
-                    <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#141413]">
+                    <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#171615]">
                       Personal English-to-English Vocabulary Bank
                     </h1>
-                    <p className="mt-1 text-sm text-[#57534E]">
+                    <p className="mt-1 text-sm text-[#76675B]">
                       Review saved words, their beginner-friendly English definitions, contextual
                       meanings, and original passage sentences.
                     </p>
@@ -2208,25 +2726,25 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       value={vocabSearch}
                       onChange={(e) => setVocabSearch(e.target.value)}
                       placeholder="Search saved words..."
-                      className="rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs text-[#141413]"
+                      className="rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs text-[#171615]"
                     />
                   </div>
                 </div>
 
                 {savedVocab.length === 0 ? (
-                  <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-12 text-center space-y-3">
-                    <Bookmark className="mx-auto h-8 w-8 text-[#9A3412]" />
-                    <h3 className="font-display text-lg font-bold text-[#141413]">
+                  <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-12 text-center space-y-3">
+                    <Bookmark className="mx-auto h-8 w-8 text-[#A63816]" />
+                    <h3 className="font-display text-lg font-bold text-[#171615]">
                       Your Vocabulary Bank is Empty
                     </h3>
-                    <p className="mx-auto max-w-md text-xs sm:text-sm text-[#57534E]">
-                      While reading any passage, hover or tap a highlighted word and click “Save to
-                      Vocabulary Bank” to build your personal English-to-English study deck.
+                    <p className="mx-auto max-w-md text-xs sm:text-sm text-[#76675B]">
+                      While reading any passage, hover or tap a word and click “Save Word” to build
+                      your personal English-to-English study deck.
                     </p>
                     <button
                       type="button"
                       onClick={() => setActiveTab('library')}
-                      className="rounded-lg bg-[#9A3412] px-4 py-2 text-xs font-semibold text-white"
+                      className="rounded-xl bg-[#A63816] px-4 py-2 text-xs font-semibold text-white hover:bg-[#842B12] cursor-pointer"
                     >
                       Browse Reading Passages
                     </button>
@@ -2248,28 +2766,28 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       .map((item) => (
                         <div
                           key={item.id}
-                          className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 flex flex-col justify-between space-y-4"
+                          className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 flex flex-col justify-between space-y-4"
                         >
                           <div className="space-y-3">
-                            <div className="flex items-start justify-between gap-2 border-b border-[#EAE3D5] pb-2.5">
+                            <div className="flex items-start justify-between gap-2 border-b border-[#E3D7C3] pb-2.5">
                               <div>
                                 <div className="flex items-center gap-2">
-                                  <h3 className="font-display text-xl font-bold text-[#141413]">
+                                  <h3 className="font-display text-xl font-bold text-[#171615]">
                                     {item.word}
                                   </h3>
                                   <button
                                     type="button"
                                     onClick={() => speakWord(item.word)}
-                                    className="rounded p-1 text-[#57534E] hover:bg-[#F3EFE6]"
+                                    className="rounded p-1 text-[#76675B] hover:bg-[#F2EDE3]"
                                     title="Listen to pronunciation"
                                   >
                                     <Volume2 className="h-4 w-4" />
                                   </button>
-                                  <span className="font-mono-code text-xs text-[#9A3412]">
+                                  <span className="font-mono-code text-xs text-[#A63816]">
                                     {item.partOfSpeech}
                                   </span>
                                 </div>
-                                <div className="text-[11px] text-[#78716C] mt-0.5">
+                                <div className="text-[11px] text-[#76675B] mt-0.5">
                                   From: {item.lessonTitle}
                                 </div>
                               </div>
@@ -2278,7 +2796,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                                 type="button"
                                 onClick={() => handleRemoveSavedVocab(item.id)}
                                 title="Remove from Vocabulary Bank"
-                                className="rounded p-1 text-[#78716C] hover:text-[#B91C1C]"
+                                className="rounded p-1 text-[#76675B] hover:text-[#B42318]"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
@@ -2286,46 +2804,48 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
                             <div className="space-y-2 text-xs sm:text-sm">
                               <div>
-                                <span className="font-semibold text-[#141413]">
+                                <span className="font-semibold text-[#171615]">
                                   Simple English Definition:{' '}
                                 </span>
-                                <span className="text-[#57534E]">{item.simpleDefinition}</span>
+                                <span className="text-[#76675B]">{item.simpleDefinition}</span>
                               </div>
                               <div>
-                                <span className="font-semibold text-[#9A3412]">
+                                <span className="font-semibold text-[#A63816]">
                                   Meaning in Passage Context:{' '}
                                 </span>
-                                <span className="text-[#141413]">{item.contextMeaning}</span>
+                                <span className="text-[#171615]">{item.contextMeaning}</span>
                               </div>
-                              <div className="rounded-lg bg-[#FAF7F2] p-2.5 text-xs text-[#57534E] border border-[#EAE3D5]">
-                                <span className="font-semibold text-[#141413]">
+                              <div className="rounded-lg bg-[#FAF7F1] p-2.5 text-xs text-[#76675B] border border-[#E3D7C3]">
+                                <span className="font-semibold text-[#171615]">
                                   Original Passage Sentence:{' '}
                                 </span>
                                 <span className="italic">“{item.originalSentence}”</span>
                               </div>
-                              <div className="text-xs text-[#57534E]">
-                                <span className="font-semibold text-[#141413]">Example: </span>
-                                <span className="italic">“{item.exampleSentence}”</span>
-                              </div>
+                              {item.exampleSentence && (
+                                <div className="text-xs text-[#76675B]">
+                                  <span className="font-semibold text-[#171615]">Example: </span>
+                                  <span className="italic">“{item.exampleSentence}”</span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between border-t border-[#EAE3D5] pt-3 text-xs">
-                            <span className="font-mono-code text-[#57534E] tabular-nums">
+                          <div className="flex items-center justify-between border-t border-[#E3D7C3] pt-3 text-xs">
+                            <span className="font-mono-code text-[#76675B] tabular-nums">
                               Mastery Stage: {item.masteryLevel}/5
                             </span>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleUpdateVocabMastery(item, -1)}
-                                className="rounded border border-[#D8CFC2] bg-white px-2.5 py-1 text-xs font-medium text-[#57534E] hover:text-[#141413]"
+                                className="rounded border border-[#E3D7C3] bg-[#FFFDFA] px-2.5 py-1 text-xs font-medium text-[#76675B] hover:text-[#171615]"
                               >
                                 Needs Practice
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleUpdateVocabMastery(item, 1)}
-                                className="rounded bg-[#15803D] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#14532D]"
+                                className="rounded bg-[#287A52] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#1E5C3D]"
                               >
                                 Mark Recalled
                               </button>
@@ -2341,52 +2861,52 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             {/* VIEW 4: PROGRESS & ADAPTIVE ANALYTICS */}
             {activeTab === 'analytics' && (
               <div className="space-y-8">
-                <div className="border-b border-[#E5DEC9] pb-5">
-                  <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#141413]">
+                <div className="border-b border-[#E3D7C3] pb-5">
+                  <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#171615]">
                     Reading Analytics & Adaptive CEFR Progression
                   </h1>
-                  <p className="mt-1 text-sm text-[#57534E]">
+                  <p className="mt-1 text-sm text-[#76675B]">
                     Track your comprehension accuracy across IELTS question formats and readiness
                     for the next CEFR level.
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-[#D8CFC2] bg-[#FFFDF9] p-6 space-y-4">
+                <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
-                      <div className="text-xs font-bold uppercase tracking-wider text-[#9A3412]">
+                      <div className="text-xs font-bold uppercase tracking-wider text-[#A63816]">
                         Current Target Level: {currentLevel}
                       </div>
-                      <h2 className="font-display text-xl font-bold text-[#141413] mt-0.5">
+                      <h2 className="font-display text-xl font-bold text-[#171615] mt-0.5">
                         {LEVEL_DESCRIPTIONS[currentLevel]}
                       </h2>
                     </div>
-                    <div className="font-mono-code text-sm font-bold text-[#141413] tabular-nums">
+                    <div className="font-mono-code text-sm font-bold text-[#171615] tabular-nums">
                       {adaptiveRecommendation.completedAtCurrentLevel} / 3 Required Passages
                       Completed at {currentLevel}
                     </div>
                   </div>
 
-                  <p className="text-sm text-[#57534E] leading-relaxed">
+                  <p className="text-sm text-[#76675B] leading-relaxed">
                     {adaptiveRecommendation.reason}
                   </p>
 
                   <div className="grid gap-4 sm:grid-cols-3 pt-2">
-                    <div className="rounded-lg border border-[#EAE3D5] bg-[#FAF7F2] p-4">
-                      <div className="text-xs text-[#78716C]">Total Passages Completed</div>
-                      <div className="mt-1 font-display text-2xl font-bold text-[#141413] tabular-nums">
+                    <div className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4">
+                      <div className="text-xs text-[#76675B]">Total Passages Completed</div>
+                      <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
                         {attempts.length}
                       </div>
                     </div>
-                    <div className="rounded-lg border border-[#EAE3D5] bg-[#FAF7F2] p-4">
-                      <div className="text-xs text-[#78716C]">Recent Comprehension Accuracy</div>
-                      <div className="mt-1 font-display text-2xl font-bold text-[#9A3412] tabular-nums">
+                    <div className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4">
+                      <div className="text-xs text-[#76675B]">Recent Comprehension Accuracy</div>
+                      <div className="mt-1 font-display text-2xl font-bold text-[#A63816] tabular-nums">
                         {adaptiveRecommendation.recentAverageAccuracy}%
                       </div>
                     </div>
-                    <div className="rounded-lg border border-[#EAE3D5] bg-[#FAF7F2] p-4">
-                      <div className="text-xs text-[#78716C]">Vocabulary Bank</div>
-                      <div className="mt-1 font-display text-2xl font-bold text-[#15803D] tabular-nums">
+                    <div className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4">
+                      <div className="text-xs text-[#76675B]">Vocabulary Bank</div>
+                      <div className="mt-1 font-display text-2xl font-bold text-[#287A52] tabular-nums">
                         {savedVocab.length} Words
                       </div>
                     </div>
@@ -2394,9 +2914,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 </div>
 
                 <div className="grid gap-6 lg:grid-cols-2">
-                  <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
-                    <h3 className="font-display text-lg font-bold text-[#141413]">
-                      Completion Progress Across CEFR Levels (50 Passages)
+                  <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
+                    <h3 className="font-display text-lg font-bold text-[#171615]">
+                      Completion Progress Across CEFR Levels ({publishedLessons.length} Passages)
                     </h3>
                     <div className="space-y-3">
                       {CEFR_LEVELS.map((lvl) => {
@@ -2411,7 +2931,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
                         return (
                           <div key={lvl} className="space-y-1">
-                            <div className="flex justify-between text-xs font-semibold">
+                            <div className="flex justify-between text-xs font-semibold text-[#171615]">
                               <span>
                                 Level {lvl} — {LEVEL_DESCRIPTIONS[lvl].split('—')[1]}
                               </span>
@@ -2419,9 +2939,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                                 {completedInLevel}/{totalInLevel} ({pct}%)
                               </span>
                             </div>
-                            <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#F3EFE6]">
+                            <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#F2EDE3]">
                               <div
-                                className="h-full bg-[#9A3412] transition-all"
+                                className="h-full bg-[#A63816] transition-all"
                                 style={{ width: `${pct}%` }}
                               />
                             </div>
@@ -2431,12 +2951,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
-                    <h3 className="font-display text-lg font-bold text-[#141413]">
+                  <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
+                    <h3 className="font-display text-lg font-bold text-[#171615]">
                       Accuracy by IELTS Question Type
                     </h3>
                     {Object.keys(questionAccuracy).length === 0 ? (
-                      <p className="text-xs text-[#78716C]">
+                      <p className="text-xs text-[#76675B]">
                         Complete at least one reading assessment to see your accuracy breakdown by
                         question format.
                       </p>
@@ -2445,13 +2965,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                         {Object.entries(questionAccuracy).map(([qType, stats]) => (
                           <div
                             key={qType}
-                            className="flex items-center justify-between border-b border-[#EAE3D5] pb-2 text-xs"
+                            className="flex items-center justify-between border-b border-[#E3D7C3] pb-2 text-xs"
                           >
-                            <span className="font-medium text-[#141413]">
+                            <span className="font-medium text-[#171615]">
                               {QUESTION_TYPE_LABELS[qType as keyof typeof QUESTION_TYPE_LABELS] ||
                                 qType}
                             </span>
-                            <span className="font-mono-code font-semibold tabular-nums text-[#9A3412]">
+                            <span className="font-mono-code font-semibold tabular-nums text-[#A63816]">
                               {stats.accuracy}% ({stats.correct}/{stats.total})
                             </span>
                           </div>

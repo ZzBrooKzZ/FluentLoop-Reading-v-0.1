@@ -26,18 +26,18 @@ export default function SampleLessonsIndexPage() {
   const sampleLessons = getPublicSampleLessons();
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] text-[#141413] flex flex-col">
+    <div className="min-h-screen bg-[#FAF7F1] text-[#171615] flex flex-col">
       <PublicGuideHeader />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 sm:px-8 py-10 space-y-10">
-        <header className="space-y-4 border-b border-[#E5DEC9] pb-8">
-          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#9A3412]">
+        <header className="space-y-4 border-b border-[#E3D7C3] pb-8">
+          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#A63816]">
             Representative Curriculum Samples · CEFR A1–C1
           </div>
-          <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#141413]">
+          <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#171615]">
             Public Sample Academic Reading Passages
           </h1>
-          <p className="text-base sm:text-lg text-[#57534E] max-w-3xl leading-relaxed">
+          <p className="text-base sm:text-lg text-[#76675B] max-w-3xl leading-relaxed">
             Explore one representative reading lesson from each CEFR level (A1 through C1). Each
             sample demonstrates FluentLoop’s academic prose, contextual English-to-English
             vocabulary explanations, and IELTS-style comprehension tasks while keeping our broader
@@ -51,9 +51,9 @@ export default function SampleLessonsIndexPage() {
             return (
               <article
                 key={lesson.id}
-                className="flex flex-col overflow-hidden rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] shadow-xs transition hover:border-[#9A3412] hover:shadow-md"
+                className="flex flex-col overflow-hidden rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-xs transition hover:border-[#A63816] hover:shadow-md"
               >
-                <div className="aspect-video w-full overflow-hidden border-b border-[#EAE3D5] bg-[#F3EFE6]">
+                <div className="aspect-video w-full overflow-hidden border-b border-[#E3D7C3] bg-[#F2EDE3]">
                   <img
                     src={lesson.illustrationUrl}
                     alt={lesson.illustrationAlt}
@@ -64,31 +64,31 @@ export default function SampleLessonsIndexPage() {
                 </div>
                 <div className="flex flex-1 flex-col justify-between p-5 space-y-4">
                   <div className="space-y-2">
-                    <div className="text-xs text-[#57534E] tabular-nums">
-                      <strong className="font-mono-code font-bold text-[#9A3412]">
+                    <div className="text-xs text-[#76675B] tabular-nums">
+                      <strong className="font-mono-code font-bold text-[#A63816]">
                         CEFR {lesson.level}
                       </strong>{' '}
                       · {lesson.topic}
                     </div>
-                    <h2 className="font-display text-lg font-bold text-[#141413] leading-snug">
+                    <h2 className="font-display text-lg font-bold text-[#171615] leading-snug">
                       <Link
                         href={`/sample-lessons/${lesson.id}`}
-                        className="hover:text-[#9A3412] hover:underline"
+                        className="hover:text-[#A63816] hover:underline"
                       >
                         {lesson.title}
                       </Link>
                     </h2>
-                    <p className="text-xs text-[#57534E] leading-relaxed line-clamp-3">
+                    <p className="text-xs text-[#76675B] leading-relaxed line-clamp-3">
                       {lesson.introduction}
                     </p>
                   </div>
-                  <div className="border-t border-[#EAE3D5] pt-3 flex items-center justify-between text-xs text-[#78716C] tabular-nums">
+                  <div className="border-t border-[#E3D7C3] pt-3 flex items-center justify-between text-xs text-[#76675B] tabular-nums">
                     <span>
                       {wc} words · {lesson.vocabulary.length} vocabulary terms
                     </span>
                     <Link
                       href={`/sample-lessons/${lesson.id}`}
-                      className="font-bold text-[#9A3412] hover:underline"
+                      className="font-bold text-[#A63816] hover:underline"
                     >
                       Read Sample →
                     </Link>

@@ -1,5 +1,5 @@
 import { ReadingLesson } from '../types/reading';
-import { getEditorialIllustrationUri } from '../utils/illustrations';
+import { getEditorialIllustrationUri, getPassageIllustrationAlt } from '../utils/illustrations';
 
 /**
  * Dedicated 15-Passage Diagnostic Content Bank (3 per CEFR level: A1, A2, B1, B2, C1).
@@ -8,7 +8,7 @@ import { getEditorialIllustrationUri } from '../utils/illustrations';
  * Each diagnostic passage has 6 objectively gradable questions (targeting 12–18 questions total).
  * Passages are 150–320 words so the entire placement check takes ~5–8 minutes.
  */
-export const DIAGNOSTIC_PASSAGES: ReadingLesson[] = [
+const RAW_DIAGNOSTIC_PASSAGES: ReadingLesson[] = [
   // ============================================================================
   // A1 DIAGNOSTIC PASSAGES (3)
   // ============================================================================
@@ -1829,8 +1829,8 @@ export const DIAGNOSTIC_PASSAGES: ReadingLesson[] = [
     illustrationAlt: 'Illustration of deep cylindrical ice cores extracted from an Antarctic glacier',
     passage: [
       'Direct instrumental records of global temperature extend back barely a century and a half. To reconstruct climate fluctuations across hundreds of millennia, paleoclimatologists rely on deep ice cores drilled from the Antarctic and Greenland ice sheets. As annual snowfalls accumulate without melting, the weight of fresh layers compresses older snow into porous "firn" and eventually seals it into solid glacial ice, trapping microscopic bubbles of the ancient atmosphere inside.',
-      'While the trapped gas bubbles provide direct samples of prehistoric carbon dioxide and methane, determining the temperature at the time the snow fell requires a subtle chemical proxy: the ratio of heavy oxygen-18 ($^{18}\\text{O}$) to lighter oxygen-16 ($^{16}\\text{O}$) in the ice crystals themselves. Water molecules containing the heavier $^{18}\\text{O}$ isotope condense and fall as precipitation more readily as air cools on its journey from tropical oceans toward the poles. During colder glacial epochs, most heavy oxygen precipitates out over mid-latitude oceans before reaching Antarctica, leaving polar snow depleted in $^{18}\\text{O}$.',
-      'A crucial complication, however, is that snow traps air bubbles only after decades or centuries of compaction at the base of the firn layer. Consequently, the gas inside a bubble is measurably younger than the ice crystal surrounding it—a chronological offset known as the gas-ice age difference that researchers must model carefully when determinar whether temperature shifts preceded or followed ancient carbon dioxide rises.',
+      'While the trapped gas bubbles provide direct samples of prehistoric carbon dioxide and methane, determining the temperature at the time the snow fell requires a subtle chemical proxy: the ratio of heavy oxygen-18 (18O) to lighter oxygen-16 (16O) in the ice crystals themselves. Water molecules containing the heavier 18O isotope condense and fall as precipitation more readily as air cools on its journey from tropical oceans toward the poles. During colder glacial epochs, most heavy oxygen precipitates out over mid-latitude oceans before reaching Antarctica, leaving polar snow depleted in 18O.',
+      'A crucial complication, however, is that snow traps air bubbles only after decades or centuries of compaction at the base of the firn layer. Consequently, the gas inside a bubble is measurably younger than the ice crystal surrounding it—a chronological offset known as the gas-ice age difference that researchers must model carefully when determining whether temperature shifts preceded or followed ancient carbon dioxide rises.',
     ].join('\n\n'),
     vocabulary: [
       {
@@ -1925,7 +1925,7 @@ export const DIAGNOSTIC_PASSAGES: ReadingLesson[] = [
         explanation:
           'Paragraph 3 explains that researchers must model this chronological offset when determining whether temperature shifts preceded or followed ancient CO2 rises.',
         passageEvidence:
-          '...a chronological offset known as the gas-ice age difference that researchers must model carefully when determinar whether temperature shifts preceded or followed ancient carbon dioxide rises.',
+          '...a chronological offset known as the gas-ice age difference that researchers must model carefully when determining whether temperature shifts preceded or followed ancient carbon dioxide rises.',
         difficulty: 'challenging',
       },
       {
@@ -2093,3 +2093,10 @@ export const DIAGNOSTIC_PASSAGES: ReadingLesson[] = [
     updatedAt: '2026-01-10T00:00:00.000Z',
   },
 ];
+
+export const DIAGNOSTIC_PASSAGES: ReadingLesson[] = RAW_DIAGNOSTIC_PASSAGES.map((passage) => ({
+  ...passage,
+  illustrationUrl: getEditorialIllustrationUri(passage.id, passage.topic, passage.level),
+  illustrationAlt: getPassageIllustrationAlt(passage.id, passage.illustrationAlt),
+}));
+

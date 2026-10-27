@@ -14,22 +14,22 @@ export const metadata: Metadata = {
 
 export default function TermsOfUsePage() {
   return (
-    <div className="min-h-screen bg-[#FAF7F2] text-[#141413] flex flex-col">
+    <div className="min-h-screen bg-[#FAF7F1] text-[#171615] flex flex-col">
       <PublicGuideHeader />
 
-      <main className="mx-auto w-full max-w-4xl flex-1 px-4 sm:px-8 py-10 space-y-8 text-sm sm:text-base text-[#57534E] leading-relaxed">
-        <header className="space-y-3 border-b border-[#E5DEC9] pb-6">
-          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#9A3412]">
+      <main className="mx-auto w-full max-w-4xl flex-1 px-4 sm:px-8 py-10 space-y-8 text-sm sm:text-base text-[#76675B] leading-relaxed">
+        <header className="space-y-3 border-b border-[#E3D7C3] pb-6">
+          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#A63816]">
             Platform Terms
           </div>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-[#141413]">
+          <h1 className="font-display text-3xl sm:text-4xl font-bold text-[#171615]">
             Terms of Use
           </h1>
-          <p className="text-xs text-[#78716C]">Effective Date: October 25, 2026</p>
+          <p className="text-xs text-[#76675B]">Effective Date: October 25, 2026</p>
         </header>
 
         <section className="space-y-3">
-          <h2 className="font-display text-xl font-bold text-[#141413]">
+          <h2 className="font-display text-xl font-bold text-[#171615]">
             1. Educational Purpose & Disclaimer
           </h2>
           <p>
@@ -42,7 +42,7 @@ export default function TermsOfUsePage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="font-display text-xl font-bold text-[#141413]">
+          <h2 className="font-display text-xl font-bold text-[#171615]">
             2. Acceptable Use
           </h2>
           <p>
@@ -53,7 +53,7 @@ export default function TermsOfUsePage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="font-display text-xl font-bold text-[#141413]">
+          <h2 className="font-display text-xl font-bold text-[#171615]">
             3. Intellectual Property
           </h2>
           <p>

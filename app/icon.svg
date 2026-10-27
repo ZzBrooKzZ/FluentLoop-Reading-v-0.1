@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="14" fill="#FAF7F1" />
+  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" stroke="#E3D7C3" stroke-width="1.5" />
+  <!-- Open book pages fanning above the infinity loop -->
+  <path
+    d="M30.5 23C27.5 17.5 22 14 15.5 13.5C20.5 16 24.8 19.5 27.8 24.5"
+    stroke="#A63816"
+    stroke-width="2.4"
+    stroke-linecap="round"
+  />
+  <path
+    d="M28.5 25.5C25 20.5 19.5 17.8 13 18C18 20 22.2 22.8 25.5 27"
+    stroke="#C85A28"
+    stroke-width="2.2"
+    stroke-linecap="round"
+  />
+  <path
+    d="M33.5 23C36.5 17.5 42 14 48.5 13.5C43.5 16 39.2 19.5 36.2 24.5"
+    stroke="#A63816"
+    stroke-width="2.4"
+    stroke-linecap="round"
+  />
+  <path
+    d="M35.5 25.5C39 20.5 44.5 17.8 51 18C46 20 41.8 22.8 38.5 27"
+    stroke="#C85A28"
+    stroke-width="2.2"
+    stroke-linecap="round"
+  />
+  <!-- Infinity Loop Ribbon -->
+  <path
+    d="M25.5 41.5C22.2 44.5 18.2 46 14.5 45.2C10.2 44.2 7.5 40.2 7.5 35.5C7.5 30.2 11.2 26 16.5 26C21.5 26 25.8 29.8 32 36.2C38.2 42.6 42.5 45.5 47.5 45.5C52.8 45.5 56.5 41.3 56.5 36C56.5 31.3 53.8 27.3 49.5 26.3C45.8 25.5 41.8 27 38.5 30"
+    stroke="#A63816"
+    stroke-width="5.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M27.5 39.5L36.5 31.5"
+    stroke="#842B12"
+    stroke-width="5.2"
+    stroke-linecap="round"
+  />
+</svg>

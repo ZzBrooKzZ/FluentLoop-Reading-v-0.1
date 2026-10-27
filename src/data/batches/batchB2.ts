@@ -1,5 +1,5 @@
 import { ReadingLesson } from '../../types/reading';
-import { getEditorialIllustrationUri } from '../../utils/illustrations';
+import { getEditorialIllustrationUri, getPassageIllustrationAlt } from '../../utils/illustrations';
 
 const rawB2Lessons: Omit<ReadingLesson, 'illustrationUrl' | 'createdAt' | 'updatedAt'>[] = [
   {
@@ -2009,6 +2009,7 @@ export const BATCH_B2_LESSONS: ReadingLesson[] = rawB2Lessons.map((lesson) => ({
   ...lesson,
   passage: lesson.passage.replace('an far less', 'a far less').replace('aone-centimetre', 'a one-centimetre'),
   illustrationUrl: getEditorialIllustrationUri(lesson.id, lesson.topic, lesson.level),
+  illustrationAlt: getPassageIllustrationAlt(lesson.id, lesson.illustrationAlt),
   createdAt: '2026-01-18T09:00:00.000Z',
   updatedAt: '2026-01-18T09:00:00.000Z',
 }));

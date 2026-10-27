@@ -44,7 +44,7 @@ export function getFirebaseProjectDiagnostics() {
     firebaseProjectId: FLUENTLOOP_FIREBASE_PROJECT_ID,
     firestoreDatabaseId: FLUENTLOOP_FIRESTORE_DATABASE_ID,
     storageBucket: FLUENTLOOP_STORAGE_BUCKET,
-    serviceAccountMode: 'fluentloop_project_adc_and_identity_toolkit',
+    serviceAccountMode: 'firebase_apphosting_adc',
   };
 }
 

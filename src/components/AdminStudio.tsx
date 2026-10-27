@@ -32,8 +32,9 @@ import {
   validateLesson,
 } from '../services/validationService';
 import { getEditorialIllustrationUri } from '../utils/illustrations';
-import { LESSON_BATCHES } from '../data/initialLessons';
+import { auth } from '../lib/firebase';
 import { QUESTION_TYPE_LABELS } from '../services/gradingService';
+import { computeDictionaryCoverageReport } from '../services/wordLookupService';
 
 interface AdminStudioProps {
   lessons: ReadingLesson[];
@@ -60,11 +61,18 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   onPreviewLesson,
   onSignInAdmin,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'manage' | 'editor' | 'import_export'>('manage');
+  const [activeSubTab, setActiveSubTab] = useState<
+    'manage' | 'editor' | 'import_export' | 'word_coverage'
+  >('manage');
   const [contentBankFilter, setContentBankFilter] = useState<'regular' | 'diagnostic'>('regular');
   const [filterLevel, setFilterLevel] = useState<CEFRLevel | 'ALL'>('ALL');
   const [filterStatus, setFilterStatus] = useState<PublicationStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const coverageReport = React.useMemo(
+    () => computeDictionaryCoverageReport(lessons, diagnosticPassages),
+    [lessons, diagnosticPassages]
+  );
 
   const [editingLesson, setEditingLesson] = useState<ReadingLesson>(() => createBlankLesson());
   const [selectedPassageText, setSelectedPassageText] = useState('');
@@ -259,17 +267,25 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
-      setStatusBanner({ type: 'error', message: 'Image exceeds 4MB maximum file size.' });
+    if (file.size > 700 * 1024) {
+      setStatusBanner({
+        type: 'error',
+        message:
+          'Image exceeds 700KB inline limit for Firestore document storage. Please compress the image or use SVG/WebP.',
+      });
       return;
     }
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = String(reader.result || '');
       try {
+        const token = await auth.currentUser?.getIdToken();
         const res = await fetch('/api/admin/upload-image', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             dataUrl,
             mimeType: file.type,
@@ -289,12 +305,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
           type: 'success',
           message: 'Custom 16:9 illustration uploaded and attached.',
         });
-      } catch {
-        setEditingLesson((prev) => ({
-          ...prev,
-          illustrationUrl: dataUrl,
-          imageStatus: 'uploaded',
-        }));
+      } catch (err: any) {
+        setStatusBanner({
+          type: 'error',
+          message: err?.message || 'Image upload failed.',
+        });
       }
     };
     reader.readAsDataURL(file);
@@ -348,12 +363,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E5DEC9] pb-5">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E3D7C3] pb-5">
         <div>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#141413]">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold text-[#171615]">
             Content Studio & Curriculum CMS
           </h1>
-          <p className="mt-1 text-sm text-[#57534E]">
+          <p className="mt-1 text-sm text-[#76675B]">
             Create, annotate, validate, and bulk-import CEFR A1–C1 academic reading lessons with English-to-English contextual vocabulary.
           </p>
         </div>
@@ -372,7 +387,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
           <button
             type="button"
             onClick={() => handleOpenEditor()}
-            className="inline-flex items-center gap-2 rounded-lg bg-[#9A3412] px-4 py-2 text-xs font-semibold text-white hover:bg-[#7C2D12]"
+            className="inline-flex items-center gap-2 rounded-lg bg-[#A63816] px-4 py-2 text-xs font-semibold text-white hover:bg-[#842B12]"
           >
             <Plus className="h-4 w-4" />
             New Reading Lesson
@@ -380,10 +395,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E5DEC9] pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E3D7C3] pb-3">
         <div className="flex flex-wrap items-center gap-2">
           {[
             { id: 'manage', label: `Lesson Library (${lessons.length})` },
+            {
+              id: 'word_coverage',
+              label: `Word Lookup Coverage (${coverageReport.overallCoveragePercent}% · ${coverageReport.distinctNormalizedWords.toLocaleString()} Words)`,
+            },
             { id: 'editor', label: 'Passage & IELTS Assessment Editor' },
             { id: 'import_export', label: 'Bulk JSON Import / Export (5 Batches)' },
           ].map((tab) => (
@@ -393,15 +412,15 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               onClick={() => setActiveSubTab(tab.id as any)}
               className={`rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
                 activeSubTab === tab.id
-                  ? 'bg-[#141413] text-[#FAF7F2]'
-                  : 'bg-[#F3EFE6] text-[#57534E] hover:text-[#141413]'
+                  ? 'bg-[#171615] text-[#FAF7F1]'
+                  : 'bg-[#F2EDE3] text-[#76675B] hover:text-[#171615]'
               }`}
             >
               {tab.label}
             </button>
           ))}
         </div>
-        <span className="font-mono-code text-[11px] font-semibold text-[#57534E]">
+        <span className="font-mono-code text-[11px] font-semibold text-[#76675B]">
           Semantic Short-Answer Evaluator: {geminiConfigured ? 'Active (/api/grade-answers)' : 'Local Fallback Mode'}
         </span>
       </div>
@@ -410,9 +429,9 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         <div
           className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-xs font-medium ${
             statusBanner.type === 'success'
-              ? 'border-[#15803D]/40 bg-[#DCFCE7] text-[#14532D]'
+              ? 'border-[#287A52]/40 bg-[#DCFCE7] text-[#14532D]'
               : statusBanner.type === 'error'
-              ? 'border-[#B91C1C]/40 bg-[#FEE2E2] text-[#7F1D1D]'
+              ? 'border-[#B42318]/40 bg-[#FEE2E2] text-[#7F1D1D]'
               : 'border-[#D97706]/40 bg-[#FEF3C7] text-[#92400E]'
           }`}
         >
@@ -429,16 +448,16 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
       {activeSubTab === 'manage' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-[#57534E]">Bank:</span>
+              <span className="text-xs font-semibold text-[#76675B]">Bank:</span>
               <button
                 type="button"
                 onClick={() => setContentBankFilter('regular')}
                 className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
                   contentBankFilter === 'regular'
-                    ? 'bg-[#141413] text-white'
-                    : 'bg-[#F3EFE6] text-[#57534E] hover:text-[#141413]'
+                    ? 'bg-[#171615] text-white'
+                    : 'bg-[#F2EDE3] text-[#76675B] hover:text-[#171615]'
                 }`}
               >
                 Course Lessons ({lessons.length})
@@ -448,8 +467,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 onClick={() => setContentBankFilter('diagnostic')}
                 className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
                   contentBankFilter === 'diagnostic'
-                    ? 'bg-[#9A3412] text-white'
-                    : 'bg-[#F3EFE6] text-[#57534E] hover:text-[#141413]'
+                    ? 'bg-[#A63816] text-white'
+                    : 'bg-[#F2EDE3] text-[#76675B] hover:text-[#171615]'
                 }`}
               >
                 Diagnostic Placement Bank ({diagnosticPassages.length})
@@ -457,7 +476,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-[#57534E]">Level:</span>
+              <span className="text-xs font-semibold text-[#76675B]">Level:</span>
               {(['ALL', ...ALL_CEFR_LEVELS] as const).map((lvl) => (
                 <button
                   key={lvl}
@@ -465,8 +484,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   onClick={() => setFilterLevel(lvl)}
                   className={`rounded-md px-2.5 py-1 text-xs font-semibold ${
                     filterLevel === lvl
-                      ? 'bg-[#9A3412] text-white'
-                      : 'bg-[#F3EFE6] text-[#57534E] hover:text-[#141413]'
+                      ? 'bg-[#A63816] text-white'
+                      : 'bg-[#F2EDE3] text-[#76675B] hover:text-[#171615]'
                   }`}
                 >
                   {lvl}
@@ -475,7 +494,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-[#57534E]">Status:</span>
+              <span className="text-xs font-semibold text-[#76675B]">Status:</span>
               {(['ALL', 'published', 'draft', 'archived'] as const).map((st) => (
                 <button
                   key={st}
@@ -483,8 +502,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   onClick={() => setFilterStatus(st)}
                   className={`rounded-md px-2.5 py-1 text-xs font-semibold capitalize ${
                     filterStatus === st
-                      ? 'bg-[#141413] text-white'
-                      : 'bg-[#F3EFE6] text-[#57534E] hover:text-[#141413]'
+                      ? 'bg-[#171615] text-white'
+                      : 'bg-[#F2EDE3] text-[#76675B] hover:text-[#171615]'
                   }`}
                 >
                   {st}
@@ -497,14 +516,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search title, topic, or ID..."
-              className="rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs text-[#141413] focus:border-[#9A3412] focus:outline-none"
+              className="rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs text-[#171615] focus:border-[#A63816] focus:outline-none"
             />
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-[#E5DEC9] bg-[#FFFDF9]">
+          <div className="overflow-hidden rounded-xl border border-[#E3D7C3] bg-[#FFFDFA]">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-[#E5DEC9] bg-[#F3EFE6] text-[11px] font-semibold uppercase tracking-wider text-[#57534E]">
+                <tr className="border-b border-[#E3D7C3] bg-[#F2EDE3] text-[11px] font-semibold uppercase tracking-wider text-[#76675B]">
                   <th className="py-3 px-4">Lesson Title & Topic</th>
                   <th className="py-3 px-3">Level</th>
                   <th className="py-3 px-3">Content</th>
@@ -512,26 +531,26 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#EAE3D5] text-xs">
+              <tbody className="divide-y divide-[#E3D7C3] text-xs">
                 {filteredLessons.map((lesson) => {
                   const report = validateLesson(lesson);
                   return (
-                    <tr key={lesson.id} className="hover:bg-[#FAF7F2]">
+                    <tr key={lesson.id} className="hover:bg-[#FAF7F1]">
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-[#141413]">{lesson.title}</div>
-                        <div className="text-[#78716C] mt-0.5">
+                        <div className="font-semibold text-[#171615]">{lesson.title}</div>
+                        <div className="text-[#76675B] mt-0.5">
                           {lesson.topic} ·{' '}
                           <span className="font-mono-code text-[11px]">{lesson.id}</span>
                         </div>
                       </td>
-                      <td className="py-3 px-3 font-mono-code font-bold text-[#9A3412]">
+                      <td className="py-3 px-3 font-mono-code font-bold text-[#A63816]">
                         {lesson.level}
                       </td>
-                      <td className="py-3 px-3 tabular-nums text-[#57534E]">
+                      <td className="py-3 px-3 tabular-nums text-[#76675B]">
                         {lesson.wordCount || lesson.passage.split(/\s+/).length} words ·{' '}
                         {lesson.vocabulary.length} vocab · {lesson.questions.length} Qs
                         {!report.isValidForPublish && (
-                          <span className="ml-2 inline-flex items-center gap-1 text-[#B91C1C] font-semibold">
+                          <span className="ml-2 inline-flex items-center gap-1 text-[#B42318] font-semibold">
                             <AlertTriangle className="h-3.5 w-3.5" /> Needs review
                           </span>
                         )}
@@ -540,10 +559,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         <span
                           className={`font-mono-code text-[11px] uppercase font-semibold ${
                             lesson.status === 'published'
-                              ? 'text-[#15803D]'
+                              ? 'text-[#287A52]'
                               : lesson.status === 'draft'
                               ? 'text-[#D97706]'
-                              : 'text-[#78716C]'
+                              : 'text-[#76675B]'
                           }`}
                         >
                           {lesson.status}
@@ -555,7 +574,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             type="button"
                             onClick={() => onPreviewLesson(lesson)}
                             title="Open in Reader"
-                            className="rounded-md border border-[#D8CFC2] bg-white px-2.5 py-1 text-xs font-medium text-[#141413] hover:bg-[#F3EFE6]"
+                            className="rounded-md border border-[#E3D7C3] bg-white px-2.5 py-1 text-xs font-medium text-[#171615] hover:bg-[#F2EDE3]"
                           >
                             <Eye className="h-3.5 w-3.5 inline mr-1" />
                             Read
@@ -563,7 +582,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                           <button
                             type="button"
                             onClick={() => handleOpenEditor(lesson)}
-                            className="rounded-md bg-[#141413] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#292524]"
+                            className="rounded-md bg-[#171615] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#292524]"
                           >
                             Edit
                           </button>
@@ -572,7 +591,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                               type="button"
                               onClick={() => handleQuickStatusChange(lesson, 'published')}
                               title="Publish"
-                              className="rounded-md border border-[#15803D]/40 bg-[#DCFCE7] px-2 py-1 text-xs font-semibold text-[#14532D]"
+                              className="rounded-md border border-[#287A52]/40 bg-[#DCFCE7] px-2 py-1 text-xs font-semibold text-[#14532D]"
                             >
                               <Check className="h-3.5 w-3.5" />
                             </button>
@@ -581,7 +600,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                               type="button"
                               onClick={() => handleQuickStatusChange(lesson, 'archived')}
                               title="Archive"
-                              className="rounded-md border border-[#D8CFC2] bg-[#F3EFE6] px-2 py-1 text-xs text-[#57534E]"
+                              className="rounded-md border border-[#E3D7C3] bg-[#F2EDE3] px-2 py-1 text-xs text-[#76675B]"
                             >
                               <Archive className="h-3.5 w-3.5" />
                             </button>
@@ -593,7 +612,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                                 await onDeleteLesson(lesson.id);
                                 setConfirmDeleteId(null);
                               }}
-                              className="rounded-md bg-[#B91C1C] px-2 py-1 text-xs font-semibold text-white"
+                              className="rounded-md bg-[#B42318] px-2 py-1 text-xs font-semibold text-white"
                             >
                               Confirm
                             </button>
@@ -602,7 +621,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                               type="button"
                               onClick={() => setConfirmDeleteId(lesson.id)}
                               title="Delete lesson"
-                              className="rounded-md p-1 text-[#78716C] hover:text-[#B91C1C]"
+                              className="rounded-md p-1 text-[#76675B] hover:text-[#B42318]"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -621,16 +640,16 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       {activeSubTab === 'editor' && (
         <div className="grid gap-6 lg:grid-cols-12">
           <div className="lg:col-span-8 space-y-6">
-            <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EAE3D5] pb-3">
-                <h3 className="font-display text-lg font-bold text-[#141413]">
+            <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E3D7C3] pb-3">
+                <h3 className="font-display text-lg font-bold text-[#171615]">
                   1. Lesson Metadata & Editorial Illustration
                 </h3>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => onPreviewLesson(editingLesson)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6]"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                   >
                     <Eye className="h-3.5 w-3.5" />
                     Preview in Reader
@@ -638,7 +657,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   <button
                     type="button"
                     onClick={handleSaveCurrentLesson}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#9A3412] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#7C2D12]"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63816] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#842B12]"
                   >
                     <Save className="h-3.5 w-3.5" />
                     Save Lesson
@@ -648,7 +667,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-[#57534E] mb-1">
+                  <label className="block text-xs font-semibold text-[#76675B] mb-1">
                     Lesson Title
                   </label>
                   <input
@@ -657,12 +676,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     onChange={(e) =>
                       setEditingLesson({ ...editingLesson, title: e.target.value })
                     }
-                    className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-sm text-[#141413]"
+                    className="w-full rounded-lg border border-[#E3D7C3] bg-white px-3 py-2 text-sm text-[#171615]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#57534E] mb-1">
+                  <label className="block text-xs font-semibold text-[#76675B] mb-1">
                     CEFR Level
                   </label>
                   <select
@@ -673,7 +692,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         level: e.target.value as CEFRLevel,
                       })
                     }
-                    className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-sm text-[#141413]"
+                    className="w-full rounded-lg border border-[#E3D7C3] bg-white px-3 py-2 text-sm text-[#171615]"
                   >
                     {ALL_CEFR_LEVELS.map((l) => (
                       <option key={l} value={l}>
@@ -684,7 +703,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#57534E] mb-1">
+                  <label className="block text-xs font-semibold text-[#76675B] mb-1">
                     Academic Topic
                   </label>
                   <select
@@ -695,7 +714,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         topic: e.target.value as AcademicTopic,
                       })
                     }
-                    className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-sm text-[#141413]"
+                    className="w-full rounded-lg border border-[#E3D7C3] bg-white px-3 py-2 text-sm text-[#171615]"
                   >
                     {ALL_ACADEMIC_TOPICS.map((t) => (
                       <option key={t} value={t}>
@@ -706,7 +725,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#57534E] mb-1">
+                  <label className="block text-xs font-semibold text-[#76675B] mb-1">
                     Publication Status
                   </label>
                   <select
@@ -717,7 +736,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         status: e.target.value as PublicationStatus,
                       })
                     }
-                    className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-sm text-[#141413]"
+                    className="w-full rounded-lg border border-[#E3D7C3] bg-white px-3 py-2 text-sm text-[#171615]"
                   >
                     <option value="draft">Draft</option>
                     <option value="published">Published</option>
@@ -726,7 +745,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#57534E] mb-1">
+                  <label className="block text-xs font-semibold text-[#76675B] mb-1">
                     Estimated Reading Time (Minutes)
                   </label>
                   <input
@@ -740,12 +759,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         estimatedMinutes: Number(e.target.value) || 8,
                       })
                     }
-                    className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-sm text-[#141413]"
+                    className="w-full rounded-lg border border-[#E3D7C3] bg-white px-3 py-2 text-sm text-[#171615]"
                   />
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-[#57534E] mb-1">
+                  <label className="block text-xs font-semibold text-[#76675B] mb-1">
                     Editorial Introduction / Summary
                   </label>
                   <textarea
@@ -754,18 +773,18 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     onChange={(e) =>
                       setEditingLesson({ ...editingLesson, introduction: e.target.value })
                     }
-                    className="w-full rounded-lg border border-[#D8CFC2] bg-white px-3 py-2 text-xs text-[#141413]"
+                    className="w-full rounded-lg border border-[#E3D7C3] bg-white px-3 py-2 text-xs text-[#171615]"
                   />
                 </div>
               </div>
 
-              <div className="border-t border-[#EAE3D5] pt-4">
+              <div className="border-t border-[#E3D7C3] pt-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <span className="text-xs font-semibold text-[#57534E]">
+                  <span className="text-xs font-semibold text-[#76675B]">
                     16:9 Lesson Illustration (Zero Embedded Text)
                   </span>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-medium text-[#141413] hover:bg-[#F3EFE6] cursor-pointer">
+                    <label className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs font-medium text-[#171615] hover:bg-[#F2EDE3] cursor-pointer">
                       <Upload className="h-3.5 w-3.5" />
                       Upload Image
                       <input
@@ -787,14 +806,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                           ),
                         }))
                       }
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-medium text-[#141413] hover:bg-[#F3EFE6]"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs font-medium text-[#171615] hover:bg-[#F2EDE3]"
                     >
                       <ImageIcon className="h-3.5 w-3.5" />
                       Refresh Editorial Vector
                     </button>
                   </div>
                 </div>
-                <div className="aspect-video w-full max-w-md overflow-hidden rounded-lg border border-[#E5DEC9] bg-[#F3EFE6]">
+                <div className="aspect-video w-full max-w-md overflow-hidden rounded-lg border border-[#E3D7C3] bg-[#F2EDE3]">
                   <img
                     src={editingLesson.illustrationUrl}
                     alt={editingLesson.illustrationAlt}
@@ -804,13 +823,13 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               </div>
             </div>
 
-            <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
+            <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="font-display text-lg font-bold text-[#141413]">
+                  <h3 className="font-display text-lg font-bold text-[#171615]">
                     2. Reading Passage Text
                   </h3>
-                  <p className="text-xs text-[#57534E]">
+                  <p className="text-xs text-[#76675B]">
                     Separate paragraphs with a blank line. Highlight any word or phrase in the box below to create a contextual English vocabulary explanation.
                   </p>
                 </div>
@@ -818,7 +837,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   <button
                     type="button"
                     onClick={handleAddVocabFromSelection}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#9A3412] px-3 py-1.5 text-xs font-semibold text-white shadow-xs"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63816] px-3 py-1.5 text-xs font-semibold text-white shadow-xs"
                   >
                     <Sparkles className="h-3.5 w-3.5" />
                     Annotate “{selectedPassageText}”
@@ -837,24 +856,24 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     passage: e.target.value,
                   })
                 }
-                className="w-full rounded-lg border border-[#D8CFC2] bg-white p-3.5 font-serif-passage text-base leading-relaxed text-[#141413] focus:border-[#9A3412] focus:outline-none"
+                className="w-full rounded-lg border border-[#E3D7C3] bg-white p-3.5 font-serif-passage text-base leading-relaxed text-[#171615] focus:border-[#A63816] focus:outline-none"
               />
             </div>
 
-            <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
+            <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-display text-lg font-bold text-[#141413]">
+                  <h3 className="font-display text-lg font-bold text-[#171615]">
                     3. English-to-English Contextual Vocabulary ({editingLesson.vocabulary.length})
                   </h3>
-                  <p className="text-xs text-[#57534E]">
+                  <p className="text-xs text-[#76675B]">
                     Explain words in simple, familiar English based on their exact sentence in the passage.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={handleAddVocabFromSelection}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6]"
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add Word
@@ -865,10 +884,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 {editingLesson.vocabulary.map((v, idx) => (
                   <div
                     key={v.id}
-                    className="rounded-lg border border-[#E5DEC9] bg-[#FAF7F2] p-4 space-y-3"
+                    className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-4 space-y-3"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono-code text-xs font-bold text-[#9A3412]">
+                      <span className="font-mono-code text-xs font-bold text-[#A63816]">
                         Word #{idx + 1}
                       </span>
                       <button
@@ -881,7 +900,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             ),
                           })
                         }
-                        className="text-xs text-[#B91C1C] hover:underline"
+                        className="text-xs text-[#B42318] hover:underline"
                       >
                         Remove
                       </button>
@@ -889,7 +908,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Word or Expression
                         </label>
                         <input
@@ -900,11 +919,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[idx] = { ...v, word: e.target.value };
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs font-semibold"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs font-semibold"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Part of Speech
                         </label>
                         <input
@@ -916,11 +935,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
                           placeholder="noun, verb, adjective..."
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Synonyms (comma-separated)
                         </label>
                         <input
@@ -937,14 +956,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             };
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Simple Beginner-Friendly English Definition
                         </label>
                         <input
@@ -955,11 +974,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[idx] = { ...v, simpleDefinition: e.target.value };
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Specific Meaning in Passage Context
                         </label>
                         <input
@@ -970,14 +989,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[idx] = { ...v, contextMeaning: e.target.value };
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Simple Example Sentence
                         </label>
                         <input
@@ -988,11 +1007,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[idx] = { ...v, exampleSentence: e.target.value };
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Original Passage Sentence
                         </label>
                         <input
@@ -1003,7 +1022,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[idx] = { ...v, originalSentence: e.target.value };
                             setEditingLesson({ ...editingLesson, vocabulary: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                     </div>
@@ -1012,9 +1031,9 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
               </div>
             </div>
 
-            <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
+            <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="font-display text-lg font-bold text-[#141413]">
+                <h3 className="font-display text-lg font-bold text-[#171615]">
                   4. Comprehension Questions ({editingLesson.questions.length})
                 </h3>
                 <button
@@ -1036,7 +1055,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                       questions: [...editingLesson.questions, newQ],
                     });
                   }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6]"
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add Question
@@ -1047,10 +1066,10 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 {editingLesson.questions.map((q, qIdx) => (
                   <div
                     key={q.id}
-                    className="rounded-lg border border-[#E5DEC9] bg-[#FAF7F2] p-4 space-y-3"
+                    className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-4 space-y-3"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono-code text-xs font-bold text-[#9A3412]">
+                      <span className="font-mono-code text-xs font-bold text-[#A63816]">
                         Question #{qIdx + 1}
                       </span>
                       <button
@@ -1063,7 +1082,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             ),
                           })
                         }
-                        className="text-xs text-[#B91C1C] hover:underline"
+                        className="text-xs text-[#B42318] hover:underline"
                       >
                         Remove
                       </button>
@@ -1071,7 +1090,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Question Type
                         </label>
                         <select
@@ -1081,7 +1100,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[qIdx] = { ...q, type: e.target.value as QuestionType };
                             setEditingLesson({ ...editingLesson, questions: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         >
                           {Object.entries(QUESTION_TYPE_LABELS).map(([k, label]) => (
                             <option key={k} value={k}>
@@ -1091,7 +1110,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Correct Answer
                         </label>
                         <input
@@ -1102,14 +1121,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[qIdx] = { ...q, correctAnswer: e.target.value };
                             setEditingLesson({ ...editingLesson, questions: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs font-semibold"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs font-semibold"
                         />
                       </div>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           IELTS Instruction Notice (e.g., ONE WORD ONLY, CHOOSE TWO LETTERS)
                         </label>
                         <input
@@ -1121,11 +1140,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             setEditingLesson({ ...editingLesson, questions: next });
                           }}
                           placeholder="e.g., NO MORE THAN TWO WORDS"
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Max Word Limit (Optional numeric cap)
                         </label>
                         <input
@@ -1140,13 +1159,13 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             setEditingLesson({ ...editingLesson, questions: next });
                           }}
                           placeholder="e.g., 1, 2, or 3"
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-semibold text-[#57534E]">
+                      <label className="block text-[11px] font-semibold text-[#76675B]">
                         Question Prompt
                       </label>
                       <input
@@ -1157,12 +1176,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                           next[qIdx] = { ...q, prompt: e.target.value };
                           setEditingLesson({ ...editingLesson, questions: next });
                         }}
-                        className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                        className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-semibold text-[#57534E]">
+                      <label className="block text-[11px] font-semibold text-[#76675B]">
                         Options (pipe-separated `|` for Multiple Choice / Matching; leave blank for completion/short-answer)
                       </label>
                       <input
@@ -1177,14 +1196,14 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                           };
                           setEditingLesson({ ...editingLesson, questions: next });
                         }}
-                        className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                        className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                       />
                     </div>
 
                     {(q.type === 'summary_completion' || q.type === 'short_answer') && (
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div>
-                          <label className="block text-[11px] font-semibold text-[#57534E]">
+                          <label className="block text-[11px] font-semibold text-[#76675B]">
                             Summary Word Bank (pipe-separated `|`, optional)
                           </label>
                           <input
@@ -1200,11 +1219,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                               setEditingLesson({ ...editingLesson, questions: next });
                             }}
                             placeholder="phrase 1 | phrase 2 | phrase 3"
-                            className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                            className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-semibold text-[#57534E]">
+                          <label className="block text-[11px] font-semibold text-[#76675B]">
                             Semantic Grading Rubric (for open-ended Short Answer)
                           </label>
                           <input
@@ -1220,7 +1239,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                               setEditingLesson({ ...editingLesson, questions: next });
                             }}
                             placeholder="Criteria for Gemini semantic answer check..."
-                            className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                            className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                           />
                         </div>
                       </div>
@@ -1228,7 +1247,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Explanation
                         </label>
                         <input
@@ -1239,11 +1258,11 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[qIdx] = { ...q, explanation: e.target.value };
                             setEditingLesson({ ...editingLesson, questions: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#57534E]">
+                        <label className="block text-[11px] font-semibold text-[#76675B]">
                           Passage Evidence Quote
                         </label>
                         <input
@@ -1254,7 +1273,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             next[qIdx] = { ...q, passageEvidence: e.target.value };
                             setEditingLesson({ ...editingLesson, questions: next });
                           }}
-                          className="mt-1 w-full rounded border border-[#D8CFC2] bg-white px-2.5 py-1.5 text-xs"
+                          className="mt-1 w-full rounded border border-[#E3D7C3] bg-white px-2.5 py-1.5 text-xs"
                         />
                       </div>
                     </div>
@@ -1265,8 +1284,8 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
           </div>
 
           <div className="lg:col-span-4 space-y-4">
-            <div className="sticky top-20 rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
-              <h4 className="font-display text-base font-bold text-[#141413]">
+            <div className="sticky top-20 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
+              <h4 className="font-display text-base font-bold text-[#171615]">
                 Content Quality & Schema Auditor
               </h4>
               {currentEditorValidation.errors.length === 0 &&
@@ -1280,7 +1299,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                   {currentEditorValidation.errors.map((errMsg, idx) => (
                     <div
                       key={`err-${idx}`}
-                      className="rounded-lg border border-[#B91C1C]/40 bg-[#FEE2E2] p-2.5 text-xs text-[#7F1D1D]"
+                      className="rounded-lg border border-[#B42318]/40 bg-[#FEE2E2] p-2.5 text-xs text-[#7F1D1D]"
                     >
                       <span className="font-mono-code font-bold uppercase mr-1.5">
                         [ERROR]
@@ -1302,19 +1321,19 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 </div>
               )}
 
-              <div className="border-t border-[#EAE3D5] pt-3 text-xs text-[#57534E] space-y-1.5">
+              <div className="border-t border-[#E3D7C3] pt-3 text-xs text-[#76675B] space-y-1.5">
                 <div>
-                  <span className="font-semibold text-[#141413]">Paragraphs:</span>{' '}
+                  <span className="font-semibold text-[#171615]">Paragraphs:</span>{' '}
                   {paraCount}
                 </div>
                 <div>
-                  <span className="font-semibold text-[#141413]">
+                  <span className="font-semibold text-[#171615]">
                     Highlighted Vocabulary:
                   </span>{' '}
                   {editingLesson.vocabulary.length} items (target: 8–15)
                 </div>
                 <div>
-                  <span className="font-semibold text-[#141413]">
+                  <span className="font-semibold text-[#171615]">
                     Comprehension Questions:
                   </span>{' '}
                   {editingLesson.questions.length} items
@@ -1327,42 +1346,45 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
       {activeSubTab === 'import_export' && (
         <div className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
-            <h3 className="font-display text-lg font-bold text-[#141413]">
+          <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
+            <h3 className="font-display text-lg font-bold text-[#171615]">
               Export Lesson Batches & JSON Schema Template
             </h3>
-            <p className="text-xs text-[#57534E] leading-relaxed">
+            <p className="text-xs text-[#76675B] leading-relaxed">
               Download any of the 5 structured CEFR lesson batches (10 lessons per batch, 50 total) or the JSON schema template for offline editing and backup.
             </p>
 
             <div className="grid gap-2.5 sm:grid-cols-2">
-              {ALL_CEFR_LEVELS.map((lvl, idx) => (
-                <button
-                  key={lvl}
-                  type="button"
-                  onClick={() =>
-                    downloadJsonFile(`fluentloop-batch-${idx + 1}-${lvl.toLowerCase()}.json`, {
-                      batchNumber: idx + 1,
-                      level: lvl,
-                      lessonCount: LESSON_BATCHES[lvl].length,
-                      lessons: LESSON_BATCHES[lvl],
-                    })
-                  }
-                  className="flex items-center justify-between rounded-lg border border-[#D8CFC2] bg-[#FAF7F2] px-3.5 py-2.5 text-xs font-semibold text-[#141413] hover:border-[#9A3412]"
-                >
-                  <span>
-                    Batch {idx + 1}: Level {lvl} (10 Lessons)
-                  </span>
-                  <Download className="h-4 w-4 text-[#9A3412]" />
-                </button>
-              ))}
+              {ALL_CEFR_LEVELS.map((lvl, idx) => {
+                const levelLessons = lessons.filter((l) => l.level === lvl && !l.isDiagnostic);
+                return (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() =>
+                      downloadJsonFile(`fluentloop-batch-${idx + 1}-${lvl.toLowerCase()}.json`, {
+                        batchNumber: idx + 1,
+                        level: lvl,
+                        lessonCount: levelLessons.length,
+                        lessons: levelLessons,
+                      })
+                    }
+                    className="flex items-center justify-between rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] px-3.5 py-2.5 text-xs font-semibold text-[#171615] hover:border-[#A63816]"
+                  >
+                    <span>
+                      Batch {idx + 1}: Level {lvl} ({levelLessons.length} Lessons)
+                    </span>
+                    <Download className="h-4 w-4 text-[#A63816]" />
+                  </button>
+                );
+              })}
 
               <button
                 type="button"
                 onClick={() =>
                   downloadJsonFile('fluentloop-all-lessons-export.json', { lessons })
                 }
-                className="flex items-center justify-between rounded-lg bg-[#141413] px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-[#292524]"
+                className="flex items-center justify-between rounded-lg bg-[#171615] px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-[#292524]"
               >
                 <span>Export Complete Library ({lessons.length} Lessons)</span>
                 <Download className="h-4 w-4" />
@@ -1376,7 +1398,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     EXAMPLE_LESSON_JSON_TEMPLATE
                   )
                 }
-                className="flex items-center justify-between rounded-lg border border-[#9A3412] bg-[#FEF3C7]/40 px-3.5 py-2.5 text-xs font-semibold text-[#9A3412]"
+                className="flex items-center justify-between rounded-lg border border-[#A63816] bg-[#FEF3C7]/40 px-3.5 py-2.5 text-xs font-semibold text-[#A63816]"
               >
                 <span>Download Example JSON Template</span>
                 <FileJson className="h-4 w-4" />
@@ -1384,12 +1406,12 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             </div>
           </div>
 
-          <div className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-4">
+          <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg font-bold text-[#141413]">
+              <h3 className="font-display text-lg font-bold text-[#171615]">
                 Bulk JSON Lesson Importer
               </h3>
-              <label className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8CFC2] bg-white px-3 py-1.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6] cursor-pointer">
+              <label className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-white px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer">
                 <Upload className="h-3.5 w-3.5" />
                 Upload .json File
                 <input
@@ -1413,17 +1435,17 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 }
               }}
               placeholder='Paste JSON array of lessons or {"lessons": [...]} here...'
-              className="w-full rounded-lg border border-[#D8CFC2] bg-white p-3 font-mono-code text-xs text-[#141413]"
+              className="w-full rounded-lg border border-[#E3D7C3] bg-white p-3 font-mono-code text-xs text-[#171615]"
             />
 
             {importPreview && (
-              <div className="rounded-lg border border-[#E5DEC9] bg-[#FAF7F2] p-3.5 space-y-2 text-xs">
-                <div className="font-semibold text-[#141413]">
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5 space-y-2 text-xs">
+                <div className="font-semibold text-[#171615]">
                   Validation Summary: {importPreview.validLessons.length} valid lesson(s) ready ·{' '}
                   {importPreview.failedRecords.length} rejected
                 </div>
                 {importPreview.failedRecords.map((inv, idx) => (
-                  <div key={idx} className="text-[#B91C1C]">
+                  <div key={idx} className="text-[#B42318]">
                     • {inv.idOrIndex}: {inv.reasons.join('; ')}
                   </div>
                 ))}
@@ -1439,7 +1461,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                       setJsonInput('');
                       setImportPreview(null);
                     }}
-                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#15803D] px-4 py-2 text-xs font-semibold text-white hover:bg-[#14532D]"
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#287A52] px-4 py-2 text-xs font-semibold text-white hover:bg-[#14532D]"
                   >
                     <CheckCircle2 className="h-4 w-4" />
                     Import {importPreview.validLessons.length} Valid Lesson(s)
@@ -1447,6 +1469,249 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'word_coverage' && (
+        <div className="space-y-6">
+          {/* Top Summary Metrics */}
+          <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E3D7C3] pb-4">
+              <div>
+                <div className="font-mono-code text-xs font-bold uppercase tracking-wider text-[#A63816]">
+                  Precomputed English-to-English Dictionary Audit · Zero Runtime API Calls
+                </div>
+                <h3 className="mt-1 font-display text-xl font-bold text-[#171615]">
+                  Complete Passage Word Coverage & Contextual Disambiguation Report
+                </h3>
+                <p className="mt-1 text-xs text-[#76675B]">
+                  Audits every word token across all {coverageReport.regularPassageCount} regular
+                  IELTS Academic lessons and {coverageReport.diagnosticPassageCount} diagnostic
+                  placement passages ({coverageReport.totalPassages} passages total).
+                </p>
+              </div>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-mono-code text-xs font-bold ${
+                  coverageReport.missingDistinctWords.length === 0
+                    ? 'bg-[#DCFCE7] text-[#14532D] border border-[#287A52]/30'
+                    : 'bg-[#FEF3C7] text-[#92400E] border border-[#D97706]/30'
+                }`}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {coverageReport.overallCoveragePercent}% Word Coverage (
+                {coverageReport.missingDistinctWords.length} Missing)
+              </span>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5">
+                <div className="text-[11px] font-semibold text-[#76675B]">
+                  Total Words Scanned
+                </div>
+                <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
+                  {coverageReport.totalWordTokens.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[#76675B]">
+                  Across {coverageReport.totalPassages} passages
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5">
+                <div className="text-[11px] font-semibold text-[#76675B]">
+                  Distinct Normalized Words
+                </div>
+                <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
+                  {coverageReport.distinctNormalizedWords.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[#76675B]">
+                  Includes inflections & compounds
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5">
+                <div className="text-[11px] font-semibold text-[#76675B]">
+                  Suitable English Definitions
+                </div>
+                <div className="mt-1 font-display text-2xl font-bold text-[#287A52] tabular-nums">
+                  {coverageReport.definedDistinctWords.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[#287A52] font-semibold">
+                  {coverageReport.overallCoveragePercent}% covered
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5">
+                <div className="text-[11px] font-semibold text-[#76675B]">
+                  Missing Definitions
+                </div>
+                <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
+                  {coverageReport.missingDistinctWords.length}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[#76675B]">
+                  {coverageReport.missingDistinctWords.length === 0
+                    ? 'Zero undefined words'
+                    : coverageReport.missingDistinctWords.slice(0, 5).join(', ')}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5">
+                <div className="text-[11px] font-semibold text-[#76675B]">
+                  Ambiguous Contextual Words
+                </div>
+                <div className="mt-1 font-display text-2xl font-bold text-[#A63816] tabular-nums">
+                  {coverageReport.ambiguousWordsWithMultipleSenses.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[#76675B]">
+                  Multi-sense disambiguated
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5">
+                <div className="text-[11px] font-semibold text-[#76675B]">
+                  Curated Definitions Reused
+                </div>
+                <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
+                  {coverageReport.curatedAnnotationsReused.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[#76675B]">
+                  Highlighted passage terms
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Coverage by CEFR Level */}
+          <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-4">
+            <h4 className="font-display text-lg font-bold text-[#171615]">
+              Coverage Breakdown by CEFR Level (A1–C1)
+            </h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-[#E3D7C3] bg-[#F2EDE3] text-[11px] font-semibold uppercase tracking-wider text-[#76675B]">
+                    <th className="py-2.5 px-3">CEFR Level</th>
+                    <th className="py-2.5 px-3">Passages</th>
+                    <th className="py-2.5 px-3">Total Word Tokens</th>
+                    <th className="py-2.5 px-3">Distinct Words</th>
+                    <th className="py-2.5 px-3">Defined Words</th>
+                    <th className="py-2.5 px-3">Curated Highlights</th>
+                    <th className="py-2.5 px-3">Missing</th>
+                    <th className="py-2.5 px-3 text-right">Coverage</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E3D7C3] tabular-nums">
+                  {coverageReport.byLevel.map((row) => (
+                    <tr key={row.level} className="hover:bg-[#FAF7F1]">
+                      <td className="py-2.5 px-3 font-mono-code font-bold text-[#A63816]">
+                        Level {row.level}
+                      </td>
+                      <td className="py-2.5 px-3 text-[#171615]">{row.passageCount}</td>
+                      <td className="py-2.5 px-3 text-[#76675B]">
+                        {row.totalTokens.toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-[#171615]">
+                        {row.distinctWords.toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold text-[#287A52]">
+                        {row.definedWords.toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-[#76675B]">{row.curatedWords}</td>
+                      <td className="py-2.5 px-3 text-[#76675B]">{row.missingWordsCount}</td>
+                      <td className="py-2.5 px-3 text-right font-mono-code font-bold text-[#287A52]">
+                        {row.coveragePercent}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Ambiguous / Polysemous Words Contextual Disambiguation */}
+          <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-4">
+            <div>
+              <h4 className="font-display text-lg font-bold text-[#171615]">
+                Contextual Sense Disambiguation for Ambiguous Words
+              </h4>
+              <p className="text-xs text-[#76675B]">
+                Words with multiple meanings across passages store separate contextual senses and
+                automatically select the meaning that fits the surrounding sentence.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {coverageReport.sampleAmbiguousWords.map((item) => (
+                <div
+                  key={item.word}
+                  className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-3.5 space-y-2 text-xs"
+                >
+                  <div className="flex items-center justify-between border-b border-[#E3D7C3] pb-1.5">
+                    <span className="font-display text-sm font-bold text-[#171615]">
+                      {item.word}
+                    </span>
+                    <span className="rounded bg-[#FEF3C7] px-2 py-0.5 font-mono-code text-[10px] font-bold text-[#A63816]">
+                      {item.senseCount} contextual senses
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {item.senses.slice(0, 3).map((s, sIdx) => (
+                      <div key={sIdx} className="text-[11px] leading-snug text-[#76675B]">
+                        <strong className="font-mono-code uppercase text-[#A63816]">
+                          [{s.pos}]
+                        </strong>{' '}
+                        <span className="text-[#171615]">{s.def}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Per-Lesson Coverage Audit Table */}
+          <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-4">
+            <h4 className="font-display text-lg font-bold text-[#171615]">
+              Coverage by Lesson ({coverageReport.byLesson.length} Passages)
+            </h4>
+            <div className="max-h-[460px] overflow-y-auto border border-[#E3D7C3] rounded-lg">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="sticky top-0 bg-[#F2EDE3] border-b border-[#E3D7C3] text-[11px] font-semibold uppercase tracking-wider text-[#76675B]">
+                  <tr>
+                    <th className="py-2.5 px-3">Passage Title</th>
+                    <th className="py-2.5 px-3">Bank</th>
+                    <th className="py-2.5 px-3">Level</th>
+                    <th className="py-2.5 px-3">Tokens</th>
+                    <th className="py-2.5 px-3">Distinct Words</th>
+                    <th className="py-2.5 px-3">Curated</th>
+                    <th className="py-2.5 px-3">Multi-Sense</th>
+                    <th className="py-2.5 px-3 text-right">Coverage</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E3D7C3] tabular-nums">
+                  {coverageReport.byLesson.map((row) => (
+                    <tr key={row.lessonId} className="hover:bg-[#FAF7F1]">
+                      <td className="py-2 px-3 font-medium text-[#171615]">
+                        {row.title}
+                        <span className="ml-2 font-mono-code text-[10px] text-[#76675B]">
+                          ({row.lessonId})
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 capitalize text-[#76675B]">{row.bank}</td>
+                      <td className="py-2 px-3 font-mono-code font-bold text-[#A63816]">
+                        {row.level}
+                      </td>
+                      <td className="py-2 px-3 text-[#76675B]">{row.totalTokens}</td>
+                      <td className="py-2 px-3 text-[#171615]">{row.distinctWords}</td>
+                      <td className="py-2 px-3 text-[#76675B]">{row.curatedWords}</td>
+                      <td className="py-2 px-3 text-[#A63816]">{row.ambiguousWordsCount}</td>
+                      <td className="py-2 px-3 text-right font-mono-code font-bold text-[#287A52]">
+                        {row.coveragePercent}% ({row.definedWords}/{row.distinctWords})
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

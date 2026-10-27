@@ -16,7 +16,8 @@ import { EvaluationVerdict, ReadingLesson } from '../types/reading';
 import { BOOTSTRAPPED_ADMIN_EMAIL, getFirebaseProjectDiagnostics } from './firebaseAdmin';
 import { getAuthoritativeLessonDifficulty } from './lessonRepository';
 
-export const DEFAULT_GRADING_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GRADING_MODEL =
+  process.env.GEMINI_GRADING_MODEL || 'gemini-3-flash-preview';
 
 // Rate limiter per IP for grading endpoints
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -114,7 +115,12 @@ export const gradingMetrics = {
   candidateTokensUsed: 0,
 };
 
-export function getHealthStatusPayload() {
+export function getHealthStatusPayload(includeAdminDiagnostics = false) {
+  if (!includeAdminDiagnostics) {
+    return {
+      status: 'ok',
+    };
+  }
   const ai = getGenAIClient();
   const firebaseDiagnostics = getFirebaseProjectDiagnostics();
   return {

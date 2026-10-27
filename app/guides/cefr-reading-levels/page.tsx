@@ -66,49 +66,49 @@ export default function CefrReadingLevelsGuidePage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] text-[#141413] flex flex-col">
+    <div className="min-h-screen bg-[#FAF7F1] text-[#171615] flex flex-col">
       <PublicGuideHeader />
 
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 sm:px-8 py-10 space-y-10">
-        <header className="space-y-4 border-b border-[#E5DEC9] pb-8">
-          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#9A3412]">
+        <header className="space-y-4 border-b border-[#E3D7C3] pb-8">
+          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#A63816]">
             CEFR A1–C1 Curriculum · Reading Stamina & Progression
           </div>
-          <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#141413]">
+          <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#171615]">
             English Reading Levels Explained: From CEFR A1 Foundation to C1 Academic Fluency
           </h1>
-          <p className="text-base sm:text-lg text-[#57534E] leading-relaxed">
+          <p className="text-base sm:text-lg text-[#76675B] leading-relaxed">
             Building academic reading fluency requires gradual exposure to longer passages, denser
             syntax, and more abstract vocabulary—without overwhelming your working memory.
           </p>
         </header>
 
         <section className="space-y-4">
-          <h2 className="font-display text-2xl font-bold text-[#141413]">
+          <h2 className="font-display text-2xl font-bold text-[#171615]">
             Target Passage Lengths & Lexical Demands by CEFR Level
           </h2>
           <div className="space-y-4">
             {levels.map((item) => (
               <article
                 key={item.level}
-                className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-6 space-y-3"
+                className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5">
-                    <span className="rounded-lg bg-[#9A3412] px-3 py-1 font-mono-code text-sm font-bold text-white">
+                    <span className="rounded-lg bg-[#A63816] px-3 py-1 font-mono-code text-sm font-bold text-white">
                       {item.level}
                     </span>
-                    <h3 className="font-display text-xl font-bold text-[#141413]">{item.name}</h3>
+                    <h3 className="font-display text-xl font-bold text-[#171615]">{item.name}</h3>
                   </div>
-                  <span className="font-mono-code text-xs font-semibold text-[#57534E]">
+                  <span className="font-mono-code text-xs font-semibold text-[#76675B]">
                     Target Length: {item.wordRange}
                   </span>
                 </div>
-                <p className="text-sm text-[#57534E] leading-relaxed">{item.focus}</p>
+                <p className="text-sm text-[#76675B] leading-relaxed">{item.focus}</p>
                 <div>
                   <Link
                     href={`/sample-lessons/${item.sampleSlug}`}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-[#9A3412] hover:underline"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[#A63816] hover:underline"
                   >
                     Read {item.level} Public Sample Passage →
                   </Link>
@@ -120,17 +120,17 @@ export default function CefrReadingLevelsGuidePage() {
 
         <AdSenseSlotReserve slotId="guide-cefr-mid" format="in-article" />
 
-        <section className="rounded-2xl border border-[#D8CFC2] bg-[#F3EFE6] p-6 sm:p-8 space-y-3">
-          <h2 className="font-display text-2xl font-bold text-[#141413]">
+        <section className="rounded-2xl border border-[#E3D7C3] bg-[#F2EDE3] p-6 sm:p-8 space-y-3">
+          <h2 className="font-display text-2xl font-bold text-[#171615]">
             How Adaptive Progression Works in FluentLoop
           </h2>
-          <p className="text-sm text-[#57534E] leading-relaxed">
+          <p className="text-sm text-[#76675B] leading-relaxed">
             When you choose a comfortable starting level, FluentLoop selects unseen passages that
             match your current reading comfort. As you complete first-time assessments with strong
             comprehension accuracy, the system gradually introduces more demanding passages within
             your CEFR band before advancing you to the next CEFR level.
           </p>
-          <p className="text-sm text-[#57534E] leading-relaxed">
+          <p className="text-sm text-[#76675B] leading-relaxed">
             Reviewing completed lessons or practicing a passage a second time is always encouraged
             and never penalizes your adaptive standing.
           </p>

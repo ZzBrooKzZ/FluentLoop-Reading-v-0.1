@@ -1,5 +1,5 @@
 import { ReadingLesson } from '../../types/reading';
-import { getEditorialIllustrationUri } from '../../utils/illustrations';
+import { getEditorialIllustrationUri, getPassageIllustrationAlt } from '../../utils/illustrations';
 
 const rawA2Lessons: Omit<ReadingLesson, 'illustrationUrl' | 'createdAt' | 'updatedAt'>[] = [
   {
@@ -1990,6 +1990,7 @@ const rawA2Lessons: Omit<ReadingLesson, 'illustrationUrl' | 'createdAt' | 'updat
 export const BATCH_A2_LESSONS: ReadingLesson[] = rawA2Lessons.map((lesson) => ({
   ...lesson,
   illustrationUrl: getEditorialIllustrationUri(lesson.id, lesson.topic, lesson.level),
+  illustrationAlt: getPassageIllustrationAlt(lesson.id, lesson.illustrationAlt),
   createdAt: '2026-01-16T09:00:00.000Z',
   updatedAt: '2026-01-16T09:00:00.000Z',
 }));

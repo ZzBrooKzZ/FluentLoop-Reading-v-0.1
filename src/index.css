@@ -4,15 +4,33 @@
 
 @layer base {
   :root {
-    --font-display: 'Fraunces', Georgia, serif;
-    --font-serif: 'Source Serif 4', Georgia, serif;
+    --font-display: 'Fraunces', 'Newsreader', Georgia, serif;
+    --font-serif: 'Source Serif 4', 'Newsreader', Georgia, serif;
     --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+
+    /* Official FluentLoop Warm Editorial Palette */
+    --color-primary: #A63816;
+    --color-primary-hover: #842B12;
+    --color-bg-ivory: #FAF7F1;
+    --color-bg-cream: #F2EDE3;
+    --color-surface: #FFFDFA;
+    --color-text-charcoal: #171615;
+    --color-text-warm-brown: #76675B;
+    --color-border-sand: #E3D7C3;
+    --color-pale-terracotta: #F7E9DC;
+    --color-olive: #77764B;
+    --color-leaf-green: #65734E;
+    --color-success: #287A52;
+    --color-error: #B42318;
+    --color-warning: #946200;
   }
 
   body {
-    background-color: #FAF7F2;
-    color: #141413;
+    background-color: var(--color-bg-ivory);
+    background-image: radial-gradient(rgba(166, 56, 22, 0.03) 1px, transparent 0);
+    background-size: 28px 28px;
+    color: var(--color-text-charcoal);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -35,94 +53,104 @@
   font-variant-numeric: tabular-nums;
 }
 
-
-/* FluentLoop dark theme overrides. The original Tailwind palette remains the light theme. */
+/* Warm Editorial Dark Theme Overrides */
 html[data-theme="dark"],
 html.dark {
   color-scheme: dark;
-  background: #0b1220;
+  background: #161412;
 }
 html[data-theme="dark"] body,
 html.dark body {
-  background-color: #0b1220 !important;
-  color: #f3f4f6 !important;
+  background-color: #161412 !important;
+  background-image: radial-gradient(rgba(224, 109, 68, 0.04) 1px, transparent 0);
+  color: #F5F0E6 !important;
 }
+html[data-theme="dark"] [class*="bg-[#FAF7F1]"],
 html[data-theme="dark"] [class*="bg-[#FAF7F2]"],
+html[data-theme="dark"] [class*="bg-[#F2EDE3]"],
 html[data-theme="dark"] [class*="bg-[#F3EFE6]"],
+html.dark [class*="bg-[#FAF7F1]"],
 html.dark [class*="bg-[#FAF7F2]"],
+html.dark [class*="bg-[#F2EDE3]"],
 html.dark [class*="bg-[#F3EFE6]"] {
-  background-color: #111827 !important;
+  background-color: #1F1C19 !important;
 }
+html[data-theme="dark"] [class*="bg-[#FFFDFA]"],
 html[data-theme="dark"] [class*="bg-[#FFFDF9]"],
-html[data-theme="dark"] [class*="bg-white"] {
-  background-color: #1f2937 !important;
+html[data-theme="dark"] [class*="bg-white"],
+html.dark [class*="bg-[#FFFDFA]"],
+html.dark [class*="bg-[#FFFDF9]"],
+html.dark [class*="bg-white"] {
+  background-color: #28231F !important;
 }
+html[data-theme="dark"] [class*="bg-[#F7E9DC]"],
 html[data-theme="dark"] [class*="bg-[#EAE3D5]"] {
-  background-color: #273449 !important;
+  background-color: #332B25 !important;
 }
+html[data-theme="dark"] [class*="text-[#171615]"],
 html[data-theme="dark"] [class*="text-[#141413]"],
 html[data-theme="dark"] [class*="text-[#292524]"] {
-  color: #f3f4f6 !important;
+  color: #F5F0E6 !important;
 }
-html[data-theme="dark"] [class*="text-[#57534E]"] {
-  color: #cbd5e1 !important;
-}
+html[data-theme="dark"] [class*="text-[#76675B]"],
+html[data-theme="dark"] [class*="text-[#57534E]"],
 html[data-theme="dark"] [class*="text-[#78716C]"] {
-  color: #94a3b8 !important;
+  color: #C9BEB0 !important;
 }
+html[data-theme="dark"] [class*="border-[#E3D7C3]"],
 html[data-theme="dark"] [class*="border-[#E5DEC9]"],
 html[data-theme="dark"] [class*="border-[#D8CFC2]"],
 html[data-theme="dark"] [class*="border-[#EAE3D5]"],
 html[data-theme="dark"] [class*="border-[#D5C7B2]"] {
-  border-color: #334155 !important;
+  border-color: #3D352E !important;
 }
 html[data-theme="dark"] input,
 html[data-theme="dark"] textarea,
 html[data-theme="dark"] select {
-  color: #f3f4f6;
+  color: #F5F0E6;
 }
 html[data-theme="dark"] input::placeholder,
 html[data-theme="dark"] textarea::placeholder {
-  color: #94a3b8;
+  color: #9E9183;
 }
 
-/* Keep vocabulary highlights and explanation panels readable on dark surfaces. */
+/* Keep vocabulary highlights and explanation panels readable on dark surfaces */
 html[data-theme="dark"] [data-vocab-state="default"] {
-  background-color: #3b2f19 !important;
-  color: #fde68a !important;
-  border-color: #a8751c !important;
+  background-color: #3D2D1E !important;
+  color: #FDE68A !important;
+  border-color: #C97A3E !important;
 }
 html[data-theme="dark"] [data-vocab-state="default"]:hover,
 html[data-theme="dark"] [data-vocab-state="default"]:focus-visible {
-  background-color: #51401e !important;
+  background-color: #4E3925 !important;
 }
 html[data-theme="dark"] [data-vocab-state="saved"] {
-  background-color: #123524 !important;
-  color: #bbf7d0 !important;
-  border-color: #2d8054 !important;
+  background-color: #163828 !important;
+  color: #BBF7D0 !important;
+  border-color: #287A52 !important;
 }
 html[data-theme="dark"] [data-vocab-state="saved"] svg {
-  color: #86efac !important;
+  color: #86EFAC !important;
 }
 html[data-theme="dark"] [data-vocab-state="saved"]:hover,
 html[data-theme="dark"] [data-vocab-state="saved"]:focus-visible {
-  background-color: #19462f !important;
+  background-color: #1D4733 !important;
 }
 html[data-theme="dark"] [data-vocab-state="selected"] {
-  background-color: #9a3412 !important;
-  color: #ffffff !important;
-  border-color: #fb923c !important;
+  background-color: #A63816 !important;
+  color: #FFFFFF !important;
+  border-color: #E06D44 !important;
 }
 html[data-theme="dark"] [data-vocab-definition="context"] {
-  background-color: #3b2f19 !important;
-  border-color: #8b6423 !important;
+  background-color: #3A2A1D !important;
+  border-color: #8B6423 !important;
 }
+html[data-theme="dark"] [data-vocab-definition="context"] [class*="text-[#A63816]"],
 html[data-theme="dark"] [data-vocab-definition="context"] [class*="text-[#9A3412]"] {
-  color: #fbbf24 !important;
+  color: #FBBF24 !important;
 }
 html[data-theme="dark"] [data-evidence-highlighted="true"] {
-  background-color: #123524 !important;
-  color: #dcfce7 !important;
-  border-left-color: #2d8054 !important;
+  background-color: #163828 !important;
+  color: #DCFCE7 !important;
+  border-left-color: #287A52 !important;
 }
-

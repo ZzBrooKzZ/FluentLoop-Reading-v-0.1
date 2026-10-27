@@ -46,7 +46,7 @@ export default function IeltsAcademicReadingGuidePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] text-[#141413] flex flex-col">
+    <div className="min-h-screen bg-[#FAF7F1] text-[#171615] flex flex-col">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
@@ -54,14 +54,14 @@ export default function IeltsAcademicReadingGuidePage() {
       <PublicGuideHeader />
 
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 sm:px-8 py-10 space-y-10">
-        <header className="space-y-4 border-b border-[#E5DEC9] pb-8">
-          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#9A3412]">
+        <header className="space-y-4 border-b border-[#E3D7C3] pb-8">
+          <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#A63816]">
             IELTS Academic Preparation · Assessment Methodology
           </div>
-          <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#141413]">
+          <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#171615]">
             IELTS Academic Reading: Complete Guide to Question Formats & Evidence Strategy
           </h1>
-          <p className="text-base sm:text-lg text-[#57534E] leading-relaxed">
+          <p className="text-base sm:text-lg text-[#76675B] leading-relaxed">
             The IELTS Academic Reading test evaluates how accurately you can locate factual details,
             follow complex arguments, recognize writer opinion, and synthesize academic prose under
             strict word-count constraints.
@@ -69,10 +69,10 @@ export default function IeltsAcademicReadingGuidePage() {
         </header>
 
         <section className="space-y-4">
-          <h2 className="font-display text-2xl font-bold text-[#141413]">
+          <h2 className="font-display text-2xl font-bold text-[#171615]">
             1. The 12 Core IELTS Academic Question Types
           </h2>
-          <p className="text-sm sm:text-base text-[#57534E] leading-relaxed">
+          <p className="text-sm sm:text-base text-[#76675B] leading-relaxed">
             Rather than testing every format on a single text, academic reading passages naturally
             suit specific assessment tasks. Descriptive engineering and historical passages often
             pair with Note Completion and True/False/Not Given, whereas analytical arguments pair
@@ -108,10 +108,10 @@ export default function IeltsAcademicReadingGuidePage() {
             ].map(([title, desc]) => (
               <article
                 key={title}
-                className="rounded-xl border border-[#E5DEC9] bg-[#FFFDF9] p-5 space-y-2"
+                className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-2"
               >
-                <h3 className="font-display text-lg font-bold text-[#9A3412]">{title}</h3>
-                <p className="text-xs sm:text-sm text-[#57534E] leading-relaxed">{desc}</p>
+                <h3 className="font-display text-lg font-bold text-[#A63816]">{title}</h3>
+                <p className="text-xs sm:text-sm text-[#76675B] leading-relaxed">{desc}</p>
               </article>
             ))}
           </div>
@@ -119,15 +119,15 @@ export default function IeltsAcademicReadingGuidePage() {
 
         <AdSenseSlotReserve slotId="guide-ielts-mid" format="in-article" />
 
-        <section className="rounded-2xl border border-[#D8CFC2] bg-[#F3EFE6] p-6 sm:p-8 space-y-4">
-          <h2 className="font-display text-2xl font-bold text-[#141413]">
+        <section className="rounded-2xl border border-[#E3D7C3] bg-[#F2EDE3] p-6 sm:p-8 space-y-4">
+          <h2 className="font-display text-2xl font-bold text-[#171615]">
             2. Strict IELTS Word-Limit Rules Explained
           </h2>
-          <p className="text-sm sm:text-base text-[#57534E] leading-relaxed">
+          <p className="text-sm sm:text-base text-[#76675B] leading-relaxed">
             One of the most common causes of lost marks in IELTS Academic Reading is exceeding the
             stated word limit on completion and short-answer questions:
           </p>
-          <ul className="list-disc pl-5 space-y-2 text-sm text-[#141413] leading-relaxed">
+          <ul className="list-disc pl-5 space-y-2 text-sm text-[#171615] leading-relaxed">
             <li>
               <strong>ONE WORD ONLY:</strong> Writing two words (even adding an unnecessary article
               like <em>&ldquo;the turbine&rdquo;</em> when <em>&ldquo;turbine&rdquo;</em> is
@@ -150,29 +150,29 @@ export default function IeltsAcademicReadingGuidePage() {
         </section>
 
         <section className="space-y-4">
-          <h2 className="font-display text-2xl font-bold text-[#141413]">
+          <h2 className="font-display text-2xl font-bold text-[#171615]">
             3. False vs. Not Given: Avoiding the Classic Inference Trap
           </h2>
-          <p className="text-sm sm:text-base text-[#57534E] leading-relaxed">
+          <p className="text-sm sm:text-base text-[#76675B] leading-relaxed">
             Strong academic readers often over-infer when a topic is mentioned in a paragraph. To
             distinguish <strong>False/No</strong> from <strong>Not Given</strong>:
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border border-[#E5DEC9] bg-white p-5 space-y-2">
-              <h3 className="font-mono-code text-xs font-bold uppercase text-[#B91C1C]">
+            <div className="rounded-xl border border-[#E3D7C3] bg-white p-5 space-y-2">
+              <h3 className="font-mono-code text-xs font-bold uppercase text-[#B42318]">
                 When to choose FALSE or NO
               </h3>
-              <p className="text-xs sm:text-sm text-[#57534E] leading-relaxed">
+              <p className="text-xs sm:text-sm text-[#76675B] leading-relaxed">
                 The passage explicitly states the opposite fact or an incompatible quantity,
                 direction, or relationship. You can highlight a specific sentence in the passage
                 that proves the statement wrong.
               </p>
             </div>
-            <div className="rounded-xl border border-[#E5DEC9] bg-white p-5 space-y-2">
-              <h3 className="font-mono-code text-xs font-bold uppercase text-[#0369A1]">
+            <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 space-y-2">
+              <h3 className="font-mono-code text-xs font-bold uppercase text-[#77764B]">
                 When to choose NOT GIVEN
               </h3>
-              <p className="text-xs sm:text-sm text-[#57534E] leading-relaxed">
+              <p className="text-xs sm:text-sm text-[#76675B] leading-relaxed">
                 The passage mentions the subject or nouns in the question, but never confirms or
                 denies the specific comparison, intention, or outcome claimed in the statement.
               </p>
@@ -180,12 +180,12 @@ export default function IeltsAcademicReadingGuidePage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-[#E5DEC9] bg-white p-6 sm:p-8 flex flex-wrap items-center justify-between gap-4">
+        <section className="rounded-2xl border border-[#E3D7C3] bg-white p-6 sm:p-8 flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1 max-w-xl">
-            <h2 className="font-display text-xl font-bold text-[#141413]">
+            <h2 className="font-display text-xl font-bold text-[#171615]">
               Practice with Interactive Passage Evidence Highlighting
             </h2>
-            <p className="text-xs sm:text-sm text-[#57534E]">
+            <p className="text-xs sm:text-sm text-[#76675B]">
               Try our curated public sample passages or launch the adaptive reading workspace to
               practice across CEFR A1–C1 levels.
             </p>
@@ -193,13 +193,13 @@ export default function IeltsAcademicReadingGuidePage() {
           <div className="flex flex-wrap gap-3">
             <Link
               href="/sample-lessons"
-              className="rounded-xl border border-[#D8CFC2] bg-[#FAF7F2] px-4 py-2.5 text-xs font-semibold text-[#141413] hover:bg-[#F3EFE6]"
+              className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] px-4 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
             >
               View Sample Passages
             </Link>
             <Link
               href="/"
-              className="rounded-xl bg-[#9A3412] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#7C2D12]"
+              className="rounded-xl bg-[#A63816] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#842B12]"
             >
               Start Adaptive Practice →
             </Link>

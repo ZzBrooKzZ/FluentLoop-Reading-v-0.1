@@ -1,6 +1,6 @@
 {
-  "summary":  "Updated implementation plan enforcing a strict maximum of 3 diagnostic passages per placement assessment (with early completion at 2 passages when clear, 5-6 objective questions per passage, ~5-8 minutes total duration, and conservative evidence-based CEFR level calculation).",
-  "updatedAt":  "2026-10-25T20:24:33.948190191Z",
+  "summary":  "Implementation plan for generating package-lock.json, auditing production dependencies, configuring NEXT_PUBLIC_SITE_URL to the Shared App URL in apphosting.yaml, creating a preconfigured Cloud Secret Manager & Firebase App Hosting secret provisioning script for GEMINI_API_KEY, and deploying firestore.rules to the live Firestore database.",
+  "updatedAt":  "2026-10-26T23:46:52.640424269Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

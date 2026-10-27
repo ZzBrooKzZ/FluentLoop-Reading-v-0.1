@@ -466,4 +466,466 @@ test('regular course lesson selector excludes diagnostic passages', () => {
   assert.equal(selected?.id, 'b1-reg-1');
 });
 
+test('precomputed passage dictionary achieves 100% word coverage across all 54 regular lessons and 15 diagnostic passages with zero missing definitions', async () => {
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+  const { DIAGNOSTIC_PASSAGES } = await import('../data/diagnosticPassages');
+  const { computeDictionaryCoverageReport } = await import('./wordLookupService');
+
+  const report = computeDictionaryCoverageReport(INITIAL_LESSONS, DIAGNOSTIC_PASSAGES);
+  assert.equal(report.regularPassageCount, 54);
+  assert.equal(report.diagnosticPassageCount, 15);
+  assert.equal(report.totalPassages, 69);
+  assert.ok(report.totalWordTokens > 25000);
+  assert.ok(report.distinctNormalizedWords >= 4500);
+  assert.equal(
+    report.missingDistinctWords.length,
+    0,
+    `Expected 0 missing words, found: ${report.missingDistinctWords.join(', ')}`
+  );
+  assert.equal(report.overallCoveragePercent, 100);
+  for (const lvl of report.byLevel) {
+    assert.equal(lvl.coveragePercent, 100, `Expected 100% coverage for level ${lvl.level}`);
+    assert.equal(lvl.missingWordsCount, 0);
+  }
+  for (const les of report.byLesson) {
+    assert.equal(
+      les.coveragePercent,
+      100,
+      `Expected 100% coverage for lesson ${les.lessonId}, missing: ${les.missingWords.join(', ')}`
+    );
+  }
+});
+
+test('lookupPassageWord disambiguates ambiguous/polysemous words by sentence context and makes zero network requests', async () => {
+  const { lookupPassageWord, stripSurroundingPunctuation } = await import('./wordLookupService');
+
+  // Verify zero network calls by temporarily throwing if global fetch is called
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    throw new Error('Runtime network calls are forbidden during word lookup');
+  }) as any;
+
+  try {
+    // 1. "conduct" as a verb (research experiment) vs thermal/electrical conduction
+    const conductResearch = lookupPassageWord({
+      rawWord: 'conduct,',
+      sentence: 'Scientists conduct field surveys to measure biodiversity across islands.',
+      lessonId: 'b1-test',
+    });
+    assert.ok(conductResearch);
+    assert.equal(conductResearch.word, 'conduct');
+    assert.equal(conductResearch.arabicTranslation, undefined);
+    assert.ok(
+      conductResearch.simpleDefinition.toLowerCase().includes('organize') ||
+        conductResearch.simpleDefinition.toLowerCase().includes('carry out')
+    );
+
+    const conductHeat = lookupPassageWord({
+      rawWord: 'conduct',
+      sentence: 'Dense metals conduct heat and electricity far more rapidly than air.',
+      lessonId: 'b2-test',
+    });
+    assert.ok(conductHeat);
+    assert.ok(
+      conductHeat.simpleDefinition.toLowerCase().includes('heat') ||
+        conductHeat.simpleDefinition.toLowerCase().includes('electricity') ||
+        conductHeat.simpleDefinition.toLowerCase().includes('transmit')
+    );
+    assert.notEqual(conductResearch.simpleDefinition, conductHeat.simpleDefinition);
+
+    // 2. "plant" as botanical organism vs industrial power station
+    const plantBotany = lookupPassageWord({
+      rawWord: '"plant"',
+      sentence: 'Each desert plant stores moisture inside thick waxy stems and roots.',
+      lessonId: 'a2-test',
+    });
+    const plantFactory = lookupPassageWord({
+      rawWord: 'plant.',
+      sentence: 'The geothermal power plant generates electricity using underground steam turbines.',
+      lessonId: 'b2-test',
+    });
+    assert.ok(plantBotany && plantFactory);
+    assert.notEqual(plantBotany.simpleDefinition, plantFactory.simpleDefinition);
+
+    // 3. Inflections, contractions, hyphenated words, and surrounding punctuation
+    const stripped = stripSurroundingPunctuation('“(ecosystem-wide).”');
+    assert.equal(stripped.core, 'ecosystem-wide');
+    assert.equal(stripped.leading, '“(');
+    assert.equal(stripped.trailing, ').”');
+
+    const contractionLookup = lookupPassageWord({
+      rawWord: "don't,",
+      sentence: "Many desert reptiles don't emerge until the sun sets.",
+    });
+    assert.ok(contractionLookup);
+    assert.equal(contractionLookup.word, "don't");
+    assert.ok(contractionLookup.simpleDefinition.toLowerCase().includes('do not'));
+
+    const inflectedLookup = lookupPassageWord({
+      rawWord: 'caravanserais;',
+      sentence: 'Merchant caravans rested in fortified caravanserais along the Silk Road.',
+    });
+    assert.ok(inflectedLookup);
+    assert.equal(inflectedLookup.word, 'caravanserais');
+    assert.ok(inflectedLookup.simpleDefinition.length > 15);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalled, false, 'Word lookup must never invoke fetch()');
+});
+
+test('tokenizePlainSegment preserves exact character stream and non-key word wrappers have zero layout-shifting styles', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+  const { tokenizePlainSegment } = await import('../components/InteractivePassage');
+
+  // 1. Verify every paragraph in the lesson bank reconstructs identically without losing or adding spaces/punctuation
+  for (const lesson of INITIAL_LESSONS.slice(0, 15)) {
+    const pieces = tokenizePlainSegment(lesson.passage, 0);
+    const reconstructed = pieces
+      .map((p) => (p.core && p.normalized ? `${p.leading}${p.core}${p.trailing}` : p.raw))
+      .join('');
+    assert.equal(
+      reconstructed,
+      lesson.passage,
+      `Tokenized text must match original passage byte-for-byte in ${lesson.id}`
+    );
+  }
+
+  // 2. Verify InteractivePassage.tsx does not apply padding, border, underline, or hover background classes to data-word-lookup spans
+  const componentSource = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/InteractivePassage.tsx'),
+    'utf8'
+  );
+  const wordLookupSpanBlock = componentSource.slice(
+    componentSource.lastIndexOf('data-word-lookup="true"'),
+    componentSource.indexOf('{piece.core}')
+  );
+  assert.ok(wordLookupSpanBlock.includes('className="cursor-pointer"'));
+  assert.equal(wordLookupSpanBlock.includes('px-'), false);
+  assert.equal(wordLookupSpanBlock.includes('py-'), false);
+  assert.equal(wordLookupSpanBlock.includes('border'), false);
+  assert.equal(wordLookupSpanBlock.includes('hover:bg-'), false);
+  assert.equal(wordLookupSpanBlock.includes('underline'), false);
+  assert.equal(wordLookupSpanBlock.includes('font-bold'), false);
+  assert.equal(wordLookupSpanBlock.includes('font-medium'), false);
+});
+
+test('security audit: public health payload omits sensitive internals and client components never import private answer keys', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { getHealthStatusPayload } = await import('../server/gradingEngine');
+
+  // 1. Public health check must only expose { status: 'ok' }
+  const publicHealth = getHealthStatusPayload(false) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(publicHealth), ['status']);
+  assert.equal(publicHealth.status, 'ok');
+  assert.equal('adminEmail' in publicHealth, false);
+  assert.equal('firebaseProjectId' in publicHealth, false);
+  assert.equal('firestoreDatabaseId' in publicHealth, false);
+  assert.equal('gradingMetrics' in publicHealth, false);
+
+  // 2. Admin health check returns diagnostics with valid Gemini model ID
+  const adminHealth = getHealthStatusPayload(true) as Record<string, unknown>;
+  assert.equal(adminHealth.status, 'ok');
+  assert.equal(adminHealth.gradingModel, process.env.GEMINI_GRADING_MODEL || 'gemini-3-flash-preview');
+  assert.notEqual(adminHealth.gradingModel, 'gemini-3.8-flash');
+  assert.ok(adminHealth.gradingMetrics);
+
+  // 3. Client components must not import raw answer-key modules (initialLessons / diagnosticPassages)
+  const clientFiles = [
+    'src/App.tsx',
+    'src/components/PlacementAssessmentView.tsx',
+    'src/components/AdminStudio.tsx',
+  ];
+  for (const relPath of clientFiles) {
+    const src = fs.readFileSync(path.join(process.cwd(), relPath), 'utf8');
+    assert.equal(
+      /from\s+['"][^'"]*initialLessons['"]/.test(src),
+      false,
+      `${relPath} must not import initialLessons (private answer keys)`
+    );
+    assert.equal(
+      /from\s+['"][^'"]*diagnosticPassages['"]/.test(src),
+      false,
+      `${relPath} must not import diagnosticPassages (private answer keys)`
+    );
+  }
+  const placementViewSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/PlacementAssessmentView.tsx'),
+    'utf8'
+  );
+  assert.equal(
+    /from\s+['"][^'"]*placementEngine['"]/.test(placementViewSrc),
+    false,
+    'PlacementAssessmentView.tsx must not import placementEngine (which pulls in diagnosticPassages)'
+  );
+
+  // 4. Upload image route unconditionally enforces verified admin token
+  const uploadRouteSource = fs.readFileSync(
+    path.join(process.cwd(), 'app/api/admin/upload-image/route.ts'),
+    'utf8'
+  );
+  assert.ok(uploadRouteSource.includes('!verified || !verified.isAdmin'));
+  assert.equal(uploadRouteSource.includes('if (authHeader)'), false);
+});
+
+test('multi-word expression detection, contextual sense disambiguation, longest-match, separable verbs, and constituent word lookup', async () => {
+  const {
+    lookupPassageWord,
+    detectMultiWordExpressionsInText,
+    computeMultiWordExpressionCoverageReport,
+  } = await import('./wordLookupService');
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+  const { DIAGNOSTIC_PASSAGES } = await import('../data/diagnosticPassages');
+
+  // Guard against any runtime network calls
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    throw new Error('Runtime network calls are forbidden during MWE lookup');
+  }) as any;
+
+  try {
+    // 1. "back up" in "Please back up your files" -> digital copy meaning
+    const s1 = 'Please back up your files before installing the system update.';
+    const backUpFilesFromBack = lookupPassageWord({
+      rawWord: 'back',
+      sentence: s1,
+      charOffsetInSentence: s1.indexOf('back'),
+    });
+    const backUpFilesFromUp = lookupPassageWord({
+      rawWord: 'up',
+      sentence: s1,
+      charOffsetInSentence: s1.indexOf('up'),
+    });
+    assert.ok(backUpFilesFromBack && backUpFilesFromUp);
+    assert.equal(backUpFilesFromBack.word, 'back up');
+    assert.equal(backUpFilesFromUp.word, 'back up');
+    assert.equal(backUpFilesFromBack.id, backUpFilesFromUp.id);
+    assert.equal(backUpFilesFromBack.partOfSpeech, 'Phrasal verb');
+    assert.ok(
+      backUpFilesFromBack.simpleDefinition.toLowerCase().includes('copy') ||
+        backUpFilesFromBack.simpleDefinition.toLowerCase().includes('files')
+    );
+
+    // 2. "backs up" in "The evidence backs up her argument" -> support/confirm meaning
+    const s2 = 'The geological evidence backs up her argument about ancient sea levels.';
+    const backsUpSupport = lookupPassageWord({
+      rawWord: 'backs',
+      sentence: s2,
+      charOffsetInSentence: s2.indexOf('backs'),
+    });
+    const backsUpFromParticle = lookupPassageWord({
+      rawWord: 'up',
+      sentence: s2,
+      charOffsetInSentence: s2.indexOf('up'),
+    });
+    assert.ok(backsUpSupport && backsUpFromParticle);
+    assert.equal(backsUpSupport.word, 'back up');
+    assert.equal(backsUpSupport.matchedText, 'backs up');
+    assert.equal(backsUpSupport.id, backsUpFromParticle.id);
+    assert.ok(
+      backsUpSupport.simpleDefinition.toLowerCase().includes('support') ||
+        backsUpSupport.simpleDefinition.toLowerCase().includes('confirm')
+    );
+    assert.notEqual(backUpFilesFromBack.simpleDefinition, backsUpSupport.simpleDefinition);
+
+    // 3. "backed up" in "The car backed up" -> move backward/reverse meaning
+    const s3 = 'The car backed up slowly out of the narrow driveway.';
+    const backedUpReverse = lookupPassageWord({
+      rawWord: 'backed',
+      sentence: s3,
+      charOffsetInSentence: s3.indexOf('backed'),
+    });
+    assert.ok(backedUpReverse);
+    assert.equal(backedUpReverse.word, 'back up');
+    assert.equal(backedUpReverse.matchedText, 'backed up');
+    assert.ok(
+      backedUpReverse.simpleDefinition.toLowerCase().includes('backward') ||
+        backedUpReverse.simpleDefinition.toLowerCase().includes('reverse')
+    );
+    assert.notEqual(backedUpReverse.simpleDefinition, backUpFilesFromBack.simpleDefinition);
+    assert.notEqual(backedUpReverse.simpleDefinition, backsUpSupport.simpleDefinition);
+
+    // 4. "gave up" in "They gave up trying" -> stop trying meaning
+    const s4 = 'They gave up trying to cross the mountain pass before winter.';
+    const gaveUpTrying = lookupPassageWord({
+      rawWord: 'gave',
+      sentence: s4,
+      charOffsetInSentence: s4.indexOf('gave'),
+    });
+    assert.ok(gaveUpTrying);
+    assert.equal(gaveUpTrying.word, 'give up');
+    assert.equal(gaveUpTrying.matchedText, 'gave up');
+    assert.ok(gaveUpTrying.simpleDefinition.toLowerCase().includes('stop trying'));
+
+    // 5. "gave up" in "She gave up her seat" -> surrender/hand over seat meaning
+    const s5 = 'She gave up her seat on the crowded train to an elderly passenger.';
+    const gaveUpSeat = lookupPassageWord({
+      rawWord: 'gave',
+      sentence: s5,
+      charOffsetInSentence: s5.indexOf('gave'),
+    });
+    assert.ok(gaveUpSeat);
+    assert.equal(gaveUpSeat.word, 'give up');
+    assert.equal(gaveUpSeat.matchedText, 'gave up');
+    assert.ok(
+      gaveUpSeat.simpleDefinition.toLowerCase().includes('hand over') ||
+        gaveUpSeat.simpleDefinition.toLowerCase().includes('allow someone else to have')
+    );
+    assert.notEqual(gaveUpTrying.simpleDefinition, gaveUpSeat.simpleDefinition);
+
+    // 6. "carried out" in "Researchers carried out a study"
+    const s6 = 'Researchers carried out a study on coral reef recovery.';
+    const carriedOutFromVerb = lookupPassageWord({
+      rawWord: 'carried',
+      sentence: s6,
+      charOffsetInSentence: s6.indexOf('carried'),
+    });
+    const carriedOutFromParticle = lookupPassageWord({
+      rawWord: 'out',
+      sentence: s6,
+      charOffsetInSentence: s6.indexOf('out'),
+    });
+    assert.ok(carriedOutFromVerb && carriedOutFromParticle);
+    assert.equal(carriedOutFromVerb.word, 'carry out');
+    assert.equal(carriedOutFromVerb.matchedText, 'carried out');
+    assert.equal(carriedOutFromVerb.id, carriedOutFromParticle.id);
+    assert.ok(
+      carriedOutFromVerb.simpleDefinition.toLowerCase().includes('perform') ||
+        carriedOutFromVerb.simpleDefinition.toLowerCase().includes('conduct')
+    );
+
+    // 7. "run out of" in "We ran out of time" (longest match over "run out")
+    const s7 = 'We ran out of time before completing the final survey.';
+    const ranOutOf = lookupPassageWord({
+      rawWord: 'ran',
+      sentence: s7,
+      charOffsetInSentence: s7.indexOf('ran'),
+    });
+    const ranOutOfFromOf = lookupPassageWord({
+      rawWord: 'of',
+      sentence: s7,
+      charOffsetInSentence: s7.indexOf('of'),
+    });
+    assert.ok(ranOutOf && ranOutOfFromOf);
+    assert.equal(ranOutOf.word, 'run out of');
+    assert.equal(ranOutOf.matchedText, 'ran out of');
+    assert.equal(ranOutOf.id, ranOutOfFromOf.id);
+    assert.ok(ranOutOf.simpleDefinition.toLowerCase().includes('supply'));
+
+    // 8. "on the other hand"
+    const s8 = 'Solar lamps, on the other hand, require no weekly kerosene fuel.';
+    const onTheOtherHand = lookupPassageWord({
+      rawWord: 'hand',
+      sentence: s8,
+      charOffsetInSentence: s8.indexOf('hand'),
+    });
+    assert.ok(onTheOtherHand);
+    assert.equal(onTheOtherHand.word, 'on the other hand');
+    assert.equal(onTheOtherHand.partOfSpeech, 'Fixed expression');
+    assert.ok(onTheOtherHand.simpleDefinition.toLowerCase().includes('contrasting'));
+
+    // 9. "in the long run"
+    const s9 = 'Preventive conservation is far less expensive in the long run.';
+    const inTheLongRun = lookupPassageWord({
+      rawWord: 'run',
+      sentence: s9,
+      charOffsetInSentence: s9.indexOf('run'),
+    });
+    assert.ok(inTheLongRun);
+    assert.equal(inTheLongRun.word, 'in the long run');
+    assert.equal(inTheLongRun.partOfSpeech, 'Idiom');
+    assert.ok(inTheLongRun.simpleDefinition.toLowerCase().includes('long period of time'));
+
+    // 10. "take into account"
+    const s10 = 'Accurate climate models must take into account cloud cover and ocean currents.';
+    const takeIntoAccount = lookupPassageWord({
+      rawWord: 'account',
+      sentence: s10,
+      charOffsetInSentence: s10.indexOf('account'),
+    });
+    assert.ok(takeIntoAccount);
+    assert.equal(takeIntoAccount.word, 'take into account');
+    assert.equal(takeIntoAccount.partOfSpeech, 'Academic collocation');
+    assert.ok(takeIntoAccount.simpleDefinition.toLowerCase().includes('consider'));
+
+    // 11. Normal single words near an expression still show their single-word definitions
+    const filesSingleWord = lookupPassageWord({
+      rawWord: 'files',
+      sentence: s1,
+      charOffsetInSentence: s1.indexOf('files'),
+    });
+    const evidenceSingleWord = lookupPassageWord({
+      rawWord: 'evidence',
+      sentence: s2,
+      charOffsetInSentence: s2.indexOf('evidence'),
+    });
+    assert.ok(filesSingleWord && evidenceSingleWord);
+    assert.equal(filesSingleWord.word, 'files');
+    assert.equal(evidenceSingleWord.word, 'evidence');
+    assert.notEqual(filesSingleWord.word, 'back up');
+    assert.notEqual(evidenceSingleWord.word, 'back up');
+
+    // 12. Separable phrasal verbs ("back the files up", "turned the job offer down") and clause boundary / spatial guards
+    const sSeparated = 'Please back the files up before updating the system.';
+    const sepBack = lookupPassageWord({
+      rawWord: 'back',
+      sentence: sSeparated,
+      charOffsetInSentence: sSeparated.indexOf('back'),
+    });
+    const sepUp = lookupPassageWord({
+      rawWord: 'up',
+      sentence: sSeparated,
+      charOffsetInSentence: sSeparated.indexOf('up'),
+    });
+    assert.ok(sepBack && sepUp);
+    assert.equal(sepBack.word, 'back up');
+    assert.equal(sepBack.matchedText, 'back the files up');
+    assert.equal(sepBack.id, sepUp.id);
+
+    // Clause boundary guard: comma between "came" and "across" must NOT match "come across"
+    const sBoundary = 'When the researchers came, across the valley rain began to fall.';
+    const boundaryMatches = detectMultiWordExpressionsInText(sBoundary);
+    assert.equal(
+      boundaryMatches.some((m) => m.canonical === 'come across'),
+      false,
+      'Must not match phrasal verb across a comma clause boundary'
+    );
+
+    // Literal spatial guard: "walked back up the stairs" and "turned down the narrow street" must not falsely match idiomatic phrasal verbs
+    const sLiteralStairs = 'The students walked back up the stairs to the library.';
+    assert.equal(
+      detectMultiWordExpressionsInText(sLiteralStairs).some((m) => m.canonical === 'back up'),
+      false
+    );
+    const sLiteralStreet = 'The carriage turned down the narrow street toward the harbor.';
+    assert.equal(
+      detectMultiWordExpressionsInText(sLiteralStreet).some((m) => m.canonical === 'turn down'),
+      false
+    );
+
+    // 13. Corpus MWE coverage report across all 54 regular lessons and 15 diagnostic passages
+    const mweReport = computeMultiWordExpressionCoverageReport(INITIAL_LESSONS, DIAGNOSTIC_PASSAGES);
+    assert.equal(mweReport.totalPassagesScanned, 69);
+    assert.ok(mweReport.totalDictionaryExpressions >= 80);
+    assert.ok(mweReport.polysemousExpressionsCount >= 7);
+    assert.ok(mweReport.totalCorpusMWEInstances >= 150);
+    assert.ok(mweReport.curatedMultiWordAnnotationsCount >= 250);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalled, false, 'MWE lookup must never invoke fetch()');
+});
+
+
+
+
 

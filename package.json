@@ -9,7 +9,8 @@
     "start": "next start -p 3000 -H 0.0.0.0",
     "clean": "rm -rf .next dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/services/adaptiveLearning.test.ts"
+    "test": "tsx --test src/services/adaptiveLearning.test.ts",
+    "setup:apphosting-secrets": "node scripts/setup-apphosting-secrets.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -33,6 +34,10 @@
     "eslint": "^10.13.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wordnet-db": "^3.1.14"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.13.6"
   }
 }

@@ -1,5 +1,5 @@
 import { ReadingLesson } from '../../types/reading';
-import { getEditorialIllustrationUri } from '../../utils/illustrations';
+import { getEditorialIllustrationUri, getPassageIllustrationAlt } from '../../utils/illustrations';
 
 const rawC1Lessons: Omit<ReadingLesson, 'illustrationUrl' | 'wordCount'>[] = [
   {
@@ -1830,5 +1830,6 @@ export const BATCH_C1_LESSONS: ReadingLesson[] = rawC1Lessons.map((lesson) => {
     ...lesson,
     wordCount,
     illustrationUrl: getEditorialIllustrationUri(lesson.id, lesson.topic, lesson.level),
+    illustrationAlt: getPassageIllustrationAlt(lesson.id, lesson.illustrationAlt),
   };
 });
