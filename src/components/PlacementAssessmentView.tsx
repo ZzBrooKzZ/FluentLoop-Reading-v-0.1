@@ -24,6 +24,7 @@ import { InteractivePassage } from './InteractivePassage';
 import { GradedQuestionResult, QUESTION_TYPE_LABELS } from '../services/gradingService';
 import { getPassagePhotoMetadata } from '../utils/illustrations';
 import { CornerBotanicalSprig, OliveTerracottaLeafCluster } from './BotanicalIllustrations';
+import { AnimatedBookLoader } from './AnimatedBookLoader';
 
 const MAX_PLACEMENT_PASSAGES = 3;
 
@@ -428,9 +429,10 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
   // 3. ACTIVE DIAGNOSTIC PASSAGE + 6 OBJECTIVE QUESTIONS
   if (!activePassage) {
     return (
-      <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-10 text-center text-sm text-[#76675B]">
-        Preparing your adaptive diagnostic passage...
-      </div>
+      <AnimatedBookLoader
+        message="Preparing your reading experience"
+        subtext="Loading your adaptive diagnostic passage..."
+      />
     );
   }
 

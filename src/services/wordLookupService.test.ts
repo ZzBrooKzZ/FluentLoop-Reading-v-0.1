@@ -367,5 +367,63 @@ describe('FluentLoop Contextual Vocabulary Dictionary & Lookup Service', () => {
     assert.ok(issueByWord.get('broken phrase')?.includes('short_general_definition'));
     assert.ok(issueByWord.get('broken phrase')?.includes('missing_context_meaning'));
   });
+
+  it('11. Verifies AnimatedBookLoader component structure, sage-green palette, separate animated book/page elements, and accessibility', () => {
+    const loaderSource = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/AnimatedBookLoader.tsx'),
+      'utf8'
+    );
+    const cssSource = fs.readFileSync(path.join(process.cwd(), 'src/index.css'), 'utf8');
+    const routeLoadingSource = fs.readFileSync(
+      path.join(process.cwd(), 'app/loading.tsx'),
+      'utf8'
+    );
+
+    // Design system colors: warm ivory #FAF7F1, soft cream #F2EDE3, sage green #879477, deep sage #626F53, charcoal #171615, warm brown #76675B, sand border #E3D7C3, terracotta details #A63816
+    for (const hex of ['#FAF7F1', '#F2EDE3', '#879477', '#626F53', '#171615', '#76675B', '#E3D7C3', '#A63816']) {
+      assert.ok(
+        loaderSource.includes(hex),
+        `Expected AnimatedBookLoader to use FluentLoop palette color ${hex}`
+      );
+    }
+
+    // Separate animated elements for entrance, floating, front cover opening, staggered turning pages, and drifting leaves
+    for (const cls of [
+      'fl-loader-book-enter',
+      'fl-loader-book-float',
+      'fl-loader-front-cover',
+      'fl-loader-left-open-wing',
+      'fl-loader-page-1',
+      'fl-loader-page-2',
+      'fl-loader-page-3',
+      'fl-loader-leaf-1',
+      'fl-loader-leaf-2',
+      'fl-loader-leaf-3',
+      'fl-loader-brand-fade',
+    ]) {
+      assert.ok(loaderSource.includes(cls), `Missing animated element class ${cls} in AnimatedBookLoader.tsx`);
+      assert.ok(cssSource.includes(`.${cls}`), `Missing CSS rule for .${cls} in src/index.css`);
+    }
+
+    // Tagline, BrandLogo, and accessible status attributes
+    assert.ok(loaderSource.includes('READ · LEARN · IMPROVE'));
+    assert.ok(loaderSource.includes('BrandLogo'));
+    assert.ok(loaderSource.includes('role="status"'));
+    assert.ok(loaderSource.includes('aria-live="polite"'));
+    assert.ok(loaderSource.includes('aria-hidden="true"'));
+
+    // Reduced motion support in CSS
+    assert.ok(cssSource.includes('@media (prefers-reduced-motion: reduce)'));
+    assert.ok(routeLoadingSource.includes('AnimatedBookLoader'));
+
+    // Verify 1.5-second (1500ms) loading screen transition before entering passages
+    const appSource = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
+    assert.ok(
+      appSource.includes('const PASSAGE_LOADING_DURATION_MS = 1500;'),
+      'Expected App.tsx to enforce a 1500ms (1.5s) AnimatedBookLoader transition before entering passages'
+    );
+    assert.ok(appSource.includes('triggerPassageLoadingDelay'));
+  });
 });
+
 

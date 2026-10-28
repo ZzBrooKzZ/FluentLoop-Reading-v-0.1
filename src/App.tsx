@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
@@ -70,6 +70,7 @@ import { PlacementAssessmentView } from './components/PlacementAssessmentView';
 import { PublicFooter } from './components/PublicFooter';
 import { BrandLogo } from './components/BrandLogo';
 import { AnimatedBookHero } from './components/AnimatedBookHero';
+import { AnimatedBookLoader } from './components/AnimatedBookLoader';
 import {
   AutumnBranchIllustration,
   BooksAndTeaIllustration,
@@ -98,9 +99,11 @@ const AdminStudio = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-8 text-center text-xs text-[#76675B]">
-        Loading Content Studio...
-      </div>
+      <AnimatedBookLoader
+        compact
+        message="Preparing Content Studio"
+        subtext="Loading curriculum editor and passage validation tools..."
+      />
     ),
   }
 );
@@ -110,9 +113,11 @@ const DocumentationView = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-8 text-center text-xs text-[#76675B]">
-        Loading Architecture & Schema Guide...
-      </div>
+      <AnimatedBookLoader
+        compact
+        message="Preparing Architecture & Schema Guide"
+        subtext="Loading platform documentation..."
+      />
     ),
   }
 );
@@ -143,6 +148,7 @@ const STORAGE_KEYS = {
 };
 
 const CURRENT_FRESH_START_EPOCH = '2026-10-28-unknown-until-assessed-v2';
+const PASSAGE_LOADING_DURATION_MS = 1500;
 
 function purgeLocalLearnerCache() {
   if (typeof window === 'undefined') return;
@@ -187,6 +193,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   // Adaptive Placement Assessment state (max 3 diagnostic passages)
   const [showPlacementAssessment, setShowPlacementAssessment] = useState<boolean>(false);
+  const [isStartingPlacement, setIsStartingPlacement] = useState<boolean>(false);
+  const [isOpeningPassage, setIsOpeningPassage] = useState<boolean>(false);
+  const passageLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showLandingHome, setShowLandingHome] = useState<boolean>(false);
   const [placementSession, setPlacementSession] = useState<PlacementSession | null>(null);
   const [placementActivePassage, setPlacementActivePassage] = useState<ReadingLesson | null>(null);
   const [isPlacementSubmitting, setIsPlacementSubmitting] = useState<boolean>(false);
@@ -593,6 +603,40 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     localStorage.setItem(STORAGE_KEYS.SHOW_ARABIC, String(showArabicTranslation));
   }, [showArabicTranslation]);
 
+  const clearPassageLoadingTimer = () => {
+    if (passageLoadingTimerRef.current !== null) {
+      clearTimeout(passageLoadingTimerRef.current);
+      passageLoadingTimerRef.current = null;
+    }
+  };
+
+  const triggerPassageLoadingDelay = () => {
+    clearPassageLoadingTimer();
+    setIsOpeningPassage(true);
+    passageLoadingTimerRef.current = setTimeout(() => {
+      setIsOpeningPassage(false);
+      passageLoadingTimerRef.current = null;
+    }, PASSAGE_LOADING_DURATION_MS);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (passageLoadingTimerRef.current !== null) {
+        clearTimeout(passageLoadingTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showPlacementAssessment && activeTab !== 'reader' && isOpeningPassage) {
+      if (passageLoadingTimerRef.current !== null) {
+        clearTimeout(passageLoadingTimerRef.current);
+        passageLoadingTimerRef.current = null;
+      }
+      setIsOpeningPassage(false);
+    }
+  }, [showPlacementAssessment, activeTab, isOpeningPassage]);
+
   const baseSourceLessons = useMemo(() => {
     if (isAdminVerified && adminAuthoritativeLessons && adminAuthoritativeLessons.length > 0) {
       return adminAuthoritativeLessons;
@@ -802,6 +846,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   };
 
   const handlePreviewLesson = (lesson: ReadingLesson) => {
+    setShowLandingHome(false);
+    setShowPlacementAssessment(false);
     setActiveLessonId(lesson.id);
     localStorage.setItem(STORAGE_KEYS.LAST_LESSON_ID, lesson.id);
     setHighlightedEvidenceQuote(null);
@@ -815,6 +861,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     mode: 'first' | 'practice' | 'review' = 'first',
     existingAttempt?: LessonAttempt
   ) => {
+    setShowLandingHome(false);
+    setShowPlacementAssessment(false);
     setActiveLessonId(lesson.id);
     localStorage.setItem(STORAGE_KEYS.LAST_LESSON_ID, lesson.id);
     setHighlightedEvidenceQuote(null);
@@ -857,6 +905,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setReviewInitialResult(null);
     }
 
+    triggerPassageLoadingDelay();
     setActiveTab('reader');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1125,6 +1174,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const handleStartPlacementAssessment = async (forceNew = false) => {
     setCompletionNotice(null);
     setPendingStepFeedback(null);
+    setIsStartingPlacement(true);
+    const startedAt = Date.now();
 
     const activeUid = auth.currentUser?.uid;
 
@@ -1161,10 +1212,19 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
         }
       }
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < PASSAGE_LOADING_DURATION_MS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, PASSAGE_LOADING_DURATION_MS - elapsed)
+        );
+      }
+      setShowLandingHome(false);
       setShowPlacementAssessment(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       console.error('Failed to start placement assessment:', err);
+    } finally {
+      setIsStartingPlacement(false);
     }
   };
 
@@ -1327,6 +1387,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setPlacementLevel(recLevel);
     setStartingLevel(recLevel);
     setCurrentLevel(recLevel);
+    setShowLandingHome(false);
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
 
@@ -1544,9 +1605,15 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           <button
             type="button"
             onClick={() => {
+              setShowPlacementAssessment(false);
+              setPendingStepFeedback(null);
+              setShowLandingHome(true);
+              setHighlightedEvidenceQuote(null);
               setActiveTab('library');
               setMobileNavOpen(false);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
+            aria-label="Go to FluentLoop homepage"
             className="flex items-center text-left whitespace-nowrap cursor-pointer"
           >
             <BrandLogo variant="full" subtitle="READ · LEARN · IMPROVE" />
@@ -1560,9 +1627,15 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             >
               <button
                 type="button"
-                onClick={() => setActiveTab('library')}
+                onClick={() => {
+                  setShowLandingHome(false);
+                  setShowPlacementAssessment(false);
+                  setActiveTab('library');
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeTab === 'library' || activeTab === 'preview' || activeTab === 'reader'
+                  !showLandingHome &&
+                  !showPlacementAssessment &&
+                  (activeTab === 'library' || activeTab === 'preview' || activeTab === 'reader')
                     ? 'bg-[#A63816] text-white'
                     : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
@@ -1573,9 +1646,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
               <button
                 type="button"
-                onClick={() => setActiveTab('history')}
+                onClick={() => {
+                  setShowLandingHome(false);
+                  setShowPlacementAssessment(false);
+                  setActiveTab('history');
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeTab === 'history'
+                  !showLandingHome && !showPlacementAssessment && activeTab === 'history'
                     ? 'bg-[#A63816] text-white'
                     : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
@@ -1586,9 +1663,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
               <button
                 type="button"
-                onClick={() => setActiveTab('vocabulary')}
+                onClick={() => {
+                  setShowLandingHome(false);
+                  setShowPlacementAssessment(false);
+                  setActiveTab('vocabulary');
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeTab === 'vocabulary'
+                  !showLandingHome && !showPlacementAssessment && activeTab === 'vocabulary'
                     ? 'bg-[#A63816] text-white'
                     : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
@@ -1599,9 +1680,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
               <button
                 type="button"
-                onClick={() => setActiveTab('analytics')}
+                onClick={() => {
+                  setShowLandingHome(false);
+                  setShowPlacementAssessment(false);
+                  setActiveTab('analytics');
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeTab === 'analytics'
+                  !showLandingHome && !showPlacementAssessment && activeTab === 'analytics'
                     ? 'bg-[#A63816] text-white'
                     : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                 }`}
@@ -1614,9 +1699,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 <>
                   <button
                     type="button"
-                    onClick={() => setActiveTab('admin')}
+                    onClick={() => {
+                      setShowLandingHome(false);
+                      setShowPlacementAssessment(false);
+                      setActiveTab('admin');
+                    }}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                      activeTab === 'admin'
+                      !showLandingHome && !showPlacementAssessment && activeTab === 'admin'
                         ? 'bg-[#A63816] text-white'
                         : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                     }`}
@@ -1627,9 +1716,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
                   <button
                     type="button"
-                    onClick={() => setActiveTab('docs')}
+                    onClick={() => {
+                      setShowLandingHome(false);
+                      setShowPlacementAssessment(false);
+                      setActiveTab('docs');
+                    }}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                      activeTab === 'docs'
+                      !showLandingHome && !showPlacementAssessment && activeTab === 'docs'
                         ? 'bg-[#A63816] text-white'
                         : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                     }`}
@@ -1673,9 +1766,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 <>
                   <button
                     type="button"
-                    onClick={() => setActiveTab('admin')}
+                    onClick={() => {
+                      setShowLandingHome(false);
+                      setShowPlacementAssessment(false);
+                      setActiveTab('admin');
+                    }}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                      activeTab === 'admin'
+                      !showLandingHome && !showPlacementAssessment && activeTab === 'admin'
                         ? 'bg-[#A63816] text-white'
                         : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                     }`}
@@ -1685,9 +1782,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setActiveTab('docs')}
+                    onClick={() => {
+                      setShowLandingHome(false);
+                      setShowPlacementAssessment(false);
+                      setActiveTab('docs');
+                    }}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                      activeTab === 'docs'
+                      !showLandingHome && !showPlacementAssessment && activeTab === 'docs'
                         ? 'bg-[#A63816] text-white'
                         : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
                     }`}
@@ -1810,11 +1911,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     key={tabKey}
                     type="button"
                     onClick={() => {
+                      setShowLandingHome(false);
+                      setShowPlacementAssessment(false);
                       setActiveTab(tabKey);
                       setMobileNavOpen(false);
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-xs font-semibold text-left transition-colors ${
-                      activeTab === tabKey
+                      !showLandingHome && !showPlacementAssessment && activeTab === tabKey
                         ? 'bg-[#A63816] text-white'
                         : 'text-[#171615] hover:bg-[#F2EDE3]'
                     }`}
@@ -1863,11 +1966,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     <button
                       type="button"
                       onClick={() => {
+                        setShowLandingHome(false);
+                        setShowPlacementAssessment(false);
                         setActiveTab('admin');
                         setMobileNavOpen(false);
                       }}
                       className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-left ${
-                        activeTab === 'admin'
+                        !showLandingHome && !showPlacementAssessment && activeTab === 'admin'
                           ? 'bg-[#A63816] text-white'
                           : 'text-[#171615] hover:bg-[#F2EDE3]'
                       }`}
@@ -1878,11 +1983,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     <button
                       type="button"
                       onClick={() => {
+                        setShowLandingHome(false);
+                        setShowPlacementAssessment(false);
                         setActiveTab('docs');
                         setMobileNavOpen(false);
                       }}
                       className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-left ${
-                        activeTab === 'docs'
+                        !showLandingHome && !showPlacementAssessment && activeTab === 'docs'
                           ? 'bg-[#A63816] text-white'
                           : 'text-[#171615] hover:bg-[#F2EDE3]'
                       }`}
@@ -1924,7 +2031,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           </div>
         )}
 
-        {showPlacementAssessment && placementSession ? (
+        {isStartingPlacement || (showPlacementAssessment && isOpeningPassage) ? (
+          <AnimatedBookLoader
+            message="Preparing your reading experience"
+            subtext="Opening your adaptive diagnostic passage..."
+          />
+        ) : showPlacementAssessment && placementSession ? (
           <PlacementAssessmentView
             session={placementSession}
             activePassage={placementActivePassage}
@@ -1937,7 +2049,16 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             savedVocab={savedVocab}
             onToggleSaveWord={(vocab, lesson) => handleToggleSaveWord(vocab, lesson)}
             onSubmitPassage={handleSubmitPlacementPassage}
-            onAdvanceAfterStepSummary={() => setPendingStepFeedback(null)}
+            onAdvanceAfterStepSummary={() => {
+              const hasNextPassage = Boolean(
+                pendingStepFeedback && !pendingStepFeedback.isFinalStep
+              );
+              setPendingStepFeedback(null);
+              if (hasNextPassage) {
+                triggerPassageLoadingDelay();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }
+            }}
             pendingStepFeedback={pendingStepFeedback}
             onContinueWithGoogle={handleContinueWithGoogleFromPlacement}
             onRetakePlacement={() => handleStartPlacementAssessment(true)}
@@ -1955,8 +2076,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               setPendingStepFeedback(null);
             }}
           />
-        ) : startingLevel === null &&
-          !(isAdminVerified && (activeTab === 'admin' || activeTab === 'docs')) ? (
+        ) : (showLandingHome || startingLevel === null) &&
+          !(isAdminVerified && !showLandingHome && (activeTab === 'admin' || activeTab === 'docs')) ? (
           <section
             className="mx-auto w-full max-w-6xl py-4 sm:py-10"
             aria-labelledby="landing-title"
@@ -1994,10 +2115,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   <div className="mt-6 sm:mt-7 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
                     <button
                       type="button"
-                      onClick={() => handleStartPlacementAssessment(false)}
+                      onClick={() => {
+                        if (startingLevel !== null) {
+                          setShowLandingHome(false);
+                          setActiveTab('library');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        } else {
+                          void handleStartPlacementAssessment(false);
+                        }
+                      }}
                       className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-[#A63816] px-6 py-3.5 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#842B12] focus:outline-none focus:ring-4 focus:ring-[#A63816]/30 cursor-pointer"
                     >
-                      {placementSession && placementSession.steps.length > 0
+                      {startingLevel !== null
+                        ? 'Continue to My Reading'
+                        : placementSession && placementSession.steps.length > 0
                         ? 'Resume Your Placement Check'
                         : currentUser && !currentUser.isAnonymous
                         ? 'Take Placement Check to Get Your Level'
@@ -2649,8 +2780,15 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             )}
 
             {/* VIEW 2: INTERACTIVE READING WORKSPACE */}
-            {activeTab === 'reader' && activeLesson && (
-              <div className="space-y-6">
+            {activeTab === 'reader' &&
+              activeLesson &&
+              (isOpeningPassage ? (
+                <AnimatedBookLoader
+                  message="Preparing your reading experience"
+                  subtext={`Opening "${activeLesson.title}"...`}
+                />
+              ) : (
+                <div className="space-y-6">
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E3D7C3] pb-4">
                   <button
                     type="button"
@@ -2771,7 +2909,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   </div>
                 </div>
               </div>
-            )}
+            ))}
 
             {/* VIEW: READING HISTORY (with Continue, Review, and Practice Again) */}
             {activeTab === 'history' && (
