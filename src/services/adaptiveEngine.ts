@@ -7,6 +7,7 @@ import {
   ReadingLesson,
 } from '../types/reading';
 import { QUESTION_TYPE_LABELS } from './gradingService';
+import { isQualifyingStreakAttempt, parseActivityTimestamp } from './streakService';
 
 const LEVEL_ORDER: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
 
@@ -22,16 +23,34 @@ export function computeAdaptiveRecommendation(
   allPublishedLessons: ReadingLesson[]
 ): AdaptiveRecommendation {
   const completedAttempts = attempts
-    .filter((a) => a.status === 'completed')
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    .filter(isQualifyingStreakAttempt)
+    .sort((a, b) => {
+      const timeB = parseActivityTimestamp(b.updatedAt)?.getTime() ?? 0;
+      const timeA = parseActivityTimestamp(a.updatedAt)?.getTime() ?? 0;
+      return timeB - timeA;
+    });
 
-  const currentLevelAttempts = completedAttempts.filter(
-    (a) => a.level === currentSelectedLevel
-  );
+  // Deduplicate by lessonId at the current level (preferring first-time completion) so repeated
+  // practice attempts of the same passage do not inflate `completedAtCurrentLevel`.
+  const currentLevelAll = completedAttempts.filter((a) => a.level === currentSelectedLevel);
+  const currentLevelByLesson = new Map<string, LessonAttempt>();
+  for (const att of currentLevelAll) {
+    const existing = currentLevelByLesson.get(att.lessonId);
+    if (!existing) {
+      currentLevelByLesson.set(att.lessonId, att);
+    } else if (
+      (att.attemptType || 'first') === 'first' &&
+      !att.id.startsWith('att-prac-') &&
+      (existing.attemptType === 'practice' || existing.id.startsWith('att-prac-'))
+    ) {
+      currentLevelByLesson.set(att.lessonId, att);
+    }
+  }
+  const currentLevelAttempts = Array.from(currentLevelByLesson.values());
   const completedAtCurrentLevel = currentLevelAttempts.length;
   const confidenceReady = completedAtCurrentLevel >= 3;
 
-  // Compute recent accuracy at current level (last 5 attempts at this level)
+  // Compute recent accuracy at current level (last 5 distinct completed lessons at this level)
   const recentSlice = currentLevelAttempts.slice(0, 5);
   const recentAverageAccuracy =
     recentSlice.length > 0

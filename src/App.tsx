@@ -25,6 +25,7 @@ import {
   X,
   ArrowRight,
   Sparkles,
+  Flame,
 } from 'lucide-react';
 import {
   signInWithPopup,
@@ -91,6 +92,13 @@ import {
   getLessonDifficulty,
   selectNextLesson,
 } from './services/adaptiveLearning';
+import {
+  calculateReadingStreak,
+  isQualifyingStreakAttempt,
+  mergeAndNormalizeAttempts,
+  parseActivityTimestamp,
+  recordCompletedAttemptWithPersistence,
+} from './services/streakService';
 import { getPassagePhotoMetadata } from './utils/illustrations';
 
 // Lazy-load heavy administrator and documentation views so ordinary learners don't download them
@@ -145,6 +153,7 @@ const STORAGE_KEYS = {
   PLACEMENT_LEVEL: 'fluentloop_placement_level_v1',
   FRESH_START_EPOCH: 'fluentloop_fresh_start_epoch_v1',
   FRESH_NEW_USER_MODE: 'fluentloop_fresh_new_user_mode_v1',
+  LAST_AUTH_UID: 'fluentloop_last_auth_uid_v1',
 };
 
 const CURRENT_FRESH_START_EPOCH = '2026-10-28-unknown-until-assessed-v2';
@@ -160,6 +169,7 @@ function purgeLocalLearnerCache() {
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_LEVEL);
+  localStorage.removeItem(STORAGE_KEYS.LAST_AUTH_UID);
   localStorage.removeItem('fluentloop_difficulty_target_v1');
   localStorage.removeItem('fluentloop_pass_streak_v1');
   localStorage.removeItem('fluentloop_fail_streak_v1');
@@ -225,6 +235,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [deletedLessonIds, setDeletedLessonIds] = useState<Set<string>>(new Set());
 
   const [attempts, setAttempts] = useState<LessonAttempt[]>([]);
+  const attemptsRef = useRef<LessonAttempt[]>([]);
   const [savedVocab, setSavedVocab] = useState<SavedVocabularyItem[]>([]);
 
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
@@ -315,7 +326,15 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
     try {
       const rawAttempts = localStorage.getItem(STORAGE_KEYS.ATTEMPTS);
-      if (rawAttempts) setAttempts(JSON.parse(rawAttempts));
+      if (rawAttempts) {
+        const parsedAttempts = JSON.parse(rawAttempts);
+        if (Array.isArray(parsedAttempts)) {
+          const normalized = mergeAndNormalizeAttempts(parsedAttempts, []);
+          attemptsRef.current = normalized;
+          setAttempts(normalized);
+          localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(normalized));
+        }
+      }
     } catch {}
 
     try {
@@ -378,25 +397,100 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setAuthReady(true);
       if (user && !user.isAnonymous) {
         try {
+          const previousAuthUid = localStorage.getItem(STORAGE_KEYS.LAST_AUTH_UID);
+          // Prevent any cross-user data leakage when switching between two authenticated accounts
+          if (previousAuthUid && previousAuthUid !== user.uid) {
+            purgeLocalLearnerCache();
+            attemptsRef.current = [];
+            setAttempts([]);
+            setSavedVocab([]);
+            setPlacementLevel(null);
+            setStartingLevel(null);
+            setCurrentLevel('B1');
+          }
+          localStorage.setItem(STORAGE_KEYS.LAST_AUTH_UID, user.uid);
+
+          // If the learner completed any passages as an anonymous/guest user in this session before
+          // signing in with Google, claim those attempts under `user.uid` and persist them to Firestore.
+          if (!previousAuthUid && attemptsRef.current.some((a) => a.userId === 'guest')) {
+            const claimedAttempts = attemptsRef.current.map((a) =>
+              a.userId === 'guest' ? { ...a, userId: user.uid } : a
+            );
+            const normalizedClaimed = mergeAndNormalizeAttempts(claimedAttempts, [], user.uid);
+            attemptsRef.current = normalizedClaimed;
+            setAttempts(normalizedClaimed);
+            localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(normalizedClaimed));
+
+            for (const claimed of normalizedClaimed) {
+              if (claimed.status === 'completed' && !claimed.lessonId.startsWith('diag-')) {
+                setDoc(doc(db, 'attempts', claimed.id), {
+                  id: claimed.id,
+                  userId: user.uid,
+                  lessonId: claimed.lessonId,
+                  lessonTitle: claimed.lessonTitle,
+                  level: claimed.level,
+                  topic: claimed.topic,
+                  status: claimed.status,
+                  score: Math.round(claimed.score),
+                  totalQuestions: claimed.totalQuestions,
+                  accuracy: claimed.accuracy,
+                  answersJson: JSON.stringify(claimed.answers || {}),
+                  questionTypeStatsJson: JSON.stringify(claimed.questionTypeStats || {}),
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                }).catch((err) => console.warn('Guest attempt promotion note:', err));
+              }
+            }
+          }
+
           const isFreshNewUserMode =
             localStorage.getItem(STORAGE_KEYS.FRESH_NEW_USER_MODE) === 'true';
           const userRef = doc(db, 'users', user.uid);
           const snapshot = await getDoc(userRef);
           const existingProfile = snapshot.exists() ? snapshot.data() : null;
 
+          // If an existing user has a persisted profile or attempts in Firestore, exit fresh new-user mode
+          if (
+            existingProfile?.placementLevel ||
+            existingProfile?.startingLevel ||
+            existingProfile?.preferredLevel ||
+            attemptsRef.current.some((a) => a.userId === user.uid && isQualifyingStreakAttempt(a))
+          ) {
+            localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+          }
+
+          const effectiveFreshMode =
+            localStorage.getItem(STORAGE_KEYS.FRESH_NEW_USER_MODE) === 'true';
+
           const localPlacementLevel = localStorage.getItem(
             STORAGE_KEYS.PLACEMENT_LEVEL
           ) as CEFRLevel | null;
 
-          // Only restore a level if the user has genuinely completed the placement assessment
-          // and is not in fresh/unassessed mode. Never assign a fallback level before assessment.
+          const latestCompletedAttemptLevel = attemptsRef.current.find(
+            (a) => a.userId === user.uid && isQualifyingStreakAttempt(a)
+          )?.level;
+
+          // Only restore a level if the user has genuinely completed the placement assessment,
+          // has a persisted profile level, or has historical completed attempts in Firestore.
           const verifiedPlacementLevel: CEFRLevel | null =
             localPlacementLevel && CEFR_LEVELS.includes(localPlacementLevel)
               ? localPlacementLevel
-              : !isFreshNewUserMode &&
+              : !effectiveFreshMode &&
                 existingProfile?.placementLevel &&
                 CEFR_LEVELS.includes(existingProfile.placementLevel)
               ? (existingProfile.placementLevel as CEFRLevel)
+              : !effectiveFreshMode &&
+                existingProfile?.startingLevel &&
+                CEFR_LEVELS.includes(existingProfile.startingLevel)
+              ? (existingProfile.startingLevel as CEFRLevel)
+              : !effectiveFreshMode &&
+                existingProfile?.preferredLevel &&
+                CEFR_LEVELS.includes(existingProfile.preferredLevel)
+              ? (existingProfile.preferredLevel as CEFRLevel)
+              : !effectiveFreshMode &&
+                latestCompletedAttemptLevel &&
+                CEFR_LEVELS.includes(latestCompletedAttemptLevel)
+              ? latestCompletedAttemptLevel
               : null;
 
           if (verifiedPlacementLevel) {
@@ -405,7 +499,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
             const restoredStartingLevel: CEFRLevel =
               (localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null) ||
-              (!isFreshNewUserMode &&
+              (!effectiveFreshMode &&
               existingProfile?.startingLevel &&
               CEFR_LEVELS.includes(existingProfile.startingLevel)
                 ? (existingProfile.startingLevel as CEFRLevel)
@@ -413,7 +507,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
             const restoredCurrentLevel: CEFRLevel =
               (localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null) ||
-              (!isFreshNewUserMode &&
+              (!effectiveFreshMode &&
               existingProfile?.preferredLevel &&
               CEFR_LEVELS.includes(existingProfile.preferredLevel)
                 ? (existingProfile.preferredLevel as CEFRLevel)
@@ -423,6 +517,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, restoredCurrentLevel);
             setStartingLevel(restoredStartingLevel);
             setCurrentLevel(restoredCurrentLevel);
+
+            const localCompletedCount = calculateReadingStreak(attemptsRef.current).completedCount;
 
             await setDoc(
               userRef,
@@ -440,8 +536,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   (existingProfile?.fontSize as 'sm' | 'md' | 'lg' | 'xl' | undefined) || fontSize,
                 completedCount:
                   typeof existingProfile?.completedCount === 'number'
-                    ? existingProfile.completedCount
-                    : attempts.length,
+                    ? Math.max(existingProfile.completedCount, localCompletedCount)
+                    : localCompletedCount,
                 averageAccuracy:
                   typeof existingProfile?.averageAccuracy === 'number'
                     ? existingProfile.averageAccuracy
@@ -540,24 +636,48 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const unsubAttempts = onSnapshot(
       attemptsQ,
       (snap) => {
-        const remoteAttempts: LessonAttempt[] = [];
-        snap.forEach((d) => remoteAttempts.push(d.data() as LessonAttempt));
-        if (remoteAttempts.length > 0) {
-          const isFreshNewUserMode =
-            localStorage.getItem(STORAGE_KEYS.FRESH_NEW_USER_MODE) === 'true';
-          const hasCompletedPlacement = Boolean(localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL));
-          if (!isFreshNewUserMode && hasCompletedPlacement) {
-            setAttempts((prev) => {
-              const byId = new Map<string, LessonAttempt>();
-              prev.forEach((a) => byId.set(a.id, a));
-              remoteAttempts.forEach((a) => byId.set(a.id, a));
-              const combined = Array.from(byId.values()).sort(
-                (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-              );
-              localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(combined));
-              return combined;
-            });
-          }
+        const remoteRawDocs: unknown[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          remoteRawDocs.push({
+            ...data,
+            id: typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : d.id,
+            docId: d.id,
+          });
+        });
+
+        // If an authenticated user has persisted attempts in Firestore, they are not a brand-new user
+        if (remoteRawDocs.length > 0) {
+          localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+        }
+
+        const isFreshNewUserMode =
+          localStorage.getItem(STORAGE_KEYS.FRESH_NEW_USER_MODE) === 'true';
+
+        if (!isFreshNewUserMode || remoteRawDocs.length > 0) {
+          setAttempts((prev) => {
+            const combined = mergeAndNormalizeAttempts(prev, remoteRawDocs, currentUser.uid);
+            attemptsRef.current = combined;
+            localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(combined));
+
+            // If Firestore attempts arrive when PLACEMENT_LEVEL is not yet in localStorage,
+            // restore workspace level from the user's completed attempts so remote history is immediately visible
+            const firstQualifying = combined.find(isQualifyingStreakAttempt);
+            if (
+              firstQualifying &&
+              !localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL) &&
+              CEFR_LEVELS.includes(firstQualifying.level)
+            ) {
+              localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, firstQualifying.level);
+              localStorage.setItem('fluentloop_starting_level_v1', firstQualifying.level);
+              localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, firstQualifying.level);
+              setPlacementLevel((curr) => curr || firstQualifying.level);
+              setStartingLevel((curr) => curr || firstQualifying.level);
+              setCurrentLevel((curr) => curr || firstQualifying.level);
+            }
+
+            return combined;
+          });
         }
       },
       (err) => console.warn('Attempts listener warning:', err)
@@ -568,17 +688,25 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       vocabQ,
       (snap) => {
         const remoteVocab: SavedVocabularyItem[] = [];
-        snap.forEach((d) => remoteVocab.push(d.data() as SavedVocabularyItem));
-        if (remoteVocab.length > 0) {
-          setSavedVocab((prev) => {
-            const byId = new Map<string, SavedVocabularyItem>();
-            prev.forEach((v) => byId.set(v.id, v));
-            remoteVocab.forEach((v) => byId.set(v.id, v));
-            const combined = Array.from(byId.values());
-            localStorage.setItem(STORAGE_KEYS.VOCABULARY, JSON.stringify(combined));
-            return combined;
+        snap.forEach((d) => {
+          const data = d.data() as SavedVocabularyItem;
+          remoteVocab.push({
+            ...data,
+            id: typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : d.id,
           });
-        }
+        });
+        setSavedVocab((prev) => {
+          const byId = new Map<string, SavedVocabularyItem>();
+          prev.forEach((v) => {
+            if (!v.userId || v.userId === 'guest' || v.userId === currentUser.uid) {
+              byId.set(v.id, v);
+            }
+          });
+          remoteVocab.forEach((v) => byId.set(v.id, v));
+          const combined = Array.from(byId.values());
+          localStorage.setItem(STORAGE_KEYS.VOCABULARY, JSON.stringify(combined));
+          return combined;
+        });
       },
       (err) => console.warn('Vocabulary listener warning:', err)
     );
@@ -594,6 +722,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, currentLevel);
     }
   }, [currentLevel, placementLevel, startingLevel]);
+
+  useEffect(() => {
+    attemptsRef.current = attempts;
+  }, [attempts]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.FONT_SIZE, fontSize);
@@ -670,14 +802,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   );
 
   const completedLessonIds = useMemo(
-    () => new Set(attempts.filter((a) => a.status === 'completed').map((a) => a.lessonId)),
+    () => new Set(attempts.filter(isQualifyingStreakAttempt).map((a) => a.lessonId)),
     [attempts]
   );
 
   const bestScoreByLessonId = useMemo(() => {
     const map: Record<string, number> = {};
     attempts
-      .filter((a) => a.status === 'completed')
+      .filter(isQualifyingStreakAttempt)
       .forEach((a) => {
         if (map[a.lessonId] === undefined || a.accuracy > map[a.lessonId]) {
           map[a.lessonId] = a.accuracy;
@@ -778,7 +910,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const handleSignIn = async () => {
     try {
-      // Prevent initial auto-signout while preserving FRESH_NEW_USER_MODE if the user hasn't taken the placement test yet
+      localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
       sessionStorage.setItem('fluentloop_initial_signout_done_v1', 'true');
       await signInWithPopup(auth, googleProvider);
       setCompletionNotice(null);
@@ -811,6 +943,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setPlacementActivePassage(null);
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
+    attemptsRef.current = [];
     setAttempts([]);
     setSavedVocab([]);
     setActiveLessonId(null);
@@ -831,6 +964,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setPlacementActivePassage(null);
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
+    attemptsRef.current = [];
     setAttempts([]);
     setSavedVocab([]);
     setActiveLessonId(null);
@@ -871,6 +1005,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     if (mode === 'review' && existingAttempt && existingAttempt.status === 'completed') {
       setActiveAttemptMode('review');
       setReviewInitialAnswers(existingAttempt.answers || {});
+      setReviewInitialResult({
+        score: existingAttempt.score,
+        totalQuestions: existingAttempt.totalQuestions,
+        accuracy: existingAttempt.accuracy,
+        results: [],
+        questionTypeStats: existingAttempt.questionTypeStats || {},
+      });
       // Fetch authoritative review evaluation from server so answer keys and explanations are shown
       fetch('/api/attempts/submit', {
         method: 'POST',
@@ -894,7 +1035,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setReviewInitialResult(null);
     } else {
       // Check if this lesson was already completed as a first attempt; if so, default new takes to 'practice'
-      const alreadyCompletedFirst = attempts.some(
+      const alreadyCompletedFirst = attemptsRef.current.some(
         (a) =>
           a.lessonId === lesson.id &&
           a.status === 'completed' &&
@@ -985,16 +1126,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const effectiveAttemptType: 'first' | 'practice' | 'review' =
       modeOverride || activeAttemptMode || 'first';
 
-    const existingInProgress = attempts.find(
+    const latestAttempts = attemptsRef.current;
+    const existingInProgress = latestAttempts.find(
       (a) =>
         a.lessonId === activeLesson.id &&
         a.status === 'in_progress' &&
         (a.attemptType || 'first') === 'first'
     );
+    const uniqueSuffix = Math.random().toString(36).slice(2, 7);
     const attemptId =
       effectiveAttemptType === 'first' && existingInProgress
         ? existingInProgress.id
-        : `att-${Date.now()}`;
+        : effectiveAttemptType === 'practice'
+        ? `att-prac-${Date.now()}-${uniqueSuffix}`
+        : `att-${Date.now()}-${uniqueSuffix}`;
 
     const initialProfile = createAdaptiveProfile(startingLevel || currentLevel);
     const clientProfileSnapshot = {
@@ -1052,9 +1197,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     }
 
     const nowIso = new Date().toISOString();
-    const newAttempt: LessonAttempt = {
+    const candidateAttempt: LessonAttempt = {
       id: attemptId,
-      userId: currentUser?.uid || 'guest',
+      userId: currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest',
       lessonId: activeLesson.id,
       lessonTitle: activeLesson.title,
       level: activeLesson.level,
@@ -1070,49 +1215,115 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       updatedAt: nowIso,
     };
 
-    // Replace existing in_progress attempt with the same ID or prepend new attempt
-    const withoutExistingId = attempts.filter((a) => a.id !== attemptId);
-    const updatedAttempts = [newAttempt, ...withoutExistingId];
-    setAttempts(updatedAttempts);
-    localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(updatedAttempts));
+    const persistToCloud =
+      currentUser && !currentUser.isAnonymous
+        ? async (attemptToSave: LessonAttempt) => {
+            const firestoreAttemptPayload = {
+              id: attemptToSave.id,
+              userId: currentUser.uid,
+              lessonId: attemptToSave.lessonId,
+              lessonTitle: attemptToSave.lessonTitle,
+              level: attemptToSave.level,
+              topic: attemptToSave.topic,
+              status: attemptToSave.status,
+              score: Math.round(attemptToSave.score),
+              totalQuestions: attemptToSave.totalQuestions,
+              accuracy: attemptToSave.accuracy,
+              answersJson: JSON.stringify(attemptToSave.answers),
+              questionTypeStatsJson: JSON.stringify(attemptToSave.questionTypeStats),
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            };
+            await setDoc(doc(db, 'attempts', attemptToSave.id), firestoreAttemptPayload);
+          }
+        : undefined;
 
-    // Only apply progression on valid first-time attempts
-    if (effectiveAttemptType === 'first' && serverProgression?.changed) {
-      setCurrentLevel(serverProgression.profile.currentLevel);
-      localStorage.setItem(
-        'fluentloop_difficulty_target_v1',
-        String(serverProgression.profile.currentDifficultyScore)
+    const recordOutcome = await recordCompletedAttemptWithPersistence({
+      currentAttempts: attemptsRef.current,
+      getCurrentAttempts: () => attemptsRef.current,
+      candidateAttempt,
+      persistToCloud,
+    });
+
+    if (!recordOutcome.persisted && !recordOutcome.duplicateIgnored) {
+      setCompletionNotice(
+        'Could not save your reading progress to the cloud. Please check your connection and try submitting again.'
       );
-      localStorage.setItem(
-        'fluentloop_pass_streak_v1',
-        String(serverProgression.profile.consecutivePasses)
-      );
-      localStorage.setItem(
-        'fluentloop_fail_streak_v1',
-        String(serverProgression.profile.consecutiveFailures)
-      );
+      return graded;
     }
 
-    if (currentUser) {
-      const firestoreAttemptPayload = {
-        id: newAttempt.id,
-        userId: currentUser.uid,
-        lessonId: newAttempt.lessonId,
-        lessonTitle: newAttempt.lessonTitle,
-        level: newAttempt.level,
-        topic: newAttempt.topic,
-        status: newAttempt.status,
-        score: Math.round(newAttempt.score),
-        totalQuestions: newAttempt.totalQuestions,
-        accuracy: newAttempt.accuracy,
-        answersJson: JSON.stringify(newAttempt.answers),
-        questionTypeStatsJson: JSON.stringify(newAttempt.questionTypeStats),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      setDoc(doc(db, 'attempts', newAttempt.id), firestoreAttemptPayload).catch((err) =>
-        console.warn('Attempt sync warning:', err)
-      );
+    if (!recordOutcome.duplicateIgnored) {
+      localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+      attemptsRef.current = recordOutcome.attempts;
+      setAttempts(recordOutcome.attempts);
+      localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(recordOutcome.attempts));
+
+      // Only apply progression on valid first-time attempts
+      if (
+        (recordOutcome.persistedAttempt?.attemptType || effectiveAttemptType) === 'first' &&
+        serverProgression?.changed
+      ) {
+        setCurrentLevel(serverProgression.profile.currentLevel);
+        localStorage.setItem(
+          'fluentloop_difficulty_target_v1',
+          String(serverProgression.profile.currentDifficultyScore)
+        );
+        localStorage.setItem(
+          'fluentloop_pass_streak_v1',
+          String(serverProgression.profile.consecutivePasses)
+        );
+        localStorage.setItem(
+          'fluentloop_fail_streak_v1',
+          String(serverProgression.profile.consecutiveFailures)
+        );
+      }
+
+      // Sync updated completedCount and averageAccuracy to the authenticated user's profile doc
+      if (currentUser && !currentUser.isAnonymous) {
+        const qualifyingList = recordOutcome.attempts.filter(isQualifyingStreakAttempt);
+        const avgAcc =
+          qualifyingList.length > 0
+            ? Math.round(
+                qualifyingList.reduce((sum, a) => sum + a.accuracy, 0) / qualifyingList.length
+              )
+            : 0;
+        const nextLevel =
+          serverProgression?.changed &&
+          (recordOutcome.persistedAttempt?.attemptType || effectiveAttemptType) === 'first'
+            ? serverProgression.profile.currentLevel
+            : currentLevel;
+        const userRef = doc(db, 'users', currentUser.uid);
+        getDoc(userRef)
+          .then((snap) => {
+            const existingProfile = snap.exists() ? snap.data() : null;
+            return setDoc(
+              userRef,
+              {
+                uid: currentUser.uid,
+                displayName:
+                  currentUser.displayName || existingProfile?.displayName || 'Academic Reader',
+                preferredLevel: nextLevel,
+                ...(startingLevel || existingProfile?.startingLevel
+                  ? { startingLevel: startingLevel || existingProfile?.startingLevel }
+                  : {}),
+                ...(placementLevel || existingProfile?.placementLevel
+                  ? { placementLevel: placementLevel || existingProfile?.placementLevel }
+                  : {}),
+                showArabicTranslation:
+                  typeof existingProfile?.showArabicTranslation === 'boolean'
+                    ? existingProfile.showArabicTranslation
+                    : showArabicTranslation,
+                fontSize: (existingProfile?.fontSize as any) || fontSize,
+                completedCount: recordOutcome.streak.completedCount,
+                averageAccuracy: avgAcc,
+                createdAt: existingProfile?.createdAt || serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          })
+          .catch((err) => console.warn('User profile stats sync note:', err));
+      }
     }
 
     return graded;
@@ -1130,15 +1341,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       consecutivePasses: Number(localStorage.getItem('fluentloop_pass_streak_v1')) || 0,
       consecutiveFailures: Number(localStorage.getItem('fluentloop_fail_streak_v1')) || 0,
     };
-    const next = selectedLesson || selectNextLesson(profile, publishedLessons, attempts);
+    const next = selectedLesson || selectNextLesson(profile, publishedLessons, attemptsRef.current);
     if (!next) {
       setCompletionNotice(
         `You have completed the available ${effectiveLevel} passages. Review any passage in Reading History or practice again while your progression criteria are evaluated.`
       );
       return;
     }
-    const now = new Date().toISOString();
-    const existing = attempts.find(
+    const existing = attemptsRef.current.find(
       (a) =>
         a.status === 'in_progress' &&
         a.lessonId === next.id &&
@@ -1148,9 +1358,17 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       handleOpenLesson(next, 'first', existing);
       return;
     }
+    const alreadyCompleted = attemptsRef.current.some(
+      (a) => a.status === 'completed' && a.lessonId === next.id
+    );
+    if (alreadyCompleted) {
+      handlePreviewLesson(next);
+      return;
+    }
+    const now = new Date().toISOString();
     const assignment: LessonAttempt = {
       id: `att-${Date.now()}`,
-      userId: currentUser?.uid || 'guest',
+      userId: currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest',
       lessonId: next.id,
       lessonTitle: next.title,
       level: next.level,
@@ -1165,7 +1383,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       createdAt: now,
       updatedAt: now,
     };
-    const updated = [assignment, ...attempts];
+    const updated = [assignment, ...attemptsRef.current];
+    attemptsRef.current = updated;
     setAttempts(updated);
     localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(updated));
     handlePreviewLesson(next);
@@ -1420,7 +1639,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             completedCount:
               typeof existingData?.completedCount === 'number'
                 ? existingData.completedCount
-                : attempts.length,
+                : calculateReadingStreak(attemptsRef.current).completedCount,
             averageAccuracy:
               typeof existingData?.averageAccuracy === 'number' ? existingData.averageAccuracy : 0,
             createdAt: existingData?.createdAt || now,
@@ -1545,7 +1764,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const questionAccuracy = useMemo(() => {
     const totals: Record<string, { correct: number; total: number; accuracy: number }> = {};
-    attempts.forEach((att) => {
+    attempts.filter(isQualifyingStreakAttempt).forEach((att) => {
       if (!att.questionTypeStats) return;
       Object.entries(att.questionTypeStats).forEach(([qType, s]) => {
         if (!totals[qType]) {
@@ -1563,24 +1782,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   }, [attempts]);
 
   const readingProgress = useMemo(() => {
+    const streakSummary = calculateReadingStreak(attempts);
     const completed = attempts
-      .filter((attempt) => attempt.status === 'completed' && (attempt.attemptType || 'first') === 'first')
-      .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
-    const dayKey = (date: Date) =>
-      [
-        date.getFullYear(),
-        String(date.getMonth() + 1).padStart(2, '0'),
-        String(date.getDate()).padStart(2, '0'),
-      ].join('-');
-    const activeDays = new Set(completed.map((attempt) => dayKey(new Date(attempt.updatedAt))));
-    const cursor = new Date();
-    cursor.setHours(0, 0, 0, 0);
-    if (!activeDays.has(dayKey(cursor))) cursor.setDate(cursor.getDate() - 1);
-    let streakDays = 0;
-    while (activeDays.has(dayKey(cursor))) {
-      streakDays += 1;
-      cursor.setDate(cursor.getDate() - 1);
-    }
+      .filter(isQualifyingStreakAttempt)
+      .sort((a, b) => {
+        const timeA = parseActivityTimestamp(a.updatedAt)?.getTime() ?? 0;
+        const timeB = parseActivityTimestamp(b.updatedAt)?.getTime() ?? 0;
+        return timeA - timeB;
+      });
     const recent = completed.slice(-8);
     const points = recent.map((attempt, index) => ({
       id: attempt.id,
@@ -1588,7 +1797,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       y: 90 - Math.max(0, Math.min(100, attempt.accuracy)) * 0.8,
       accuracy: Math.max(0, Math.min(100, attempt.accuracy)),
     }));
-    return { streakDays, completedCount: completed.length, points };
+    return {
+      streakDays: streakSummary.currentStreak,
+      longestStreak: streakSummary.longestStreak,
+      studiedToday: streakSummary.studiedToday,
+      lastActiveDate: streakSummary.lastActiveDate,
+      completedCount: streakSummary.completedCount,
+      points,
+    };
   }, [attempts]);
 
   const activePassageParagraphs = useMemo(() => {
@@ -2510,6 +2726,27 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                             Placement Calibrated ({placementLevel})
                           </span>
                         )}
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-semibold text-[#171615]"
+                          data-testid="dashboard-streak-badge"
+                        >
+                          <Flame className="h-4 w-4 text-[#A63816]" aria-hidden="true" />
+                          <span>
+                            Streak:{' '}
+                            <strong className="font-mono-code text-[#A63816] tabular-nums">
+                              {readingProgress.streakDays}{' '}
+                              {readingProgress.streakDays === 1 ? 'day' : 'days'}
+                            </strong>
+                          </span>
+                          <span className="text-[#76675B] font-mono-code text-[11px] tabular-nums">
+                            (Best: {readingProgress.longestStreak}d)
+                          </span>
+                          {readingProgress.studiedToday && (
+                            <span className="ml-1 rounded bg-[#E6F2EC] px-1.5 py-0.5 font-mono-code text-[10px] font-bold text-[#287A52]">
+                              Studied today
+                            </span>
+                          )}
+                        </span>
                       </div>
                     </div>
 
@@ -2540,7 +2777,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                         <span>·</span>
                         <span>
                           Completed:{' '}
-                          <strong className="text-[#171615]">{attempts.length} Passages</strong>
+                          <strong className="text-[#171615]">
+                            {readingProgress.completedCount}{' '}
+                            {readingProgress.completedCount === 1 ? 'Passage' : 'Passages'}
+                          </strong>
                         </span>
                         <span>·</span>
                         <span>
@@ -2772,10 +3012,17 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <AssignedPassagePreview
                 lesson={activeLesson}
                 streakDays={readingProgress.streakDays}
+                longestStreak={readingProgress.longestStreak}
+                studiedToday={readingProgress.studiedToday}
                 completedCount={readingProgress.completedCount}
                 progressPoints={readingProgress.points}
                 onBack={() => setActiveTab('library')}
-                onStart={() => handleOpenLesson(activeLesson, 'first')}
+                onStart={() =>
+                  handleOpenLesson(
+                    activeLesson,
+                    completedLessonIds.has(activeLesson.id) ? 'practice' : 'first'
+                  )
+                }
               />
             )}
 
@@ -2950,7 +3197,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                             {attempt.status === 'in_progress'
                               ? 'In progress'
                               : 'Score ' + attempt.accuracy + '%'}{' '}
-                            · {new Date(attempt.updatedAt).toLocaleDateString()}
+                            ·{' '}
+                            {parseActivityTimestamp(attempt.updatedAt)?.toLocaleDateString() ||
+                              'Recently'}
                           </p>
                         </div>
                         {lesson && (
@@ -3176,11 +3425,26 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     {adaptiveRecommendation.reason}
                   </p>
 
-                  <div className="grid gap-4 sm:grid-cols-3 pt-2">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 pt-2">
+                    <div className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4">
+                      <div className="flex items-center justify-between text-xs text-[#76675B]">
+                        <span>Daily Reading Streak</span>
+                        <Flame className="h-4 w-4 text-[#A63816]" aria-hidden="true" />
+                      </div>
+                      <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
+                        {readingProgress.streakDays}{' '}
+                        {readingProgress.streakDays === 1 ? 'Day' : 'Days'}
+                      </div>
+                      <div className="mt-1 text-[11px] text-[#76675B] tabular-nums">
+                        Longest: {readingProgress.longestStreak}{' '}
+                        {readingProgress.longestStreak === 1 ? 'day' : 'days'} ·{' '}
+                        {readingProgress.studiedToday ? 'Studied today' : 'Not yet today'}
+                      </div>
+                    </div>
                     <div className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4">
                       <div className="text-xs text-[#76675B]">Total Passages Completed</div>
                       <div className="mt-1 font-display text-2xl font-bold text-[#171615] tabular-nums">
-                        {attempts.length}
+                        {readingProgress.completedCount}
                       </div>
                     </div>
                     <div className="rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4">

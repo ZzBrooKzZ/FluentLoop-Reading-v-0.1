@@ -12,6 +12,8 @@ interface ProgressPoint {
 interface AssignedPassagePreviewProps {
   lesson: ReadingLesson;
   streakDays: number;
+  longestStreak?: number;
+  studiedToday?: boolean;
   completedCount: number;
   progressPoints: ProgressPoint[];
   onBack: () => void;
@@ -21,6 +23,8 @@ interface AssignedPassagePreviewProps {
 export const AssignedPassagePreview: React.FC<AssignedPassagePreviewProps> = ({
   lesson,
   streakDays,
+  longestStreak = 0,
+  studiedToday = false,
   completedCount,
   progressPoints,
   onBack,
@@ -33,6 +37,7 @@ export const AssignedPassagePreview: React.FC<AssignedPassagePreviewProps> = ({
   const latestAccuracy = progressPoints.length
     ? progressPoints[progressPoints.length - 1].accuracy
     : null;
+  const effectiveLongestStreak = Math.max(longestStreak, streakDays);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -86,16 +91,23 @@ export const AssignedPassagePreview: React.FC<AssignedPassagePreviewProps> = ({
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#F7E9DC] text-[#A63816]">
             <Flame className="h-6 w-6" aria-hidden="true" />
           </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-[#76675B]">
-              Reading streak
-            </p>
-            <p className="mt-0.5 font-display text-2xl font-bold text-[#171615]">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-[#76675B]">
+                Reading streak
+              </p>
+              <span className="font-mono-code text-[11px] font-semibold text-[#76675B] tabular-nums">
+                Best: {effectiveLongestStreak} {effectiveLongestStreak === 1 ? 'day' : 'days'}
+              </span>
+            </div>
+            <p className="mt-0.5 font-display text-2xl font-bold text-[#171615] tabular-nums">
               {streakDays} {streakDays === 1 ? 'day' : 'days'}
             </p>
             <p className="mt-1 text-xs text-[#76675B]">
-              {streakDays
-                ? 'Keep your reading rhythm going.'
+              {studiedToday
+                ? 'Studied today — keep your reading rhythm going.'
+                : streakDays > 0
+                ? 'Finish a passage today to extend your streak.'
                 : 'Finish a passage today to begin your streak.'}
             </p>
           </div>
