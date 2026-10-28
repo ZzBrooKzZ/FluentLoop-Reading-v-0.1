@@ -5321,9 +5321,9 @@ for (const [norm, occ] of wordOccurrences.entries()) {
         score -= 8;
       }
 
-      // Strongly penalize circular definitions
-      if (isCircularDefinition(norm, cand.lemma, syn.definition)) {
-        score -= 35;
+      // Strongly penalize circular or overly short single-word definitions
+      if (isCircularDefinition(norm, cand.lemma, syn.definition) || syn.definition.length < 10) {
+        score -= 40;
       }
 
       bestPool.push({ synset: syn, cand, score });
@@ -5352,9 +5352,10 @@ for (const [norm, occ] of wordOccurrences.entries()) {
     for (const item of bestPool) {
       const s = item.synset;
       const itemPos = norm.endsWith('ly') && item.cand.preferredPos === 'adjective' ? 'adverb' : s.pos;
+      const sDef = expandCircularDerivativeDefinition(norm, itemPos, s.definition);
+      if (sDef.length < 10) continue;
       if (!seenPos.has(itemPos) && distinctPosSenses.length < 3) {
         seenPos.add(itemPos);
-        const sDef = expandCircularDerivativeDefinition(norm, itemPos, s.definition);
         distinctPosSenses.push({
           pos: itemPos,
           def: sDef,

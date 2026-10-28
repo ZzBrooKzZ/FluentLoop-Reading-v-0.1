@@ -10,6 +10,7 @@
     "clean": "rm -rf .next dist",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/services/adaptiveLearning.test.ts src/services/wordLookupService.test.ts",
+    "audit:dictionary": "tsx scripts/auditVocabularyDictionary.ts",
     "setup:apphosting-secrets": "node scripts/setup-apphosting-secrets.mjs"
   },
   "dependencies": {

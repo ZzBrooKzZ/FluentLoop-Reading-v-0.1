@@ -291,4 +291,81 @@ describe('FluentLoop Contextual Vocabulary Dictionary & Lookup Service', () => {
     assert.ok(!/@google\/genai|GoogleGenAI|fetch\(|axios/i.test(componentSource));
     assert.ok(PRECOMPUTED_DICTIONARY_METADATA.missingDefinitionsCount === 0);
   });
+
+  it('10. Runs the automated dictionary auditor to verify 0 missing POS/definitions and accurately flags defective entries', async () => {
+    const { auditVocabularyDictionaries } = await import('../../scripts/auditVocabularyDictionary');
+
+    // A) Full live dictionary + MWE + curated lessons + 33,776 simulated popup lookups must pass with 0 flags
+    const liveReport = auditVocabularyDictionaries({ simulatePassagePopups: true });
+    assert.equal(
+      liveReport.flags.length,
+      0,
+      `Expected 0 audit flags on live dictionary, got: ${JSON.stringify(liveReport.flags.slice(0, 5))}`
+    );
+    assert.equal(liveReport.passed, true);
+    assert.ok(liveReport.auditedSingleWordEntries >= 4990);
+    assert.ok(liveReport.auditedMultiWordEntries >= 120);
+    assert.ok(liveReport.auditedPassageTokens >= 32000);
+
+    // B) Verify that the auditor accurately flags entries with missing POS, missing/short definitions, placeholders, or circular definitions
+    const defectiveReport = auditVocabularyDictionaries({
+      singleWordDictionary: {
+        missingposword: {
+          word: 'missingposword',
+          pos: '',
+          def: 'A valid general definition for testing.',
+          ctx: 'Applies clearly in this context.',
+        },
+        missingdefword: {
+          word: 'missingdefword',
+          pos: 'Adjective',
+          def: '   ',
+          ctx: 'Describes something clearly in this sentence.',
+        },
+        placeholderword: {
+          word: 'placeholderword',
+          pos: 'Verb',
+          def: 'undefined',
+          ctx: 'null',
+        },
+        circularword: {
+          word: 'circularword',
+          pos: 'Noun',
+          def: 'circularword',
+          ctx: 'In this passage, circularword refers to a concept.',
+        },
+      },
+      multiWordExpressions: [
+        {
+          canonical: 'broken phrase',
+          tokens: ['broken', 'phrase'],
+          category: '' as unknown as 'Idiom',
+          def: 'short',
+          ctx: '',
+          ex: 'Example sentence.',
+        },
+      ],
+      lessons: [],
+      diagnosticPassages: [],
+      simulatePassagePopups: false,
+    });
+
+    assert.equal(defectiveReport.passed, false);
+    const issueByWord = new Map<string, string[]>();
+    for (const flag of defectiveReport.flags) {
+      const list = issueByWord.get(flag.key) ?? [];
+      list.push(flag.issueType);
+      issueByWord.set(flag.key, list);
+    }
+
+    assert.ok(issueByWord.get('missingposword')?.includes('missing_pos'));
+    assert.ok(issueByWord.get('missingdefword')?.includes('missing_general_definition'));
+    assert.ok(issueByWord.get('placeholderword')?.includes('placeholder_value'));
+    assert.ok(issueByWord.get('circularword')?.includes('circular_definition'));
+    assert.ok(issueByWord.get('circularword')?.includes('boilerplate_context'));
+    assert.ok(issueByWord.get('broken phrase')?.includes('missing_pos'));
+    assert.ok(issueByWord.get('broken phrase')?.includes('short_general_definition'));
+    assert.ok(issueByWord.get('broken phrase')?.includes('missing_context_meaning'));
+  });
 });
+
