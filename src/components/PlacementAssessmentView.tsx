@@ -493,7 +493,7 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
                 key={sz}
                 type="button"
                 onClick={() => onChangeFontSize(sz)}
-                className={`rounded px-2 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
+                className={`min-h-8 min-w-8 rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
                   fontSize === sz
                     ? 'bg-[#A63816] text-white'
                     : 'text-[#76675B] hover:bg-[#F2EDE3]'
@@ -604,7 +604,7 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
               </div>
             )}
 
-            <div className="space-y-5 max-h-[65vh] overflow-y-auto pr-1">
+            <div className="space-y-5 lg:max-h-[68vh] lg:overflow-y-auto lg:pr-1">
               {activePassage.questions.map((q, idx) => {
                 const selected = answers[q.id] || '';
                 const choiceOptions =

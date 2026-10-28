@@ -69,11 +69,11 @@ import { AssignedPassagePreview } from './components/AssignedPassagePreview';
 import { PlacementAssessmentView } from './components/PlacementAssessmentView';
 import { PublicFooter } from './components/PublicFooter';
 import { BrandLogo } from './components/BrandLogo';
+import { AnimatedBookHero } from './components/AnimatedBookHero';
 import {
   AutumnBranchIllustration,
   BooksAndTeaIllustration,
   CornerBotanicalSprig,
-  CozyBookStackIllustration,
   LeafSeparator,
   OliveTerracottaLeafCluster,
 } from './components/BotanicalIllustrations';
@@ -142,7 +142,7 @@ const STORAGE_KEYS = {
   FRESH_NEW_USER_MODE: 'fluentloop_fresh_new_user_mode_v1',
 };
 
-const CURRENT_FRESH_START_EPOCH = '2026-10-25-new-user-reset-v1';
+const CURRENT_FRESH_START_EPOCH = '2026-10-28-unknown-until-assessed-v2';
 
 function purgeLocalLearnerCache() {
   if (typeof window === 'undefined') return;
@@ -257,30 +257,22 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       return;
     }
 
-    const savedCurrLevel = localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null;
-    if (savedCurrLevel && CEFR_LEVELS.includes(savedCurrLevel)) {
-      setCurrentLevel(savedCurrLevel);
-    }
-
     const savedPlacementLvl = localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL) as CEFRLevel | null;
+    const savedCurrLevel = localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null;
+    const savedStart = localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null;
+
+    // Only assign a known level if the user has completed the placement assessment
     if (savedPlacementLvl && CEFR_LEVELS.includes(savedPlacementLvl)) {
       setPlacementLevel(savedPlacementLvl);
-    }
-
-    const savedStart = localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null;
-    if (savedStart && CEFR_LEVELS.includes(savedStart)) {
-      setStartingLevel(savedStart);
-    } else if (localStorage.getItem(STORAGE_KEYS.FRESH_NEW_USER_MODE) !== 'true') {
-      try {
-        const savedAttempts = JSON.parse(
-          localStorage.getItem(STORAGE_KEYS.ATTEMPTS) || '[]'
-        ) as LessonAttempt[];
-        if (savedAttempts.length > 0) {
-          setStartingLevel(savedCurrLevel || savedAttempts[0].level);
-        }
-      } catch {
-        // Ignore damaged local cache and treat as a new visitor
-      }
+      const effectiveStart =
+        savedStart && CEFR_LEVELS.includes(savedStart) ? savedStart : savedPlacementLvl;
+      const effectiveCurr =
+        savedCurrLevel && CEFR_LEVELS.includes(savedCurrLevel) ? savedCurrLevel : effectiveStart;
+      setStartingLevel(effectiveStart);
+      setCurrentLevel(effectiveCurr);
+    } else {
+      setPlacementLevel(null);
+      setStartingLevel(null);
     }
 
     // Restore any active or completed placement session so page refresh does not repeat passages
@@ -294,8 +286,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           if (rawPlacementPassage) {
             setPlacementActivePassage(JSON.parse(rawPlacementPassage) as ReadingLesson);
           }
-          // If visitor was mid-placement or viewing their pre-registration recommendation, resume seamlessly
-          if (!savedStart && (!parsedSession.linkedToUserId || parsedSession.status === 'in_progress')) {
+          // If visitor was mid-placement or viewing their recommendation before unlocking the course, resume seamlessly
+          if (
+            !savedPlacementLvl &&
+            (parsedSession.status === 'in_progress' || parsedSession.status === 'completed')
+          ) {
             setShowPlacementAssessment(true);
           }
         }
@@ -374,74 +369,78 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           const snapshot = await getDoc(userRef);
           const existingProfile = snapshot.exists() ? snapshot.data() : null;
 
-          if (
-            !isFreshNewUserMode &&
-            existingProfile?.placementLevel &&
-            CEFR_LEVELS.includes(existingProfile.placementLevel)
-          ) {
-            setPlacementLevel(existingProfile.placementLevel as CEFRLevel);
-            localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, existingProfile.placementLevel);
-          }
+          const localPlacementLevel = localStorage.getItem(
+            STORAGE_KEYS.PLACEMENT_LEVEL
+          ) as CEFRLevel | null;
 
-          const savedLevel =
-            (localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null) ||
-            (!isFreshNewUserMode &&
-            existingProfile &&
-            (existingProfile.placementLevel ||
-              existingProfile.startingLevel ||
-              existingProfile.completedCount > 0)
-              ? ((existingProfile.preferredLevel ||
-                  existingProfile.placementLevel ||
-                  existingProfile.startingLevel) as CEFRLevel)
-              : null);
-          if (savedLevel && !localStorage.getItem('fluentloop_starting_level_v1')) {
-            const restoredStartingLevel =
-              (existingProfile?.placementLevel as CEFRLevel | undefined) ||
-              (existingProfile?.startingLevel as CEFRLevel | undefined) ||
-              savedLevel;
+          // Only restore a level if the user has genuinely completed the placement assessment
+          // and is not in fresh/unassessed mode. Never assign a fallback level before assessment.
+          const verifiedPlacementLevel: CEFRLevel | null =
+            localPlacementLevel && CEFR_LEVELS.includes(localPlacementLevel)
+              ? localPlacementLevel
+              : !isFreshNewUserMode &&
+                existingProfile?.placementLevel &&
+                CEFR_LEVELS.includes(existingProfile.placementLevel)
+              ? (existingProfile.placementLevel as CEFRLevel)
+              : null;
+
+          if (verifiedPlacementLevel) {
+            setPlacementLevel(verifiedPlacementLevel);
+            localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, verifiedPlacementLevel);
+
+            const restoredStartingLevel: CEFRLevel =
+              (localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null) ||
+              (!isFreshNewUserMode &&
+              existingProfile?.startingLevel &&
+              CEFR_LEVELS.includes(existingProfile.startingLevel)
+                ? (existingProfile.startingLevel as CEFRLevel)
+                : verifiedPlacementLevel);
+
+            const restoredCurrentLevel: CEFRLevel =
+              (localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null) ||
+              (!isFreshNewUserMode &&
+              existingProfile?.preferredLevel &&
+              CEFR_LEVELS.includes(existingProfile.preferredLevel)
+                ? (existingProfile.preferredLevel as CEFRLevel)
+                : restoredStartingLevel);
+
             localStorage.setItem('fluentloop_starting_level_v1', restoredStartingLevel);
-            localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, savedLevel);
+            localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, restoredCurrentLevel);
             setStartingLevel(restoredStartingLevel);
-            setCurrentLevel(savedLevel);
+            setCurrentLevel(restoredCurrentLevel);
+
+            await setDoc(
+              userRef,
+              {
+                uid: user.uid,
+                displayName: user.displayName || existingProfile?.displayName || 'Academic Reader',
+                preferredLevel: restoredCurrentLevel,
+                startingLevel: restoredStartingLevel,
+                placementLevel: verifiedPlacementLevel,
+                showArabicTranslation:
+                  typeof existingProfile?.showArabicTranslation === 'boolean'
+                    ? existingProfile.showArabicTranslation
+                    : showArabicTranslation,
+                fontSize:
+                  (existingProfile?.fontSize as 'sm' | 'md' | 'lg' | 'xl' | undefined) || fontSize,
+                completedCount:
+                  typeof existingProfile?.completedCount === 'number'
+                    ? existingProfile.completedCount
+                    : attempts.length,
+                averageAccuracy:
+                  typeof existingProfile?.averageAccuracy === 'number'
+                    ? existingProfile.averageAccuracy
+                    : 0,
+                createdAt: existingProfile?.createdAt || serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          } else {
+            // Keep level strictly unknown until the user completes the placement assessment
+            setPlacementLevel(null);
+            setStartingLevel(null);
           }
-          const savedStartingLevel =
-            (localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null) ||
-            (!isFreshNewUserMode
-              ? (existingProfile?.startingLevel as CEFRLevel | undefined)
-              : undefined);
-          const savedPlacementLevel =
-            (localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL) as CEFRLevel | null) ||
-            (!isFreshNewUserMode
-              ? (existingProfile?.placementLevel as CEFRLevel | undefined)
-              : undefined);
-          await setDoc(
-            userRef,
-            {
-              uid: user.uid,
-              displayName: user.displayName || existingProfile?.displayName || 'Academic Reader',
-              preferredLevel:
-                (existingProfile?.preferredLevel as CEFRLevel | undefined) || currentLevel,
-              ...(savedStartingLevel ? { startingLevel: savedStartingLevel } : {}),
-              ...(savedPlacementLevel ? { placementLevel: savedPlacementLevel } : {}),
-              showArabicTranslation:
-                typeof existingProfile?.showArabicTranslation === 'boolean'
-                  ? existingProfile.showArabicTranslation
-                  : showArabicTranslation,
-              fontSize:
-                (existingProfile?.fontSize as 'sm' | 'md' | 'lg' | 'xl' | undefined) || fontSize,
-              completedCount:
-                typeof existingProfile?.completedCount === 'number'
-                  ? existingProfile.completedCount
-                  : attempts.length,
-              averageAccuracy:
-                typeof existingProfile?.averageAccuracy === 'number'
-                  ? existingProfile.averageAccuracy
-                  : 0,
-              createdAt: existingProfile?.createdAt || serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true }
-          );
         } catch (err) {
           console.warn('Profile sync note:', err);
         }
@@ -530,15 +529,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         if (remoteAttempts.length > 0) {
           const isFreshNewUserMode =
             localStorage.getItem(STORAGE_KEYS.FRESH_NEW_USER_MODE) === 'true';
-          if (!isFreshNewUserMode && !localStorage.getItem('fluentloop_starting_level_v1')) {
-            const restoredLevel =
-              (localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null) ||
-              remoteAttempts[0].level;
-            localStorage.setItem('fluentloop_starting_level_v1', restoredLevel);
-            setStartingLevel(restoredLevel);
-            setCurrentLevel(restoredLevel);
-          }
-          if (!isFreshNewUserMode) {
+          const hasCompletedPlacement = Boolean(localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL));
+          if (!isFreshNewUserMode && hasCompletedPlacement) {
             setAttempts((prev) => {
               const byId = new Map<string, LessonAttempt>();
               prev.forEach((a) => byId.set(a.id, a));
@@ -582,8 +574,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   }, [currentUser]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, currentLevel);
-  }, [currentLevel]);
+    if (placementLevel || startingLevel) {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, currentLevel);
+    }
+  }, [currentLevel, placementLevel, startingLevel]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.FONT_SIZE, fontSize);
@@ -734,10 +728,25 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const handleSignIn = async () => {
     try {
-      localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+      // Prevent initial auto-signout while preserving FRESH_NEW_USER_MODE if the user hasn't taken the placement test yet
+      sessionStorage.setItem('fluentloop_initial_signout_done_v1', 'true');
       await signInWithPopup(auth, googleProvider);
-    } catch (err) {
+      setCompletionNotice(null);
+    } catch (err: any) {
       console.warn('Sign-in popup closed or blocked:', err);
+      const code = err?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'your hosted domain';
+        setCompletionNotice(
+          `Google Sign-In blocked: Please add "${host}" to Firebase Console → Authentication → Settings → Authorized domains.`
+        );
+      } else if (code === 'auth/popup-blocked') {
+        setCompletionNotice(
+          'Your browser blocked the Google Sign-In popup. Please allow popups for this site and try again.'
+        );
+      } else if (code && code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
+        setCompletionNotice(`Google Sign-In could not complete (${code}). Please check Firebase Authentication settings.`);
+      }
     }
   };
 
@@ -757,16 +766,33 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setActiveLessonId(null);
     setCompletionNotice(null);
     setActiveTab('library');
+    setMobileNavOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSignOut = async () => {
+    purgeLocalLearnerCache();
+    localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+    sessionStorage.setItem('fluentloop_initial_signout_done_v1', 'true');
+    setStartingLevel(null);
+    setPlacementLevel(null);
+    setCurrentLevel('B1');
+    setPlacementSession(null);
+    setPlacementActivePassage(null);
+    setShowPlacementAssessment(false);
+    setPendingStepFeedback(null);
+    setAttempts([]);
+    setSavedVocab([]);
+    setActiveLessonId(null);
+    setCompletionNotice(null);
+    setActiveTab('library');
+    setMobileNavOpen(false);
     try {
       await signOut(auth);
     } catch (err) {
       console.warn('Sign-out error:', err);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSignOut = async () => {
-    await handleResetAsNewUser();
   };
 
   const handlePreviewLesson = (lesson: ReadingLesson) => {
@@ -1175,6 +1201,21 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setPlacementSession(updatedSession);
       localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(updatedSession));
 
+      // If the user was already signed in before taking the test and just completed the assessment,
+      // record their recommended placement level immediately so the header updates from 'Level: Unknown'
+      if (
+        updatedSession.status === 'completed' &&
+        updatedSession.recommendedLevel &&
+        auth.currentUser &&
+        !auth.currentUser.isAnonymous
+      ) {
+        const recLevel = updatedSession.recommendedLevel;
+        localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+        localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, recLevel);
+        setPlacementLevel(recLevel);
+        setCurrentLevel(recLevel);
+      }
+
       setPlacementActivePassage(nextPassage);
       if (nextPassage) {
         localStorage.setItem(STORAGE_KEYS.PLACEMENT_PASSAGE, JSON.stringify(nextPassage));
@@ -1215,24 +1256,34 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
     let linkedUser: FirebaseUser | null = auth.currentUser;
 
-    // 1. If not signed in with a non-anonymous Google account, trigger Google Sign-In / Account Linking
+    // 1. Clear fresh-new-user flag before authentication so onAuthStateChanged never signs out the user
+    localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+
+    // 2. If not signed in with a non-anonymous Google account, trigger a single direct Google Sign-In popup
+    // (Using signInWithPopup directly avoids the 2nd-popup browser blocker when an account already exists,
+    // and /api/placement/link below links the placement session to finalUid.)
     if (!linkedUser || linkedUser.isAnonymous) {
       try {
-        if (linkedUser && linkedUser.isAnonymous) {
-          try {
-            const cred = await linkWithPopup(linkedUser, googleProvider);
-            linkedUser = cred.user;
-          } catch (linkErr: any) {
-            // If Google account already exists, sign in with that Google account and migrate session
-            const signInCred = await signInWithPopup(auth, googleProvider);
-            linkedUser = signInCred.user;
-          }
-        } else {
-          const signInCred = await signInWithPopup(auth, googleProvider);
-          linkedUser = signInCred.user;
-        }
-      } catch (popupErr) {
+        const signInCred = await signInWithPopup(auth, googleProvider);
+        linkedUser = signInCred.user;
+        setCompletionNotice(null);
+      } catch (popupErr: any) {
         console.warn('Google sign-in popup closed or blocked:', popupErr);
+        const code = popupErr?.code || '';
+        if (code === 'auth/unauthorized-domain') {
+          const host = typeof window !== 'undefined' ? window.location.hostname : 'your hosted domain';
+          setCompletionNotice(
+            `Google Sign-In blocked: Please add "${host}" to Firebase Console → Authentication → Settings → Authorized domains.`
+          );
+          return;
+        } else if (code === 'auth/popup-blocked') {
+          setCompletionNotice(
+            'Your browser blocked the Google Sign-In popup. Please allow popups for this site and click "Continue with Google" again.'
+          );
+          return;
+        } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+          return;
+        }
       }
     }
 
@@ -1617,16 +1668,44 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               >
                 Sample Passages
               </Link>
+              {isAdminVerified && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('admin')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeTab === 'admin'
+                        ? 'bg-[#A63816] text-white'
+                        : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
+                    }`}
+                  >
+                    <Sliders className="h-3.5 w-3.5" />
+                    <span>Content Studio</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('docs')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeTab === 'docs'
+                        ? 'bg-[#A63816] text-white'
+                        : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    <span>Guide</span>
+                  </button>
+                </>
+              )}
             </nav>
           )}
 
           {/* Zone 3: Single Primary Action / Auth & Mobile Menu Toggle */}
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            {(startingLevel !== null || placementSession !== null) && (
+          <div className="flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+            {isAdminVerified && (
               <button
                 type="button"
                 onClick={handleResetAsNewUser}
-                title="Clear cached progress and restart as a new user"
+                title="Admin only: Clear cached progress and restart as a new user"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-2.5 py-1.5 text-xs font-semibold text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615] cursor-pointer transition-colors"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
@@ -1638,7 +1717,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               onClick={handleToggleTheme}
               aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] text-[#76675B] transition hover:bg-[#F2EDE3] hover:text-[#171615] focus:outline-none focus:ring-2 focus:ring-[#A63816] cursor-pointer"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] text-[#76675B] transition hover:bg-[#F2EDE3] hover:text-[#171615] focus:outline-none focus:ring-2 focus:ring-[#A63816] cursor-pointer"
             >
               {theme === 'light' ? (
                 <Moon className="h-4 w-4" aria-hidden="true" />
@@ -1650,15 +1729,19 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               </span>
             </button>
             {currentUser && !currentUser.isAnonymous ? (
-              <div className="flex items-center gap-2">
-                <span className="hidden md:inline-block text-xs text-[#76675B]">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="hidden md:inline-block text-xs text-[#76675B] max-w-[220px] truncate">
                   {currentUser.displayName || currentUser.email} ·{' '}
-                  <strong className="font-mono-code text-[#A63816]">{currentLevel}</strong>
+                  {placementLevel || startingLevel ? (
+                    <strong className="font-mono-code text-[#A63816]">{currentLevel}</strong>
+                  ) : (
+                    <strong className="font-mono-code text-[#76675B]">Level: Unknown</strong>
+                  )}
                 </span>
                 <button
                   type="button"
                   onClick={handleSignOut}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer transition-colors"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer transition-colors"
                 >
                   <LogOut className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Sign Out</span>
@@ -1668,10 +1751,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <button
                 type="button"
                 onClick={handleSignIn}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#A63816] px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#842B12] cursor-pointer transition-colors"
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#A63816] px-3 sm:px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#842B12] cursor-pointer transition-colors"
               >
-                <LogIn className="h-3.5 w-3.5" />
-                <span>Sign In with Google</span>
+                <LogIn className="h-3.5 w-3.5 shrink-0" />
+                <span className="sm:hidden">Sign In</span>
+                <span className="hidden sm:inline">Sign In with Google</span>
               </button>
             )}
 
@@ -1681,7 +1765,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               onClick={() => setMobileNavOpen((prev) => !prev)}
               aria-expanded={mobileNavOpen}
               aria-label="Toggle navigation menu"
-              className="inline-flex lg:hidden h-9 w-9 items-center justify-center rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615] cursor-pointer"
+              className="inline-flex lg:hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615] cursor-pointer"
             >
               {mobileNavOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
             </button>
@@ -1692,8 +1776,19 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         {mobileNavOpen && (
           <nav
             aria-label="Mobile navigation"
-            className="lg:hidden border-t border-[#E3D7C3] bg-[#FAF7F1] px-4 py-3 space-y-1"
+            className="lg:hidden border-t border-[#E3D7C3] bg-[#FAF7F1] px-4 py-3 space-y-1.5"
           >
+            {currentUser && !currentUser.isAnonymous && (
+              <div className="mb-2 flex items-center justify-between rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-2 text-xs">
+                <span className="truncate font-medium text-[#171615]">
+                  {currentUser.displayName || currentUser.email}
+                </span>
+                <span className="ml-2 shrink-0 font-mono-code font-bold text-[#A63816]">
+                  {placementLevel || startingLevel ? `CEFR ${currentLevel}` : 'Level: Unknown'}
+                </span>
+              </div>
+            )}
+
             {startingLevel !== null ? (
               <>
                 {(
@@ -1717,7 +1812,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       setActiveTab(tabKey);
                       setMobileNavOpen(false);
                     }}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-semibold text-left transition-colors ${
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-xs font-semibold text-left transition-colors ${
                       activeTab === tabKey
                         ? 'bg-[#A63816] text-white'
                         : 'text-[#171615] hover:bg-[#F2EDE3]'
@@ -1733,7 +1828,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 <Link
                   href="/guides/ielts-academic-reading"
                   onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                  className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <BookOpen className="h-4 w-4 text-[#A63816]" />
                   <span>IELTS Reading Guide</span>
@@ -1741,7 +1836,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 <Link
                   href="/guides/cefr-reading-levels"
                   onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                  className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Compass className="h-4 w-4 text-[#A63816]" />
                   <span>CEFR A1–C1 Levels</span>
@@ -1749,7 +1844,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 <Link
                   href="/guides/vocabulary-in-context"
                   onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                  className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <FileText className="h-4 w-4 text-[#A63816]" />
                   <span>Contextual Vocabulary</span>
@@ -1757,12 +1852,57 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 <Link
                   href="/sample-lessons"
                   onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
+                  className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Sparkles className="h-4 w-4 text-[#A63816]" />
                   <span>Sample Passages</span>
                 </Link>
+                {isAdminVerified && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('admin');
+                        setMobileNavOpen(false);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-left ${
+                        activeTab === 'admin'
+                          ? 'bg-[#A63816] text-white'
+                          : 'text-[#171615] hover:bg-[#F2EDE3]'
+                      }`}
+                    >
+                      <Sliders className="h-4 w-4 text-[#A63816]" />
+                      <span>Content Studio (Admin)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('docs');
+                        setMobileNavOpen(false);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-left ${
+                        activeTab === 'docs'
+                          ? 'bg-[#A63816] text-white'
+                          : 'text-[#171615] hover:bg-[#F2EDE3]'
+                      }`}
+                    >
+                      <FileText className="h-4 w-4 text-[#A63816]" />
+                      <span>Documentation Guide</span>
+                    </button>
+                  </>
+                )}
               </>
+            )}
+
+            {isAdminVerified && (
+              <button
+                type="button"
+                onClick={handleResetAsNewUser}
+                className="flex w-full items-center gap-2 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-2.5 text-xs font-semibold text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]"
+              >
+                <RotateCcw className="h-4 w-4 text-[#A63816]" />
+                <span>Start as New User (Clear Cache)</span>
+              </button>
             )}
           </nav>
         )}
@@ -1801,86 +1941,89 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             onContinueWithGoogle={handleContinueWithGoogleFromPlacement}
             onRetakePlacement={() => handleStartPlacementAssessment(true)}
             onBackToOverview={() => {
+              if (
+                placementSession?.status === 'completed' &&
+                placementSession.recommendedLevel &&
+                currentUser &&
+                !currentUser.isAnonymous
+              ) {
+                void handleContinueWithGoogleFromPlacement();
+                return;
+              }
               setShowPlacementAssessment(false);
               setPendingStepFeedback(null);
             }}
           />
-        ) : startingLevel === null ? (
+        ) : startingLevel === null &&
+          !(isAdminVerified && (activeTab === 'admin' || activeTab === 'docs')) ? (
           <section
-            className="mx-auto w-full max-w-6xl py-6 sm:py-12"
+            className="mx-auto w-full max-w-6xl py-4 sm:py-10"
             aria-labelledby="landing-title"
           >
-            {/* HERO SECTION: Warm Editorial Reading Journal */}
+            {/* HERO SECTION: Warm Editorial Reading Journal with Animated Book */}
             <div className="relative overflow-hidden rounded-3xl border border-[#E3D7C3] bg-[#F2EDE3] shadow-xs">
-              {/* Decorative hand-drawn botanical foliage in corners */}
-              <AutumnBranchIllustration className="pointer-events-none absolute -right-6 -top-4 h-28 w-52 opacity-70" />
-              <CornerBotanicalSprig className="pointer-events-none absolute -bottom-5 -left-5 h-28 w-28 rotate-180 opacity-45" />
+              {/* Decorative hand-drawn botanical foliage in corners (scaled down on mobile) */}
+              <AutumnBranchIllustration className="pointer-events-none absolute -right-6 -top-4 h-20 w-36 sm:h-28 sm:w-52 opacity-65" />
+              <CornerBotanicalSprig className="pointer-events-none absolute -bottom-5 -left-5 h-20 w-20 sm:h-28 sm:w-28 rotate-180 opacity-45" />
 
-              <div className="relative z-10 grid items-center gap-8 p-6 sm:p-10 lg:grid-cols-[1.06fr_0.94fr] lg:p-14">
-                <div className="animate-[fadeIn_.45s_ease-out]">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-[#E3D7C3] bg-[#FAF7F1] px-3.5 py-1.5 font-mono-code text-[10px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
-                    English reading, one passage at a time
-                  </span>
+              <div className="relative z-10 grid items-center gap-8 p-5 sm:p-10 lg:grid-cols-[1.04fr_0.96fr] lg:gap-10 lg:p-14">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-[#E3D7C3] bg-[#FAF7F1] px-3.5 py-1.5 font-mono-code text-[10px] font-bold uppercase tracking-[0.18em] text-[#A63816]">
+                      YOUR ENGLISH READING JOURNEY
+                    </span>
+                    {currentUser && !currentUser.isAnonymous && !placementLevel && !startingLevel && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#A63816]/35 bg-[#F7E9DC] px-3.5 py-1.5 font-mono-code text-[10px] font-bold uppercase tracking-wider text-[#842B12]">
+                        <Compass className="h-3.5 w-3.5 text-[#A63816]" />
+                        Level: Unknown — Assessment Required
+                      </span>
+                    )}
+                  </div>
                   <h1
                     id="landing-title"
-                    className="mt-5 max-w-2xl font-display text-4xl font-bold leading-[1.07] tracking-tight text-[#171615] sm:text-5xl lg:text-6xl"
+                    className="mt-5 max-w-2xl font-display text-3xl font-bold leading-[1.08] tracking-tight text-[#171615] sm:text-5xl lg:text-6xl"
                   >
                     Grow your English through <span className="text-[#A63816]">reading.</span>
                   </h1>
-                  <p className="mt-5 max-w-xl text-base leading-relaxed text-[#76675B] sm:text-lg">
-                    Practice with level-matched passages, understand vocabulary in context, and
-                    build confidence for real-world English and IELTS-style reading. Take a short,
-                    adaptive 3-passage placement check to discover your recommended CEFR level.
+                  <p className="mt-4 sm:mt-5 max-w-xl text-sm sm:text-lg leading-relaxed text-[#76675B]">
+                    Discover engaging reading passages, build your vocabulary in context, and
+                    develop your English skills one story at a time. Take a short, adaptive
+                    3-passage placement check to discover your recommended CEFR level.
                   </p>
-                  <div className="mt-7 flex flex-wrap items-center gap-3">
+                  <div className="mt-6 sm:mt-7 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
                     <button
                       type="button"
                       onClick={() => handleStartPlacementAssessment(false)}
-                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#A63816] px-6 py-3.5 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#842B12] focus:outline-none focus:ring-4 focus:ring-[#A63816]/30 cursor-pointer"
+                      className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-[#A63816] px-6 py-3.5 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#842B12] focus:outline-none focus:ring-4 focus:ring-[#A63816]/30 cursor-pointer"
                     >
                       {placementSession && placementSession.steps.length > 0
                         ? 'Resume Your Placement Check'
+                        : currentUser && !currentUser.isAnonymous
+                        ? 'Take Placement Check to Get Your Level'
                         : 'Start Your Reading Journey'}{' '}
                       <span aria-hidden="true">→</span>
                     </button>
 
+                    <a
+                      href="#how-it-works"
+                      className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] px-5 py-3.5 text-sm font-semibold text-[#171615] transition hover:bg-[#FAF7F1] hover:border-[#A63816]/50"
+                    >
+                      <span>Explore How It Works</span>
+                    </a>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[#76675B]">
+                    <span>Up to 3 short passages · ~5–8 minutes · Instant CEFR recommendation</span>
                     <Link
                       href="/sample-lessons"
-                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] px-5 py-3.5 text-sm font-semibold text-[#171615] transition hover:bg-[#FAF7F1] hover:border-[#A63816]/50"
+                      className="font-semibold text-[#A63816] underline decoration-[#A63816]/40 underline-offset-4 hover:text-[#842B12]"
                     >
-                      <span>Explore Sample Passages</span>
+                      Browse sample passages →
                     </Link>
                   </div>
-                  <p className="mt-3.5 text-xs text-[#76675B]">
-                    Up to 3 short passages · ~5–8 minutes · Instant CEFR level recommendation before
-                    sign-in
-                  </p>
                 </div>
 
-                {/* Right Column: Editorial Reading Journal & Books Illustration Card */}
-                <div className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5 sm:p-6 shadow-md">
-                  <div className="flex items-center justify-between border-b border-[#E3D7C3] pb-3 mb-2">
-                    <span className="font-mono-code text-[10px] font-bold uppercase tracking-[0.18em] text-[#A63816]">
-                      Read · Understand · Grow
-                    </span>
-                    <span className="rounded-full bg-[#F7E9DC] px-2.5 py-0.5 font-mono-code text-[10px] font-semibold text-[#842B12]">
-                      CEFR A1–C1 Journal
-                    </span>
-                  </div>
-
-                  <CozyBookStackIllustration className="w-full h-auto" />
-
-                  <div className="mt-2 rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-3.5 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-display text-base font-bold text-[#171615]">
-                        Explore ideas through English
-                      </p>
-                      <p className="text-xs text-[#76675B]">
-                        Every word in every passage includes a contextual English-to-English definition.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                {/* Right Column: Animated Hardcover Open Book Centerpiece */}
+                <AnimatedBookHero className="w-full" />
               </div>
             </div>
 
@@ -1923,7 +2066,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             <LeafSeparator className="my-10" />
 
             {/* HOW IT WORKS SECTION */}
-            <section className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-9 shadow-xs">
+            <section
+              id="how-it-works"
+              className="scroll-mt-24 relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-9 shadow-xs"
+            >
               <OliveTerracottaLeafCluster className="pointer-events-none absolute -right-2 -top-2 h-16 w-16 opacity-50" />
               <div className="max-w-2xl">
                 <span className="font-mono-code text-[11px] font-bold uppercase tracking-[0.16em] text-[#A63816]">
@@ -2361,14 +2507,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                         </div>
 
                         {/* Filters */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="flex items-center gap-1 rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-1">
+                        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                          <div className="flex items-center gap-1 overflow-x-auto max-w-full rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-1">
                             {(['ALL', ...CEFR_LEVELS] as const).map((lvl) => (
                               <button
                                 key={lvl}
                                 type="button"
                                 onClick={() => setSelectedLevelFilter(lvl)}
-                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                                   selectedLevelFilter === lvl
                                     ? 'bg-[#A63816] text-white'
                                     : 'text-[#76675B] hover:bg-[#F2EDE3] hover:text-[#171615]'
@@ -2404,14 +2550,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                             <option value="COMPLETED">Completed</option>
                           </select>
 
-                          <div className="relative">
+                          <div className="relative flex-1 sm:flex-initial min-w-[180px]">
                             <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-[#76675B]" />
                             <input
                               type="text"
                               value={searchQuery}
                               onChange={(e) => setSearchQuery(e.target.value)}
                               placeholder="Search passages..."
-                              className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] pl-8 pr-3 py-1.5 text-xs text-[#171615] placeholder-[#76675B]/70 focus:border-[#A63816] focus:outline-none"
+                              className="w-full rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] pl-8 pr-3 py-1.5 text-xs text-[#171615] placeholder-[#76675B]/70 focus:border-[#A63816] focus:outline-none"
                             />
                           </div>
                         </div>
@@ -2514,7 +2660,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     Back to Reading Library
                   </button>
 
-                  <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                     <span className="text-xs text-[#76675B]">
                       Hover, double-click, or tap any word for an English definition
                     </span>
@@ -2527,7 +2673,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                           key={sz}
                           type="button"
                           onClick={() => setFontSize(sz)}
-                          className={`rounded px-2 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                          className={`min-h-8 min-w-8 rounded px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
                             fontSize === sz
                               ? 'bg-[#A63816] text-white'
                               : 'text-[#76675B] hover:bg-[#F2EDE3]'
@@ -2669,12 +2815,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                           </p>
                         </div>
                         {lesson && (
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
                             {attempt.status === 'in_progress' ? (
                               <button
                                 type="button"
                                 onClick={() => handleOpenLesson(lesson, 'first', attempt)}
-                                className="rounded-lg bg-[#A63816] px-3 py-2 text-xs font-semibold text-white hover:bg-[#842B12] cursor-pointer"
+                                className="w-full sm:w-auto rounded-lg bg-[#A63816] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#842B12] cursor-pointer"
                               >
                                 Continue
                               </button>
@@ -2683,14 +2829,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                                 <button
                                   type="button"
                                   onClick={() => handleOpenLesson(lesson, 'review', attempt)}
-                                  className="rounded-lg bg-[#171615] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2E2A27] cursor-pointer"
+                                  className="flex-1 sm:flex-initial rounded-lg bg-[#171615] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#2E2A27] cursor-pointer"
                                 >
                                   Review
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => handleOpenLesson(lesson, 'practice')}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer"
+                                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3.5 py-2 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3] cursor-pointer"
                                 >
                                   <RotateCcw className="h-3.5 w-3.5" />
                                   Practice Again
@@ -2720,13 +2866,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                     <input
                       type="text"
                       value={vocabSearch}
                       onChange={(e) => setVocabSearch(e.target.value)}
                       placeholder="Search saved words..."
-                      className="rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs text-[#171615]"
+                      className="w-full sm:w-64 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-2 text-xs text-[#171615]"
                     />
                   </div>
                 </div>

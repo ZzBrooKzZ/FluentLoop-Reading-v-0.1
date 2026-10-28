@@ -19,6 +19,11 @@ export const metadata: Metadata = {
   alternates: {
     canonical: '/',
   },
+  icons: {
+    icon: '/assets/aistudio/FluentLoop_Open_Book_Infinity_Logo_3809769a.png',
+    shortcut: '/assets/aistudio/FluentLoop_Open_Book_Infinity_Logo_3809769a.png',
+    apple: '/assets/aistudio/FluentLoop_Open_Book_Infinity_Logo_3809769a.png',
+  },
   openGraph: {
     type: 'website',
     siteName: 'FluentLoop Reading',
