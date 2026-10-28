@@ -335,6 +335,324 @@ export function getMorphologicalCandidates(word: string): string[] {
   return Array.from(new Set(candidates));
 }
 
+const RUNTIME_DETERMINERS = new Set([
+  'the',
+  'a',
+  'an',
+  'this',
+  'that',
+  'these',
+  'those',
+  'my',
+  'your',
+  'his',
+  'her',
+  'its',
+  'our',
+  'their',
+  'some',
+  'any',
+  'no',
+  'every',
+  'each',
+  'either',
+  'neither',
+  'another',
+  'many',
+  'much',
+  'more',
+  'most',
+  'few',
+  'fewer',
+  'several',
+  'both',
+  'all',
+  'half',
+  'such',
+  'what',
+  'which',
+  'whose',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+]);
+
+const RUNTIME_PREPOSITIONS = new Set([
+  'in',
+  'on',
+  'at',
+  'to',
+  'for',
+  'with',
+  'about',
+  'against',
+  'between',
+  'into',
+  'through',
+  'during',
+  'before',
+  'after',
+  'above',
+  'below',
+  'from',
+  'up',
+  'down',
+  'of',
+  'off',
+  'over',
+  'under',
+  'within',
+  'without',
+  'by',
+  'among',
+  'across',
+  'behind',
+  'beyond',
+  'near',
+  'since',
+  'toward',
+  'towards',
+  'upon',
+  'despite',
+  'throughout',
+]);
+
+const RUNTIME_LINKING_VERBS = new Set([
+  'be',
+  'am',
+  'is',
+  'are',
+  'was',
+  'were',
+  'been',
+  'being',
+  'seem',
+  'seems',
+  'seemed',
+  'appear',
+  'appears',
+  'appeared',
+  'become',
+  'becomes',
+  'became',
+  'remain',
+  'remains',
+  'remained',
+  'feel',
+  'feels',
+  'felt',
+  'look',
+  'looks',
+  'looked',
+  'sound',
+  'sounds',
+  'sounded',
+  'stay',
+  'stays',
+  'stayed',
+  'prove',
+  'proves',
+  'proved',
+]);
+
+const RUNTIME_AUX_MODALS = new Set([
+  'can',
+  'could',
+  'will',
+  'would',
+  'shall',
+  'should',
+  'may',
+  'might',
+  'must',
+  'do',
+  'does',
+  'did',
+  'have',
+  'has',
+  'had',
+  "don't",
+  "doesn't",
+  "didn't",
+  "can't",
+  'cannot',
+  "won't",
+  "wouldn't",
+  "shouldn't",
+  "couldn't",
+]);
+
+const RUNTIME_DEGREE_ADVERBS = new Set([
+  'very',
+  'quite',
+  'rather',
+  'too',
+  'so',
+  'more',
+  'most',
+  'less',
+  'least',
+  'extremely',
+  'highly',
+  'particularly',
+  'especially',
+  'remarkably',
+  'increasingly',
+  'relatively',
+  'completely',
+  'entirely',
+  'utterly',
+  'deeply',
+  'unusually',
+  'fairly',
+  'truly',
+]);
+
+const RUNTIME_PRONOUNS = new Set([
+  'i',
+  'you',
+  'he',
+  'she',
+  'it',
+  'we',
+  'they',
+  'me',
+  'him',
+  'us',
+  'them',
+  'who',
+  'whom',
+  'anyone',
+  'everyone',
+  'someone',
+  'nobody',
+  'something',
+  'anything',
+  'everything',
+  'nothing',
+]);
+
+/**
+ * Formats any raw part-of-speech tag into a clean, learner-friendly capitalized label
+ * (e.g., "Adjective", "Adverb", "Verb", "Noun", "Phrasal verb").
+ */
+export function formatPartOfSpeechLabel(rawPos: string | undefined): string {
+  if (!rawPos || !rawPos.trim()) return 'Word';
+  const cleaned = rawPos.trim();
+  const lower = cleaned.toLowerCase();
+  if (lower === 'adjective' || lower === 'adj') return 'Adjective';
+  if (lower === 'adverb' || lower === 'adv') return 'Adverb';
+  if (lower === 'verb' || lower === 'v') return 'Verb';
+  if (lower === 'noun' || lower === 'n') return 'Noun';
+  if (lower === 'phrasal verb') return 'Phrasal verb';
+  if (lower === 'idiom') return 'Idiom';
+  if (lower === 'fixed expression') return 'Fixed expression';
+  if (lower === 'academic collocation') return 'Academic collocation';
+  if (lower === 'compound expression' || lower === 'compound term' || lower === 'adjective / compound') {
+    return 'Compound expression';
+  }
+  if (lower === 'preposition') return 'Preposition';
+  if (lower === 'conjunction') return 'Conjunction';
+  if (lower === 'pronoun') return 'Pronoun';
+  if (lower === 'determiner') return 'Determiner';
+  if (lower === 'numeral' || lower === 'number') return 'Number';
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+/**
+ * Infers syntactic part-of-speech scores for a word inside a sentence.
+ */
+function inferRuntimePosScores(
+  normalizedWord: string,
+  sentence: string
+): Record<'noun' | 'verb' | 'adjective' | 'adverb', number> {
+  const scores = { noun: 0, verb: 0, adjective: 0, adverb: 0 };
+  if (!sentence) return scores;
+
+  const rawTokens = sentence.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || [];
+  const tokens = rawTokens.map((t) => normalizeLookupToken(t));
+  const candidates = new Set([normalizedWord, ...getMorphologicalCandidates(normalizedWord)]);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok !== normalizedWord && !candidates.has(tok)) continue;
+
+    const prev = i > 0 ? tokens[i - 1] : '';
+    const next = i < tokens.length - 1 ? tokens[i + 1] : '';
+
+    // 1. After degree adverb ("very severe", "quite compelling", "extremely cold")
+    if (RUNTIME_DEGREE_ADVERBS.has(prev)) {
+      if (tok.endsWith('ly')) {
+        scores.adverb += 5;
+      } else {
+        scores.adjective += 6;
+      }
+    }
+
+    // 2. After determiner or preposition ("a severe winter", "the current system", "read a novel")
+    if (RUNTIME_DETERMINERS.has(prev) || RUNTIME_PREPOSITIONS.has(prev)) {
+      const nextIsContentWord =
+        Boolean(next) &&
+        !RUNTIME_DETERMINERS.has(next) &&
+        !RUNTIME_PREPOSITIONS.has(next) &&
+        !RUNTIME_LINKING_VERBS.has(next) &&
+        !RUNTIME_AUX_MODALS.has(next) &&
+        !RUNTIME_PRONOUNS.has(next) &&
+        !['and', 'or', 'but', 'that', 'which', 'who', 'because', 'when', 'while', 'if', 'than', 'as'].includes(next);
+
+      if (nextIsContentWord) {
+        scores.adjective += 6;
+      } else {
+        scores.noun += 6;
+      }
+    }
+
+    // 3. Predicative adjective after linking verb ("The evidence was compelling.", "remained firm")
+    if (RUNTIME_LINKING_VERBS.has(prev)) {
+      if (!next || RUNTIME_PREPOSITIONS.has(next) || ['and', 'or', 'but', 'that', 'because', 'when', 'while', 'as', 'than', 'enough'].includes(next)) {
+        scores.adjective += 6;
+      } else if (RUNTIME_DETERMINERS.has(next)) {
+        scores.verb += 3;
+      } else {
+        scores.adjective += 4;
+      }
+    }
+
+    // 4. Verb after infinitive "to" or modal/auxiliary ("to conduct research", "can store heat")
+    if (prev === 'to' && i > 0) {
+      const nextIsNounOrDet =
+        RUNTIME_DETERMINERS.has(next) ||
+        RUNTIME_PRONOUNS.has(next) ||
+        (Boolean(next) && !RUNTIME_PREPOSITIONS.has(next) && !RUNTIME_LINKING_VERBS.has(next));
+      if (nextIsNounOrDet) {
+        scores.verb += 6;
+      }
+    } else if (RUNTIME_AUX_MODALS.has(prev)) {
+      scores.verb += 6;
+    }
+
+    // 5. Transitive verb between subject and determiner/pronoun ("The researchers identified a pattern.")
+    if (
+      (RUNTIME_PRONOUNS.has(prev) || (prev && !RUNTIME_DETERMINERS.has(prev) && !RUNTIME_PREPOSITIONS.has(prev))) &&
+      (RUNTIME_DETERMINERS.has(next) || ['it', 'them', 'him', 'her', 'us'].includes(next))
+    ) {
+      scores.verb += 5;
+    }
+
+    // 6. Adverb ending in -ly or modifying a verb
+    if (
+      tok.endsWith('ly') &&
+      !['elderly', 'friendly', 'costly', 'likely', 'lively', 'lonely', 'lovely', 'silly', 'ugly', 'deadly', 'daily', 'weekly', 'monthly', 'yearly', 'early', 'only', 'family', 'supply', 'apply', 'reply', 'rely', 'fly', 'ally'].includes(tok)
+    ) {
+      scores.adverb += 7;
+    }
+  }
+
+  return scores;
+}
+
 /**
  * Selects the best contextual sense when a word has multiple meanings across passages or sentences.
  */
@@ -359,7 +677,7 @@ function selectContextualSense(
     };
   }
 
-  // 1. Exact lessonId match if a sense was specifically curated for this passage
+  // 1. Exact lessonId match if a sense was specifically curated for this passage and no conflicting sentence is provided
   if (lessonId) {
     const exactLessonSense = senses.find(
       (s) => s.lessonIds && s.lessonIds.includes(lessonId)
@@ -385,23 +703,15 @@ function selectContextualSense(
   }
 
   const lowerSentence = sentence.toLowerCase();
-
-  // Check syntactic cues around the target word in the sentence
-  const escaped = normalizedWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const precededByInfinitiveOrModal = new RegExp(
-    `\\b(to|can|could|will|would|may|might|must|shall|should|do|does|did|not|never|always|often|also|help|helps|helped)\\s+${escaped}\\b`,
-    'i'
-  ).test(sentence);
-  const precededByDeterminerOrAdj = new RegExp(
-    `\\b(the|a|an|this|that|these|those|each|every|their|our|its|his|her|many|several|two|three|four|new|local|modern|large|small|entire|whole|single)\\s+(?:[a-z-]+\\s+)?${escaped}\\b`,
-    'i'
-  ).test(sentence);
+  const posScores = inferRuntimePosScores(normalizedWord, sentence);
 
   let bestSense: PrecomputedWordSense = senses[0];
   let bestScore = -1;
 
-  for (const sense of senses) {
-    let score = 0;
+  for (let idx = 0; idx < senses.length; idx++) {
+    const sense = senses[idx];
+    // Slight preference for primary sense when all else is equal
+    let score = idx === 0 ? 0.5 : 0;
 
     if (lessonId && sense.lessonIds?.includes(lessonId)) {
       score += 5;
@@ -427,13 +737,16 @@ function selectContextualSense(
       }
     }
 
-    // Syntactic POS alignment
+    // Syntactic POS alignment from sentence structure
     const posLower = sense.pos.toLowerCase();
-    if (precededByInfinitiveOrModal && posLower.includes('verb')) {
-      score += 3;
-    }
-    if (precededByDeterminerOrAdj && (posLower.includes('noun') || posLower.includes('adjective'))) {
-      score += 3;
+    if (posLower.includes('adjective')) {
+      score += posScores.adjective;
+    } else if (posLower.includes('adverb')) {
+      score += posScores.adverb;
+    } else if (posLower.includes('verb')) {
+      score += posScores.verb;
+    } else if (posLower.includes('noun')) {
+      score += posScores.noun;
     }
 
     if (score > bestScore) {
@@ -448,6 +761,240 @@ function selectContextualSense(
     contextMeaning: bestSense.ctx,
     exampleSentence: bestSense.ex || entry.ex,
   };
+}
+
+function extractRuntimeForwardNounPhrase(
+  rawWords: string[],
+  normWords: string[],
+  startIdx: number
+): string {
+  const stopSet = new Set([
+    ...Array.from(RUNTIME_PREPOSITIONS),
+    ...Array.from(RUNTIME_LINKING_VERBS),
+    ...Array.from(RUNTIME_AUX_MODALS),
+    'and',
+    'or',
+    'but',
+    'that',
+    'which',
+    'who',
+    'whom',
+    'whose',
+    'where',
+    'when',
+    'while',
+    'because',
+    'although',
+    'though',
+    'if',
+    'than',
+    'as',
+    'to',
+    'so',
+  ]);
+  const collected: string[] = [];
+  for (let i = startIdx; i < Math.min(rawWords.length, startIdx + 4); i++) {
+    const n = normWords[i];
+    if (!n) break;
+    if (collected.length > 0 && (stopSet.has(n) || RUNTIME_DETERMINERS.has(n))) {
+      break;
+    }
+    if (collected.length === 0 && stopSet.has(n)) {
+      break;
+    }
+    collected.push(rawWords[i].toLowerCase());
+    const nextN = i + 1 < normWords.length ? normWords[i + 1] : '';
+    const isDet = RUNTIME_DETERMINERS.has(n);
+    const looksLikeModifier =
+      isDet ||
+      /(?:al|ic|ive|ous|ful|less|able|ible|ary|ory|ent|ant|ed|ing)$/.test(n);
+    if (!looksLikeModifier || !nextN || stopSet.has(nextN) || RUNTIME_DETERMINERS.has(nextN)) {
+      break;
+    }
+  }
+  if (collected.length === 1 && RUNTIME_DETERMINERS.has(collected[0])) {
+    return '';
+  }
+  return collected.join(' ');
+}
+
+function extractShortMeaningGloss(simpleDefinition: string): string {
+  const withoutParens = simpleDefinition.replace(/\s*\([^)]*\)/g, '').trim();
+  const firstClause = withoutParens.split(/[;.]/)[0].trim();
+  const withoutLeadingTo = firstClause.replace(/^To\s+/i, '');
+  if (!withoutLeadingTo) return simpleDefinition.replace(/\.$/, '').toLowerCase();
+  return withoutLeadingTo.charAt(0).toLowerCase() + withoutLeadingTo.slice(1);
+}
+
+/**
+ * Refines or synthesizes the "Meaning here" (`contextMeaning`) so it always accurately explains
+ * how the word or expression applies to the actual `sentence` passed at runtime.
+ */
+export function refineContextMeaningForSentence(params: {
+  surfaceWord: string;
+  baseWord: string;
+  partOfSpeech: string;
+  simpleDefinition: string;
+  baseCtx: string;
+  sentence?: string;
+}): string {
+  const { surfaceWord, baseWord, partOfSpeech, simpleDefinition, baseCtx, sentence } = params;
+  const cleanBaseCtx = (baseCtx || '').trim();
+
+  // If no sentence context is available, ensure baseCtx does not claim a specific unprovided sentence object
+  if (!sentence || !sentence.trim()) {
+    if (cleanBaseCtx && !/in this (?:sentence|passage)/i.test(cleanBaseCtx)) {
+      return cleanBaseCtx;
+    }
+    const shortGloss = extractShortMeaningGloss(simpleDefinition);
+    const posLower = partOfSpeech.toLowerCase();
+    if (posLower.includes('adjective')) {
+      return `Describes a quality or condition that is ${shortGloss}.`;
+    }
+    if (posLower.includes('adverb')) {
+      return `Shows that an action or state happens ${shortGloss}.`;
+    }
+    if (posLower.includes('verb')) {
+      return `Expresses the action or state: to ${shortGloss}.`;
+    }
+    return cleanBaseCtx || simpleDefinition;
+  }
+
+  const rawWords = sentence.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || [];
+  const normWords = rawWords.map((w) => normalizeLookupToken(w));
+  if (rawWords.length < 2) {
+    return cleanBaseCtx || simpleDefinition;
+  }
+
+  const surfaceNorm = normalizeLookupToken(surfaceWord);
+  const baseNorm = normalizeLookupToken(baseWord);
+  let idx = normWords.findIndex((n) => n === surfaceNorm);
+  if (idx === -1) {
+    idx = normWords.findIndex((n) => n === baseNorm || getMorphologicalCandidates(n).includes(baseNorm));
+  }
+  if (idx === -1) {
+    return cleanBaseCtx || simpleDefinition;
+  }
+
+  const posLower = partOfSpeech.toLowerCase();
+  const shortGloss = extractShortMeaningGloss(simpleDefinition);
+  const prevRaw = idx > 0 ? rawWords[idx - 1].toLowerCase() : '';
+  const prevNorm = idx > 0 ? normWords[idx - 1] : '';
+  const nextRaw = idx < rawWords.length - 1 ? rawWords[idx + 1].toLowerCase() : '';
+  const nextNorm = idx < normWords.length - 1 ? normWords[idx + 1] : '';
+
+  // Find subject noun before a verb or linking verb
+  const findPrecedingSubject = (beforeIndex: number): string => {
+    for (let i = beforeIndex - 1; i >= Math.max(0, beforeIndex - 4); i--) {
+      const n = normWords[i];
+      if (!n || RUNTIME_AUX_MODALS.has(n) || RUNTIME_LINKING_VERBS.has(n) || RUNTIME_DEGREE_ADVERBS.has(n)) {
+        continue;
+      }
+      if (RUNTIME_DETERMINERS.has(n) || RUNTIME_PREPOSITIONS.has(n)) {
+        continue;
+      }
+      return rawWords[i].toLowerCase();
+    }
+    return '';
+  };
+
+  // 1. Adjectives: explain the quality being described and what it applies to in this sentence
+  if (posLower.includes('adjective')) {
+    const modifiedTarget = extractRuntimeForwardNounPhrase(rawWords, normWords, idx + 1);
+    if (modifiedTarget) {
+      if (
+        baseNorm === 'severe' &&
+        /\b(winter|winters|cold|weather|storm|storms|drought|droughts|frost|climate|heat)\b/i.test(modifiedTarget)
+      ) {
+        return `Extremely cold, harsh, and difficult, describing the ${modifiedTarget} in this sentence.`;
+      }
+      return `Describes the ${modifiedTarget} in this sentence as ${shortGloss}.`;
+    }
+
+    if (RUNTIME_LINKING_VERBS.has(prevNorm) || (idx >= 2 && RUNTIME_DEGREE_ADVERBS.has(prevNorm) && RUNTIME_LINKING_VERBS.has(normWords[idx - 2]))) {
+      const linkIdx = RUNTIME_LINKING_VERBS.has(prevNorm) ? idx - 1 : idx - 2;
+      const subj = findPrecedingSubject(linkIdx);
+      if (subj) {
+        if (baseNorm === 'compelling' && /\b(evidence|argument|arguments|case|proof|reason|reasons|data|findings)\b/i.test(subj)) {
+          return `The ${subj} made the explanation or conclusion seem believable and convincing.`;
+        }
+        return `Describes the ${subj} in this sentence as ${shortGloss}.`;
+      }
+    }
+
+    // If baseCtx references a specific passage noun that is not in this sentence, provide a clean contextual explanation
+    return `Describes a quality or condition in this sentence meaning ${shortGloss}.`;
+  }
+
+  // 2. Adverbs: explain how the adverb modifies the verb or adjective in this sentence
+  if (posLower.includes('adverb')) {
+    if (prevRaw && !RUNTIME_DETERMINERS.has(prevNorm) && !RUNTIME_PREPOSITIONS.has(prevNorm) && !RUNTIME_PRONOUNS.has(prevNorm)) {
+      const subj = findPrecedingSubject(idx - 1);
+      if (baseNorm === 'dramatically' && /\b(grew|grow|grown|increased|increase|rose|risen|expanded|fell|dropped|changed)\b/i.test(prevNorm)) {
+        const actionDesc = /\b(fell|dropped)\b/i.test(prevNorm) ? 'decreased' : /\b(changed)\b/i.test(prevNorm) ? 'changed' : 'increased';
+        return subj
+          ? `The ${subj} ${actionDesc} by a large, noticeable amount.`
+          : `Shows that the action ("${prevRaw}") happened by a large, noticeable amount.`;
+      }
+      return `Modifies "${prevRaw}" in this sentence, showing that it happens ${shortGloss}.`;
+    }
+    if (nextRaw && !RUNTIME_DETERMINERS.has(nextNorm) && !RUNTIME_PREPOSITIONS.has(nextNorm)) {
+      return `Modifies "${nextRaw}" in this sentence, meaning ${shortGloss}.`;
+    }
+    return cleanBaseCtx || `Explains the degree or manner of the action in this sentence (${shortGloss}).`;
+  }
+
+  // 3. Verbs: explain the action performed by the subject on the object in this sentence
+  if (posLower.includes('verb') && !posLower.includes('phrasal')) {
+    const objPhrase = extractRuntimeForwardNounPhrase(rawWords, normWords, idx + 1);
+    const subj = findPrecedingSubject(idx);
+    if ((baseNorm === 'identify' || surfaceNorm === 'identified') && objPhrase) {
+      return subj
+        ? `The ${subj} discovered and recognized ${objPhrase} in their data or observations.`
+        : `Recognized and established ${objPhrase} in this sentence.`;
+    }
+    if (objPhrase && subj && !RUNTIME_PRONOUNS.has(subj)) {
+      return `Shows the action of the ${subj} on ${objPhrase} in this sentence (${shortGloss}).`;
+    }
+    if (objPhrase) {
+      return `Describes the action performed on ${objPhrase} in this sentence: ${shortGloss}.`;
+    }
+  }
+
+  // 4. Nouns: connect to modifying adjectives or governing subjects in this sentence
+  if (posLower.includes('noun') && !posLower.includes('pronoun')) {
+    if ((baseNorm === 'implication' || surfaceNorm === 'implications') && /\b(policy|policies|decision|decisions|finding|findings|study|law|change|changes)\b/i.test(sentence)) {
+      const subjMatch = sentence.match(/\b(policy|policies|decision|decisions|finding|findings|study|law|change|changes)\b/i);
+      const subjWord = subjMatch ? subjMatch[1].toLowerCase() : 'policy';
+      return `The ${subjWord} could lead to important consequences or future effects.`;
+    }
+    if (
+      prevRaw &&
+      !RUNTIME_DETERMINERS.has(prevNorm) &&
+      !RUNTIME_PREPOSITIONS.has(prevNorm) &&
+      !RUNTIME_LINKING_VERBS.has(prevNorm) &&
+      !RUNTIME_AUX_MODALS.has(prevNorm) &&
+      !RUNTIME_PRONOUNS.has(prevNorm)
+    ) {
+      // Check if baseCtx mentions words from another passage sentence not present in this sentence
+      const quotedInBase = cleanBaseCtx.match(/\(([a-z\s-]+)\)/i);
+      if (quotedInBase && !sentence.toLowerCase().includes(quotedInBase[1].toLowerCase())) {
+        return `Refers in this sentence (${prevRaw} ${rawWords[idx].toLowerCase()}) to ${shortGloss}.`;
+      }
+    }
+  }
+
+  // Check if baseCtx contains a parenthetical or single-quoted phrase from a different sentence
+  const parentheticalMatch = cleanBaseCtx.match(/\(([a-z]+(?:\s+[a-z]+)+)\)/i);
+  if (
+    parentheticalMatch &&
+    !/^(?:plural|past|present|comparative|superlative|gerund|third-person)/i.test(parentheticalMatch[1]) &&
+    !sentence.toLowerCase().includes(parentheticalMatch[1].toLowerCase())
+  ) {
+    return `In this sentence, "${rawWords[idx]}" refers to ${shortGloss}.`;
+  }
+
+  return cleanBaseCtx || `In this sentence, "${rawWords[idx]}" means ${shortGloss}.`;
 }
 
 /**
@@ -1175,23 +1722,340 @@ export interface WordLookupRequest {
   curatedVocabulary?: VocabularyAnnotation[];
 }
 
+function refineMWEContextMeaning(
+  mwe: DetectedMultiWordExpression,
+  sentence: string | undefined
+): string {
+  const baseCtx = (mwe.contextMeaning || mwe.simpleDefinition || '').trim();
+  if (!sentence || !sentence.trim()) return baseCtx;
+
+  const tokens = tokenizeSentenceForMWE(sentence);
+  if (tokens.length < 3) return baseCtx;
+
+  const rawWords = tokens.map((t) => t.raw);
+  const normWords = tokens.map((t) => t.norm);
+
+  // Find subject before startTokenIndex
+  let subj = '';
+  for (let i = mwe.startTokenIndex - 1; i >= Math.max(0, mwe.startTokenIndex - 4); i--) {
+    const n = normWords[i];
+    if (!n || RUNTIME_AUX_MODALS.has(n) || RUNTIME_LINKING_VERBS.has(n) || RUNTIME_DEGREE_ADVERBS.has(n)) {
+      continue;
+    }
+    if (RUNTIME_DETERMINERS.has(n) || RUNTIME_PREPOSITIONS.has(n)) {
+      continue;
+    }
+    subj = rawWords[i].toLowerCase();
+    break;
+  }
+
+  const objPhrase = extractRuntimeForwardNounPhrase(rawWords, normWords, mwe.endTokenIndex + 1);
+  const canonicalLower = mwe.canonical.toLowerCase();
+
+  if (canonicalLower === 'carry out' && objPhrase) {
+    return subj
+      ? `The ${subj} performed and completed ${objPhrase}.`
+      : `Performed and completed ${objPhrase} in this sentence.`;
+  }
+
+  return baseCtx;
+}
+
+function ensureValidAnnotation(annotation: VocabularyAnnotation): VocabularyAnnotation {
+  const safeWord = (annotation.word || annotation.matchedText || 'word').trim();
+  const safePos = formatPartOfSpeechLabel(annotation.partOfSpeech);
+  const rawDef = (annotation.simpleDefinition || '').trim();
+  const safeDef =
+    rawDef && rawDef !== 'undefined' && rawDef !== 'null'
+      ? rawDef
+      : `A ${safePos.toLowerCase()} used in English texts.`;
+  const rawCtx = (annotation.contextMeaning || '').trim();
+  const safeCtx =
+    rawCtx && rawCtx !== 'undefined' && rawCtx !== 'null'
+      ? rawCtx
+      : safeDef;
+
+  return {
+    ...annotation,
+    word: safeWord,
+    partOfSpeech: safePos,
+    simpleDefinition: safeDef,
+    contextMeaning: safeCtx,
+    arabicTranslation: undefined,
+  };
+}
+
 function buildAnnotationFromDetectedMWE(
   mwe: DetectedMultiWordExpression,
   sentence: string | undefined,
   lessonId: string | undefined
 ): VocabularyAnnotation {
   const canonicalSlug = mwe.canonical.replace(/\s+/g, '-').toLowerCase();
-  return {
+  return ensureValidAnnotation({
     id: `mwe-${lessonId || 'passage'}-${canonicalSlug}-${mwe.startOffset}`,
     word: mwe.canonical,
     matchedText: mwe.matchedText,
-    partOfSpeech: mwe.category,
+    partOfSpeech: formatPartOfSpeechLabel(mwe.category),
     simpleDefinition: mwe.simpleDefinition,
-    contextMeaning: mwe.contextMeaning,
+    contextMeaning: refineMWEContextMeaning(mwe, sentence),
     exampleSentence: filterUsefulExample(mwe.exampleSentence, sentence),
     synonyms: mwe.synonyms,
     originalSentence: sentence || '',
-  };
+  });
+}
+
+const FALLBACK_PREFIX_MEANINGS: Array<{ prefix: string; gloss: string }> = [
+  { prefix: 'non-', gloss: 'not or absence of' },
+  { prefix: 'non', gloss: 'not or without' },
+  { prefix: 'un', gloss: 'not or the opposite of' },
+  { prefix: 're-', gloss: 'again or anew' },
+  { prefix: 're', gloss: 'again or back' },
+  { prefix: 'pre-', gloss: 'before or prior to' },
+  { prefix: 'pre', gloss: 'before or earlier than' },
+  { prefix: 'post-', gloss: 'after or following' },
+  { prefix: 'post', gloss: 'after or following' },
+  { prefix: 'over', gloss: 'excessively or above' },
+  { prefix: 'under', gloss: 'beneath or insufficiently' },
+  { prefix: 'sub', gloss: 'under, below, or secondary' },
+  { prefix: 'inter', gloss: 'between or among' },
+  { prefix: 'super', gloss: 'above, beyond, or to a high degree' },
+  { prefix: 'hyper', gloss: 'above normal or excessive' },
+  { prefix: 'ultra', gloss: 'extremely or beyond the usual range of' },
+  { prefix: 'anti-', gloss: 'opposing or preventing' },
+  { prefix: 'anti', gloss: 'opposing or preventing' },
+  { prefix: 'counter', gloss: 'opposing or acting against' },
+  { prefix: 'semi-', gloss: 'partly or half' },
+  { prefix: 'semi', gloss: 'partly or half' },
+  { prefix: 'micro', gloss: 'extremely small or microscopic' },
+  { prefix: 'macro', gloss: 'large-scale or overall' },
+  { prefix: 'multi', gloss: 'having many or multiple' },
+  { prefix: 'co-', gloss: 'joint or together with' },
+  { prefix: 'mis', gloss: 'wrongly or incorrectly' },
+  { prefix: 'dis', gloss: 'not or reversal of' },
+  { prefix: 'out', gloss: 'exceeding or surpassing in' },
+  { prefix: 'trans', gloss: 'across or transforming' },
+  { prefix: 'auto', gloss: 'self-operating or automatic' },
+  { prefix: 'bio', gloss: 'biological or relating to living things and' },
+  { prefix: 'geo', gloss: 'relating to the Earth and' },
+  { prefix: 'eco', gloss: 'ecological or relating to the environment and' },
+  { prefix: 'hydro', gloss: 'relating to water and' },
+  { prefix: 'photo', gloss: 'relating to light and' },
+  { prefix: 'thermo', gloss: 'relating to heat or temperature and' },
+  { prefix: 'neuro', gloss: 'relating to nerves or the brain and' },
+  { prefix: 'electro', gloss: 'relating to electricity and' },
+  { prefix: 'paleo', gloss: 'relating to ancient geological periods and' },
+];
+
+function inferFallbackPosFromMorphologyAndSentence(
+  displayWord: string,
+  normalizedKey: string,
+  sentence?: string
+): string {
+  const posScores = sentence
+    ? inferRuntimePosScores(normalizedKey, sentence)
+    : { noun: 0, verb: 0, adjective: 0, adverb: 0 };
+
+  if (
+    normalizedKey.endsWith('ly') &&
+    !['elderly', 'friendly', 'costly', 'likely', 'lively', 'lonely', 'lovely', 'silly', 'ugly', 'deadly', 'daily', 'weekly', 'monthly', 'yearly', 'early', 'only'].includes(normalizedKey)
+  ) {
+    return 'Adverb';
+  }
+  if (/(?:ous|ive|ful|less|able|ible|ic|ical|ish|ary|ory)$/.test(normalizedKey)) {
+    return 'Adjective';
+  }
+  if (/(?:tion|sion|ment|ness|ity|ism|ist|ance|ence|ship|hood|ology|ometry|ography)$/.test(normalizedKey)) {
+    return 'Noun';
+  }
+  if (/(?:ize|ise|ify|ate)$/.test(normalizedKey)) {
+    return 'Verb';
+  }
+
+  const maxScore = Math.max(posScores.adjective, posScores.adverb, posScores.verb, posScores.noun);
+  if (maxScore > 0) {
+    if (posScores.adjective === maxScore) return 'Adjective';
+    if (posScores.adverb === maxScore) return 'Adverb';
+    if (posScores.verb === maxScore) return 'Verb';
+    return 'Noun';
+  }
+
+  if (normalizedKey.endsWith('ed') || normalizedKey.endsWith('ing')) {
+    return 'Verb';
+  }
+  if (normalizedKey.endsWith('al') || normalizedKey.endsWith('ent') || normalizedKey.endsWith('ant')) {
+    return 'Adjective';
+  }
+  if (/^[A-Z]/.test(displayWord)) {
+    return 'Noun';
+  }
+  return 'Noun';
+}
+
+function buildDeterministicFallbackAnnotation(
+  displayWord: string,
+  normalizedKey: string,
+  sentence: string | undefined,
+  lessonId: string | undefined
+): VocabularyAnnotation {
+  // 1. Check prefix + known dictionary stem
+  for (const { prefix, gloss } of FALLBACK_PREFIX_MEANINGS) {
+    if (normalizedKey.startsWith(prefix) && normalizedKey.length >= prefix.length + 4) {
+      const rest = normalizedKey.slice(prefix.length).replace(/^-/, '');
+      const candidates = getMorphologicalCandidates(rest);
+      for (const cand of candidates) {
+        const baseEntry =
+          PRECOMPUTED_PASSAGE_DICTIONARY[cand] || SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[cand];
+        if (baseEntry) {
+          const baseShort = extractShortMeaningGloss(baseEntry.def);
+          const pos = formatPartOfSpeechLabel(baseEntry.pos);
+          const simpleDefinition = `Characterized by ${gloss} ${rest} (${baseShort}).`;
+          const contextMeaning = refineContextMeaningForSentence({
+            surfaceWord: displayWord,
+            baseWord: normalizedKey,
+            partOfSpeech: pos,
+            simpleDefinition,
+            baseCtx: sentence
+              ? `Applies the meaning "${gloss} ${rest}" (${baseShort}) in this sentence.`
+              : `Combines "${prefix}-" (${gloss}) with "${rest}" (${baseShort}).`,
+            sentence,
+          });
+          return ensureValidAnnotation({
+            id: `lookup-${lessonId || 'passage'}-${normalizedKey}`,
+            word: displayWord,
+            partOfSpeech: pos,
+            simpleDefinition,
+            contextMeaning,
+            exampleSentence: '',
+            synonyms: [],
+            originalSentence: sentence || '',
+          });
+        }
+      }
+    }
+  }
+
+  // 2. Check derivational suffix on a known dictionary root
+  const suffixRules: Array<{ suffix: string; pos: string; template: (root: string, rootGloss: string) => string }> = [
+    {
+      suffix: 'ness',
+      pos: 'Noun',
+      template: (_r, g) => `The quality, state, or condition of being ${g}.`,
+    },
+    {
+      suffix: 'ly',
+      pos: 'Adverb',
+      template: (_r, g) => `In a manner that is ${g}.`,
+    },
+    {
+      suffix: 'able',
+      pos: 'Adjective',
+      template: (_r, g) => `Capable of being or suitable to ${g}.`,
+    },
+    {
+      suffix: 'ible',
+      pos: 'Adjective',
+      template: (_r, g) => `Capable of being or suitable to ${g}.`,
+    },
+    {
+      suffix: 'less',
+      pos: 'Adjective',
+      template: (r, g) => `Without ${r} (${g}).`,
+    },
+    {
+      suffix: 'ful',
+      pos: 'Adjective',
+      template: (r, g) => `Full of or characterized by ${r} (${g}).`,
+    },
+  ];
+
+  for (const rule of suffixRules) {
+    if (normalizedKey.endsWith(rule.suffix) && normalizedKey.length >= rule.suffix.length + 3) {
+      const stem = normalizedKey.slice(0, -rule.suffix.length);
+      const stemVariants = [stem, `${stem}e`, stem.endsWith('i') ? `${stem.slice(0, -1)}y` : ''].filter(Boolean);
+      for (const sv of stemVariants) {
+        const baseEntry =
+          PRECOMPUTED_PASSAGE_DICTIONARY[sv] || SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[sv];
+        if (baseEntry) {
+          const rootGloss = extractShortMeaningGloss(baseEntry.def);
+          const simpleDefinition = rule.template(sv, rootGloss);
+          const contextMeaning = refineContextMeaningForSentence({
+            surfaceWord: displayWord,
+            baseWord: normalizedKey,
+            partOfSpeech: rule.pos,
+            simpleDefinition,
+            baseCtx: simpleDefinition,
+            sentence,
+          });
+          return ensureValidAnnotation({
+            id: `lookup-${lessonId || 'passage'}-${normalizedKey}`,
+            word: displayWord,
+            partOfSpeech: rule.pos,
+            simpleDefinition,
+            contextMeaning,
+            exampleSentence: '',
+            synonyms: [],
+            originalSentence: sentence || '',
+          });
+        }
+      }
+    }
+  }
+
+  // 3. Universal deterministic fallback for any remaining uncatalogued word
+  const inferredPos = inferFallbackPosFromMorphologyAndSentence(displayWord, normalizedKey, sentence);
+  let fallbackDef = '';
+  let fallbackCtx = '';
+
+  if (inferredPos === 'Adjective') {
+    fallbackDef = `A descriptive adjective characterizing a specific quality, state, or property (${displayWord.toLowerCase()}).`;
+    fallbackCtx = sentence
+      ? refineContextMeaningForSentence({
+          surfaceWord: displayWord,
+          baseWord: normalizedKey,
+          partOfSpeech: 'Adjective',
+          simpleDefinition: `having the quality or characteristic of being ${displayWord.toLowerCase()}`,
+          baseCtx: `Describes a specific quality or characteristic in this sentence.`,
+          sentence,
+        })
+      : 'Describes a specific quality, condition, or attribute.';
+  } else if (inferredPos === 'Adverb') {
+    const baseAdj = normalizedKey.endsWith('ly') ? normalizedKey.slice(0, -2) : normalizedKey;
+    fallbackDef = `In a ${baseAdj} manner or to a ${baseAdj} degree.`;
+    fallbackCtx = sentence
+      ? refineContextMeaningForSentence({
+          surfaceWord: displayWord,
+          baseWord: normalizedKey,
+          partOfSpeech: 'Adverb',
+          simpleDefinition: `in a ${baseAdj} manner`,
+          baseCtx: `Explains how or to what degree the action in this sentence takes place.`,
+          sentence,
+        })
+      : `Explains how or to what degree an action or state occurs.`;
+  } else if (inferredPos === 'Verb') {
+    fallbackDef = `To perform or undergo the action or process expressed by "${displayWord.toLowerCase()}".`;
+    fallbackCtx = sentence
+      ? `Expresses the action or process taking place in this clause.`
+      : `Refers to an action, change, or process.`;
+  } else if (/^\d/.test(normalizedKey)) {
+    fallbackDef = `The numerical value, date, or measurement "${displayWord}".`;
+    fallbackCtx = `Provides a specific quantity, count, or measurement in context.`;
+  } else {
+    fallbackDef = `A specific term, concept, or entity ("${displayWord}") referenced in the text.`;
+    fallbackCtx = sentence
+      ? `Names a specific subject, object, or concept discussed in this sentence.`
+      : `Refers to a specific concept, person, place, or thing.`;
+  }
+
+  return ensureValidAnnotation({
+    id: `lookup-${lessonId || 'passage'}-${normalizedKey}`,
+    word: displayWord,
+    partOfSpeech: inferredPos,
+    simpleDefinition: fallbackDef,
+    contextMeaning: fallbackCtx,
+    exampleSentence: '',
+    synonyms: [],
+    originalSentence: sentence || '',
+  });
 }
 
 /**
@@ -1220,7 +2084,7 @@ export function lookupPassageWord({
         .trim()
     : normalizeLookupToken(displayWord);
 
-  if (!normalizedKey) return null;
+  if (!normalizedKey || !/[\p{L}\p{N}]/u.test(normalizedKey)) return null;
 
   // 0. Context-aware Multi-Word Expression (MWE) detection when sentence context is available
   if (sentence) {
@@ -1277,7 +2141,7 @@ export function lookupPassageWord({
         const phrase = (cv.matchedText || cv.word).trim().toLowerCase();
         const basePhrase = cv.word.trim().toLowerCase();
         if (isMultiWordQuery && (phrase === normalizedKey || basePhrase === normalizedKey)) {
-          return {
+          return ensureValidAnnotation({
             ...cv,
             arabicTranslation: undefined,
             exampleSentence: filterUsefulExample(
@@ -1285,14 +2149,14 @@ export function lookupPassageWord({
               sentence || cv.originalSentence
             ),
             originalSentence: sentence || cv.originalSentence || '',
-          };
+          });
         }
         const idxInSent = lowerSentence.indexOf(phrase);
         if (idxInSent !== -1) {
           const endInSent = idxInSent + phrase.length;
           if (typeof charOffsetInSentence === 'number') {
             if (charOffsetInSentence >= idxInSent && charOffsetInSentence <= endInSent) {
-              return {
+              return ensureValidAnnotation({
                 ...cv,
                 arabicTranslation: undefined,
                 exampleSentence: filterUsefulExample(
@@ -1300,14 +2164,14 @@ export function lookupPassageWord({
                   sentence || cv.originalSentence
                 ),
                 originalSentence: sentence || cv.originalSentence || '',
-              };
+              });
             }
           } else {
             const phraseTokens = extractPassageWordTokens(phrase).map((w) =>
               normalizeLookupToken(w)
             );
             if (phraseTokens.includes(normalizedKey)) {
-              return {
+              return ensureValidAnnotation({
                 ...cv,
                 arabicTranslation: undefined,
                 exampleSentence: filterUsefulExample(
@@ -1315,7 +2179,7 @@ export function lookupPassageWord({
                   sentence || cv.originalSentence
                 ),
                 originalSentence: sentence || cv.originalSentence || '',
-              };
+              });
             }
           }
         }
@@ -1334,7 +2198,7 @@ export function lookupPassageWord({
     );
     if (exactEntry) {
       const canonicalSlug = exactEntry.canonical.replace(/\s+/g, '-').toLowerCase();
-      return {
+      return ensureValidAnnotation({
         id: `mwe-${lessonId || 'passage'}-${canonicalSlug}-0`,
         word: exactEntry.canonical,
         matchedText: displayWord,
@@ -1344,7 +2208,7 @@ export function lookupPassageWord({
         exampleSentence: filterUsefulExample(exactEntry.ex, sentence),
         synonyms: exactEntry.syn || [],
         originalSentence: sentence || '',
-      };
+      });
     }
   }
 
@@ -1356,7 +2220,7 @@ export function lookupPassageWord({
   });
 
   if (curatedMatch) {
-    return {
+    return ensureValidAnnotation({
       ...curatedMatch,
       arabicTranslation: undefined,
       exampleSentence: filterUsefulExample(
@@ -1364,13 +2228,13 @@ export function lookupPassageWord({
         sentence || curatedMatch.originalSentence
       ),
       originalSentence: sentence || curatedMatch.originalSentence || '',
-    };
+    });
   }
 
   // 1b. Check standard English contractions
   if (CONTRACTION_DEFINITIONS[normalizedKey]) {
     const c = CONTRACTION_DEFINITIONS[normalizedKey];
-    return {
+    return ensureValidAnnotation({
       id: `lookup-${lessonId || 'passage'}-${normalizedKey}`,
       word: displayWord,
       partOfSpeech: c.pos,
@@ -1379,7 +2243,7 @@ export function lookupPassageWord({
       exampleSentence: '',
       synonyms: [],
       originalSentence: sentence || '',
-    };
+    });
   }
 
   // 2. Direct lookup in precomputed passage dictionary
@@ -1425,36 +2289,46 @@ export function lookupPassageWord({
       const combinedDef = partEntries
         .map((pe) => `${pe.part} (${pe.data.def.replace(/\.$/, '').toLowerCase()})`)
         .join(' + ');
-      return {
+      return ensureValidAnnotation({
         id: `lookup-${lessonId || 'passage'}-${normalizedKey}`,
         word: displayWord,
-        partOfSpeech: 'compound term',
+        partOfSpeech: 'Compound expression',
         simpleDefinition: `Compound expression combining ${combinedDef}.`,
         contextMeaning: `Used in this passage as a combined descriptive or technical term (${displayWord}).`,
         exampleSentence: '',
         synonyms: [],
         originalSentence: sentence || '',
-      };
+      });
     }
   }
 
   if (entry) {
     const resolved = selectContextualSense(entry, matchedCandidate, sentence, lessonId);
     const cleanExample = filterUsefulExample(resolved.exampleSentence, sentence);
+    const formattedPos = formatPartOfSpeechLabel(resolved.partOfSpeech);
+    const refinedCtx = refineContextMeaningForSentence({
+      surfaceWord: displayWord,
+      baseWord: entry.lemma || matchedCandidate,
+      partOfSpeech: formattedPos,
+      simpleDefinition: resolved.simpleDefinition,
+      baseCtx: resolved.contextMeaning,
+      sentence,
+    });
 
-    return {
+    return ensureValidAnnotation({
       id: `lookup-${lessonId || 'passage'}-${normalizedKey}`,
       word: displayWord,
-      partOfSpeech: resolved.partOfSpeech,
+      partOfSpeech: formattedPos,
       simpleDefinition: resolved.simpleDefinition,
-      contextMeaning: resolved.contextMeaning,
+      contextMeaning: refinedCtx,
       exampleSentence: cleanExample,
-      synonyms: [],
+      synonyms: entry.syn || [],
       originalSentence: sentence || '',
-    };
+    });
   }
 
-  return null;
+  // 5. Deterministic fallback so no valid word token ever produces a null or empty popup
+  return buildDeterministicFallbackAnnotation(displayWord, normalizedKey, sentence, lessonId);
 }
 
 /**

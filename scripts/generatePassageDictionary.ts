@@ -8,6 +8,9 @@ import { ReadingLesson, VocabularyAnnotation } from '../src/types/reading';
 
 interface WordNetSynset {
   pos: 'noun' | 'verb' | 'adjective' | 'adverb';
+  offset: number;
+  senseNum: number;
+  tagCnt: number;
   synonyms: string[];
   definition: string;
   examples: string[];
@@ -47,6 +50,35 @@ const POS_FILES: Array<{ ext: string; label: 'noun' | 'verb' | 'adjective' | 'ad
 
 const indexMap = new Map<string, Array<{ pos: 'noun' | 'verb' | 'adjective' | 'adverb'; offsets: number[] }>>();
 const dataBuffers = new Map<'noun' | 'verb' | 'adjective' | 'adverb', string>();
+const senseStats = new Map<string, { senseNum: number; tagCnt: number }>();
+
+const senseLines = fs.readFileSync(path.join(dictDir, 'index.sense'), 'utf8').split('\n');
+for (const line of senseLines) {
+  if (!line) continue;
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 4) continue;
+  const senseKey = parts[0];
+  const offset = parseInt(parts[1], 10);
+  const senseNum = parseInt(parts[2], 10);
+  const tagCnt = parseInt(parts[3], 10);
+  const [lemmaRaw, rest] = senseKey.split('%');
+  if (!rest) continue;
+  const ssType = rest[0];
+  const pos: 'noun' | 'verb' | 'adjective' | 'adverb' =
+    ssType === '1'
+      ? 'noun'
+      : ssType === '2'
+      ? 'verb'
+      : ssType === '3' || ssType === '5'
+      ? 'adjective'
+      : 'adverb';
+  const lemma = lemmaRaw.replace(/_/g, ' ').toLowerCase();
+  const mapKey = `${lemma}|${pos}|${offset}`;
+  const prev = senseStats.get(mapKey);
+  if (!prev || tagCnt > prev.tagCnt || (tagCnt === prev.tagCnt && senseNum < prev.senseNum)) {
+    senseStats.set(mapKey, { senseNum, tagCnt });
+  }
+}
 
 for (const { ext, label } of POS_FILES) {
   const dataContent = fs.readFileSync(path.join(dictDir, `data.${ext}`), 'utf8');
@@ -68,8 +100,8 @@ for (const { ext, label } of POS_FILES) {
 function cleanDefinitionText(rawDef: string): string {
   const cleaned = rawDef
     .replace(/^\([^)]+\)\s*/, '')
-    // Strip trailing quote attributions in WordNet like "- the White Queen" or "- A.Lincoln"
-    .replace(/-\s*[A-Z][A-Za-z.\s&']+$/, '')
+    // Strip trailing quote attributions in WordNet like " - the White Queen" or " - A.Lincoln" (must have whitespace before dash so hyphenated words like Indo-European are preserved)
+    .replace(/\s+--?\s+[A-Z][A-Za-z.\s&']+$/, '')
     .replace(/`/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
@@ -78,7 +110,12 @@ function cleanDefinitionText(rawDef: string): string {
   return /[.!?]$/.test(cap) ? cap : `${cap}.`;
 }
 
-function parseSynset(pos: 'noun' | 'verb' | 'adjective' | 'adverb', offset: number): WordNetSynset | null {
+function parseSynset(
+  lemma: string,
+  pos: 'noun' | 'verb' | 'adjective' | 'adverb',
+  offset: number,
+  fallbackSenseIdx: number
+): WordNetSynset | null {
   const buf = dataBuffers.get(pos);
   if (!buf) return null;
   const end = buf.indexOf('\n', offset);
@@ -109,17 +146,28 @@ function parseSynset(pos: 'noun' | 'verb' | 'adjective' | 'adverb', offset: numb
     examples.push(qMatch[1].trim());
   }
 
-  const defPart = glossRaw
+  const defClauses = glossRaw
     .replace(/;\s*"[^"]*"/g, '')
     .replace(/"[^"]*"/g, '')
-    .split(';')[0]
-    .trim();
+    .split(';')
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  let defPart = defClauses[0] || '';
+  if (defPart.length < 22 && defClauses.length > 1) {
+    defPart = `${defPart}; ${defClauses[1]}`;
+  }
 
   const formattedDef = cleanDefinitionText(defPart);
   if (!formattedDef) return null;
 
+  const stat = senseStats.get(`${lemma.toLowerCase()}|${pos}|${offset}`);
+
   return {
     pos,
+    offset,
+    senseNum: stat ? stat.senseNum : fallbackSenseIdx + 1,
+    tagCnt: stat ? stat.tagCnt : 0,
     synonyms,
     definition: formattedDef,
     examples,
@@ -127,35 +175,70 @@ function parseSynset(pos: 'noun' | 'verb' | 'adjective' | 'adverb', offset: numb
   };
 }
 
+function extractCoreStem(w: string): string {
+  const s = w.toLowerCase().replace(/[^a-z]/g, '');
+  if (s.endsWith('ically') && s.length > 8) return s.slice(0, -6);
+  if (s.endsWith('ally') && s.length > 6) return s.slice(0, -4);
+  if (s.endsWith('ily') && s.length > 5) return s.slice(0, -3);
+  if (s.endsWith('ly') && s.length > 4) return s.slice(0, -2);
+  if (s.endsWith('ations') && s.length > 8) return s.slice(0, -6);
+  if (s.endsWith('ation') && s.length > 7) return s.slice(0, -5);
+  if (s.endsWith('ions') && s.length > 6) return s.slice(0, -4);
+  if (s.endsWith('ion') && s.length > 5) return s.slice(0, -3);
+  if (s.endsWith('ments') && s.length > 7) return s.slice(0, -5);
+  if (s.endsWith('ment') && s.length > 6) return s.slice(0, -4);
+  if (s.endsWith('nesses') && s.length > 8) return s.slice(0, -6);
+  if (s.endsWith('ness') && s.length > 6) return s.slice(0, -4);
+  if (s.endsWith('ings') && s.length > 6) return s.slice(0, -4);
+  if (s.endsWith('ing') && s.length > 5) return s.slice(0, -3);
+  if (s.endsWith('ed') && s.length > 4) return s.slice(0, -2);
+  if (s.endsWith('es') && s.length > 4) return s.slice(0, -2);
+  if (s.endsWith('s') && s.length > 3) return s.slice(0, -1);
+  return s;
+}
+
 function isCircularDefinition(word: string, lemma: string, def: string): boolean {
   const lowerDef = def.toLowerCase().replace(/[^a-z\s]/g, '').trim();
-  const root = lemma.length >= 4 ? lemma.slice(0, Math.max(4, lemma.length - 1)) : lemma;
-  const wordsInDef = lowerDef.split(/\s+/);
+  const root = extractCoreStem(lemma.length <= word.length ? lemma : word);
+  const wordsInDef = lowerDef.split(/\s+/).filter(Boolean);
+  if (wordsInDef.length <= 2) return true;
   if (
     lowerDef.startsWith(`the act of ${root}`) ||
     lowerDef.startsWith(`act of ${root}`) ||
     lowerDef.startsWith(`in a ${root}`) ||
     lowerDef.startsWith(`in an ${root}`) ||
+    lowerDef.startsWith(`with ${root}`) ||
+    lowerDef.startsWith(`to a ${root}`) ||
+    lowerDef.startsWith(`to an ${root}`) ||
     lowerDef.startsWith(`of or relating to ${root}`) ||
     lowerDef.startsWith(`relating to ${root}`) ||
     lowerDef.startsWith(`pertaining to ${root}`) ||
-    lowerDef.startsWith(`having the character of ${root}`)
+    lowerDef.startsWith(`having the character of ${root}`) ||
+    lowerDef.startsWith(`a state of ${root}`) ||
+    lowerDef.startsWith(`the state of ${root}`) ||
+    lowerDef.startsWith(`someone who ${root}`)
   ) {
     return true;
   }
-  if (wordsInDef.length <= 5 && wordsInDef.some((w) => w === word || w === lemma)) {
+  if (
+    root.length >= 4 &&
+    lowerDef.length < 65 &&
+    wordsInDef.some((w) => w.length >= 4 && (w.startsWith(root) || root.startsWith(w)))
+  ) {
     return true;
   }
   return false;
 }
 
 function getWordNetSynsets(lemma: string, allowProper = false): WordNetSynset[] {
-  const entries = indexMap.get(lemma.toLowerCase());
+  const cleanLemma = lemma.toLowerCase();
+  const entries = indexMap.get(cleanLemma);
   if (!entries) return [];
   const results: WordNetSynset[] = [];
   for (const entry of entries) {
-    for (const off of entry.offsets.slice(0, 6)) {
-      const parsed = parseSynset(entry.pos, off);
+    for (let i = 0; i < Math.min(entry.offsets.length, 8); i++) {
+      const off = entry.offsets[i];
+      const parsed = parseSynset(cleanLemma, entry.pos, off, i);
       if (parsed && (allowProper || !parsed.isProperNoun)) {
         results.push(parsed);
       }
@@ -164,6 +247,10 @@ function getWordNetSynsets(lemma: string, allowProper = false): WordNetSynset[] 
   if (results.length === 0 && !allowProper) {
     return getWordNetSynsets(lemma, true);
   }
+  results.sort((a, b) => {
+    if (b.tagCnt !== a.tagCnt) return b.tagCnt - a.tagCnt;
+    return a.senseNum - b.senseNum;
+  });
   return results;
 }
 
@@ -2022,6 +2109,2287 @@ const CURATED_CORE_DICTIONARY: Record<
     def: 'The year 196 BCE, when the royal decree on the Rosetta Stone was inscribed in Memphis, Egypt.',
     ctx: 'The ancient year (196 BCE) when the Rosetta Stone decree was carved.',
   },
+  // Core Adjectives, Adverbs, Verbs & Nouns with Learner-Friendly Definitions
+  severe: {
+    pos: 'adjective',
+    def: 'Very serious, intense, harsh, or difficult to endure.',
+    ctx: 'Describes extreme, harsh, or damaging conditions—such as a severe winter, drought, or shortage—in the sentence.',
+    ex: 'The region experienced a severe winter that froze shallow rivers.',
+  },
+  compelling: {
+    pos: 'adjective',
+    def: 'Very convincing, powerful, or strong enough to make someone believe or pay close attention to something.',
+    ctx: 'Describes evidence, arguments, or reasons that make an explanation believable and persuasive.',
+    ex: 'The researchers presented compelling evidence that the two species share a common ancestor.',
+  },
+  dramatically: {
+    pos: 'adverb',
+    def: 'To a very noticeable, sudden, or significant degree.',
+    ctx: 'Shows that an amount, rate, or condition changed by a large and striking degree in the sentence.',
+    ex: 'The city’s population grew dramatically after the new railway opened.',
+  },
+  dramatic: {
+    pos: 'adjective',
+    def: 'Sudden, very noticeable, and impressive or significant in scale.',
+    ctx: 'Describes a large, striking change, increase, or difference in the passage.',
+    ex: 'Satellite images revealed a dramatic reduction in summer sea ice.',
+  },
+  identify: {
+    pos: 'verb',
+    def: 'To recognize, find, or establish clearly who someone is or what something is.',
+    ctx: 'Describes discovering, recognizing, or pinpointing a specific pattern, cause, or species.',
+    ex: 'The researchers identified a clear seasonal pattern in the rainfall data.',
+  },
+  identified: {
+    pos: 'verb',
+    def: 'Recognized, discovered, or established clearly what something is (past tense and participle of "identify").',
+    ctx: 'Shows that researchers or observers discovered and recognized a specific pattern, factor, or group.',
+    ex: 'Scientists identified three distinct stages in how the mineral forms.',
+    lemma: 'identify',
+    inflection: 'past tense and participle of "identify"',
+  },
+  identifies: {
+    pos: 'verb',
+    def: 'Recognizes, discovers, or establishes clearly what something is (3rd-person singular of "identify").',
+    ctx: 'Shows how a study, sensor, or person recognizes a specific feature or pattern.',
+    lemma: 'identify',
+    inflection: '3rd-person singular of "identify"',
+  },
+  identifying: {
+    pos: 'verb',
+    def: 'Recognizing, finding, or establishing clearly what something is (present participle of "identify").',
+    ctx: 'Describes the act of recognizing or pinpointing key features, causes, or patterns.',
+    lemma: 'identify',
+    inflection: 'present participle of "identify"',
+  },
+  implication: {
+    pos: 'noun',
+    def: 'A possible future effect, consequence, or conclusion that follows from an action, policy, or discovery.',
+    ctx: 'Refers to an important consequence or practical meaning that results from a finding or decision.',
+    ex: 'The discovery has major implications for how coastal cities plan flood defenses.',
+  },
+  implications: {
+    pos: 'noun',
+    def: 'Possible future effects, consequences, or conclusions that follow from an action, policy, or finding (plural of "implication").',
+    ctx: 'Refers to the important consequences or real-world effects that a policy or discovery could lead to.',
+    ex: 'The policy had significant implications for public transport and air quality.',
+    lemma: 'implication',
+    inflection: 'plural of "implication"',
+  },
+  significant: {
+    pos: 'adjective',
+    def: 'Large, important, or noticeable enough to have a real effect or meaning.',
+    ctx: 'Describes an amount, change, or effect that is important and large enough to matter.',
+    ex: 'Even a small rise in ocean temperature can have a significant impact on coral reefs.',
+  },
+  significantly: {
+    pos: 'adverb',
+    def: 'In a way that is large, important, or noticeable enough to make a real difference.',
+    ctx: 'Shows that a measurement, quality, or outcome changed by an important, noticeable amount.',
+    ex: 'Students who practiced retrieval scored significantly higher on the delayed test.',
+  },
+  small: {
+    pos: 'adjective',
+    def: 'Limited in size, number, amount, or scale; not large.',
+    ctx: 'Describes something compact in physical size or modest in quantity or degree.',
+    ex: 'Small solar lamps provide reliable evening light in rural homes.',
+  },
+  smaller: {
+    pos: 'adjective',
+    def: 'More limited in size, amount, or scale when compared with something else (comparative of "small").',
+    ctx: 'Compares two things to show that one has less size, volume, or scale than the other.',
+    lemma: 'small',
+    inflection: 'comparative form of "small"',
+  },
+  smallest: {
+    pos: 'adjective',
+    def: 'Least in size, amount, or scale among a group (superlative of "small").',
+    ctx: 'Identifies the item or unit with the least size or quantity.',
+    lemma: 'small',
+    inflection: 'superlative form of "small"',
+  },
+  large: {
+    pos: 'adjective',
+    def: 'Of considerable size, extent, quantity, or capacity; big.',
+    ctx: 'Describes something great in physical size, area, number, or amount.',
+    ex: 'Peatlands store a large amount of carbon beneath waterlogged soil.',
+  },
+  larger: {
+    pos: 'adjective',
+    def: 'Greater in size, amount, extent, or capacity than something else (comparative of "large").',
+    ctx: 'Shows that something is bigger in size, volume, or scale by comparison.',
+    lemma: 'large',
+    inflection: 'comparative form of "large"',
+  },
+  largest: {
+    pos: 'adjective',
+    def: 'Greatest in size, amount, extent, or capacity (superlative of "large").',
+    ctx: 'Identifies the biggest member, share, or structure in a group.',
+    lemma: 'large',
+    inflection: 'superlative form of "large"',
+  },
+  simple: {
+    pos: 'adjective',
+    def: 'Easy to understand, use, or do; composed of few parts and not complicated.',
+    ctx: 'Describes a design, method, or organism that is straightforward and uncomplicated.',
+    ex: 'Washing hands with soap is a simple way to prevent illness.',
+  },
+  simpler: {
+    pos: 'adjective',
+    def: 'Easier to understand or made of fewer, less complicated parts (comparative of "simple").',
+    ctx: 'Describes something less complex or easier to manage than an alternative.',
+    lemma: 'simple',
+    inflection: 'comparative form of "simple"',
+  },
+  complex: {
+    pos: 'adjective',
+    def: 'Consisting of many interconnected parts, processes, or factors that make it intricate or difficult to analyze.',
+    ctx: 'Describes a system, problem, or structure made up of many interacting parts.',
+    ex: 'Climate models must account for complex interactions between oceans, clouds, and land.',
+  },
+  main: {
+    pos: 'adjective',
+    def: 'Most important, largest, or central among several parts or reasons.',
+    ctx: 'Identifies the primary or most important part, cause, or idea in the sentence.',
+    ex: 'Handwriting helps students pick out the main ideas of a lecture.',
+  },
+  safe: {
+    pos: 'adjective',
+    def: 'Protected from danger, harm, injury, or risk; not likely to cause harm.',
+    ctx: 'Describes water, food, shelter, or conditions that do not harm people or organisms.',
+    ex: 'Boiling or distilling water makes it safe to drink.',
+  },
+  safer: {
+    pos: 'adjective',
+    def: 'Better protected from danger, harm, or health risk (comparative of "safe").',
+    ctx: 'Shows that one method, place, or material carries less risk of harm than another.',
+    lemma: 'safe',
+    inflection: 'comparative form of "safe"',
+  },
+  safely: {
+    pos: 'adverb',
+    def: 'In a careful way that protects against danger, damage, injury, or loss.',
+    ctx: 'Shows that an action happens without causing harm, danger, or loss.',
+    ex: 'Caravanserais allowed merchants to store their goods safely overnight.',
+  },
+  clean: {
+    pos: 'adjective',
+    def: 'Free from dirt, germs, pollution, or harmful smoke; pure and hygienic.',
+    ctx: 'Describes water, air, energy, or surfaces that are free from dirt, smoke, or contaminants.',
+    ex: 'Solar lamps provide clean indoor light without burning kerosene.',
+  },
+  cleaner: {
+    pos: 'adjective',
+    def: 'More free from dirt, pollution, or harmful emissions (comparative of "clean").',
+    ctx: 'Shows that a resource, fuel, or environment contains less pollution or dirt.',
+    lemma: 'clean',
+    inflection: 'comparative form of "clean"',
+  },
+  dark: {
+    pos: 'adjective',
+    def: 'With little or no light, or having a deep, black or brown shade rather than a pale colour.',
+    ctx: 'Describes either a place/time without light or a deep-coloured substance such as smoke or soil.',
+    ex: 'Kerosene lamps release dark smoke inside small rooms.',
+  },
+  bright: {
+    pos: 'adjective',
+    def: 'Giving out or reflecting a lot of light; vivid and easy to see.',
+    ctx: 'Describes strong, clear illumination from the sun, a lamp, or a screen.',
+    ex: 'Bright morning sunlight helps set the body’s daily clock.',
+  },
+  brightly: {
+    pos: 'adverb',
+    def: 'With strong, clear light or vivid colour.',
+    ctx: 'Describes something shining or glowing with strong, noticeable light.',
+  },
+  old: {
+    pos: 'adjective',
+    def: 'Having existed or lived for a long time, or belonging to an earlier period.',
+    ctx: 'Describes something that has existed for many years or comes from an earlier stage.',
+  },
+  young: {
+    pos: 'adjective',
+    def: 'In an early stage of life, growth, or development; not yet old or mature.',
+    ctx: 'Describes people, animals, or plants in the early stages of life and growth.',
+  },
+  high: {
+    pos: 'adjective',
+    def: 'Extending far upward from the ground, or great in amount, degree, level, or intensity.',
+    ctx: 'Describes either tall physical height/elevation or a large level, rate, or temperature.',
+  },
+  higher: {
+    pos: 'adjective',
+    def: 'Greater in height, level, amount, temperature, or degree (comparative of "high").',
+    ctx: 'Shows an increased level, rate, temperature, or elevation compared with another.',
+    lemma: 'high',
+    inflection: 'comparative form of "high"',
+  },
+  highest: {
+    pos: 'adjective',
+    def: 'Greatest in height, level, amount, or degree (superlative of "high").',
+    ctx: 'Identifies the maximum level, rate, or elevation in a group.',
+    lemma: 'high',
+    inflection: 'superlative form of "high"',
+  },
+  low: {
+    pos: 'adjective',
+    def: 'Close to the ground or bottom, or small and below average in amount, level, or intensity.',
+    ctx: 'Describes a small level, rate, cost, temperature, or height.',
+  },
+  lower: {
+    pos: 'adjective',
+    def: 'Smaller in amount, level, temperature, or height (comparative of "low").',
+    ctx: 'Describes a reduced level, temperature, cost, or height compared with something else.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Smaller in amount, level, temperature, or height (comparative of "low").',
+        ctx: 'Describes a reduced level, temperature, cost, or height.',
+      },
+      {
+        pos: 'verb',
+        def: 'To reduce, decrease, or move something down to a smaller level.',
+        ctx: 'Describes reducing a temperature, cost, or level.',
+      },
+    ],
+  },
+  lowers: {
+    pos: 'verb',
+    def: 'Reduces the level, temperature, amount, or cost of something (3rd-person singular of "lower").',
+    ctx: 'Shows how a process or design reduces heat, cost, or pressure.',
+    lemma: 'lower',
+    inflection: '3rd-person singular of "lower"',
+  },
+  lowering: {
+    pos: 'verb',
+    def: 'Reducing the level, temperature, cost, or height of something (present participle of "lower").',
+    ctx: 'Describes the action of decreasing temperature, cost, or demand.',
+    lemma: 'lower',
+    inflection: 'present participle of "lower"',
+  },
+  long: {
+    pos: 'adjective',
+    def: 'Measuring a great distance from end to end, or lasting for a considerable amount of time.',
+    ctx: 'Describes either a great physical length/distance or an extended period of time.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Measuring a great distance from end to end, or lasting for a considerable amount of time.',
+        ctx: 'Describes a great physical length or an extended period of time.',
+      },
+      {
+        pos: 'adverb',
+        def: 'For a great extent of time.',
+        ctx: 'Indicates that an action or state continues for a considerable time.',
+      },
+    ],
+  },
+  longer: {
+    pos: 'adjective',
+    def: 'Lasting for more time or measuring a greater distance (comparative of "long").',
+    ctx: 'Shows greater duration in time or greater physical length.',
+    lemma: 'long',
+    inflection: 'comparative form of "long"',
+  },
+  short: {
+    pos: 'adjective',
+    def: 'Measuring a small distance from end to end, or lasting only a brief amount of time.',
+    ctx: 'Describes a brief time period or a small physical length.',
+  },
+  shorter: {
+    pos: 'adjective',
+    def: 'Lasting less time or measuring a smaller distance (comparative of "short").',
+    ctx: 'Indicates a briefer duration or smaller physical length.',
+    lemma: 'short',
+    inflection: 'comparative form of "short"',
+  },
+  wide: {
+    pos: 'adjective',
+    def: 'Measuring a large distance from one side to the other, or covering a broad range of subjects or places.',
+    ctx: 'Describes something broad from side to side or extensive in scope.',
+  },
+  wider: {
+    pos: 'adjective',
+    def: 'Broader from side to side or covering a larger range (comparative of "wide").',
+    ctx: 'Shows greater breadth or a broader range of cases.',
+    lemma: 'wide',
+    inflection: 'comparative form of "wide"',
+  },
+  widely: {
+    pos: 'adverb',
+    def: 'Over a large area, by many people, or to a great extent.',
+    ctx: 'Shows that something is common across many places, groups, or situations.',
+  },
+  narrow: {
+    pos: 'adjective',
+    def: 'Measuring only a small distance from side to side, or limited in range or scope.',
+    ctx: 'Describes a tight physical space/channel or a restricted range.',
+  },
+  thick: {
+    pos: 'adjective',
+    def: 'Measuring a large distance between opposite surfaces, or dense and closely packed.',
+    ctx: 'Describes walls, ice, fur, or layers that are deep and dense rather than thin.',
+  },
+  thin: {
+    pos: 'adjective',
+    def: 'Having a small distance between opposite surfaces, or low in density.',
+    ctx: 'Describes a layer, wall, shell, or atmosphere with very little thickness.',
+  },
+  thinner: {
+    pos: 'adjective',
+    def: 'Having less thickness or density than before or than something else (comparative of "thin").',
+    ctx: 'Describes a layer, shell, or material that is less thick in comparison.',
+    lemma: 'thin',
+    inflection: 'comparative form of "thin"',
+  },
+  deep: {
+    pos: 'adjective',
+    def: 'Extending far down from the top or surface, or thorough and intense.',
+    ctx: 'Describes water, soil, wells, or understanding that reaches far below the surface.',
+  },
+  deeper: {
+    pos: 'adjective',
+    def: 'Extending further down below the surface, or more thorough and complete (comparative of "deep").',
+    ctx: 'Describes reaching further underground/underwater or achieving more thorough understanding.',
+    lemma: 'deep',
+    inflection: 'comparative form of "deep"',
+  },
+  cold: {
+    pos: 'adjective',
+    def: 'Having a low temperature; lacking warmth or heat.',
+    ctx: 'Describes air, water, climates, or winters with low temperature.',
+  },
+  colder: {
+    pos: 'adjective',
+    def: 'Having a lower temperature than something else (comparative of "cold").',
+    ctx: 'Describes water, air, or climate conditions at a lower temperature.',
+    lemma: 'cold',
+    inflection: 'comparative form of "cold"',
+  },
+  cool: {
+    pos: 'adjective',
+    def: 'Moderately cold and pleasantly low in temperature.',
+    ctx: 'Describes pleasantly low temperatures in air, water, or shade.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Moderately cold and pleasantly low in temperature.',
+        ctx: 'Describes pleasantly low temperatures in air, water, or shade.',
+      },
+      {
+        pos: 'verb',
+        def: 'To become or make less hot; to lower the temperature of something.',
+        ctx: 'Describes the process of removing heat and lowering temperature.',
+      },
+    ],
+  },
+  cooling: {
+    pos: 'noun',
+    def: 'The process of lowering temperature and removing heat.',
+    ctx: 'Refers to keeping buildings, bodies, or air at a lower temperature.',
+  },
+  warm: {
+    pos: 'adjective',
+    def: 'Moderately hot and comfortable in temperature.',
+    ctx: 'Describes air, water, or rooms with comfortable heat.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Moderately hot and comfortable in temperature.',
+        ctx: 'Describes air, water, or rooms with comfortable heat.',
+      },
+      {
+        pos: 'verb',
+        def: 'To raise the temperature of something; to make or become warm.',
+        ctx: 'Describes heating up air, water, or a space.',
+      },
+    ],
+  },
+  hot: {
+    pos: 'adjective',
+    def: 'Having a high temperature; producing or holding strong heat.',
+    ctx: 'Describes high-temperature air, water, rock, or climates.',
+  },
+  dry: {
+    pos: 'adjective',
+    def: 'Free from moisture, rain, or liquid water; arid.',
+    ctx: 'Describes arid climates, soil, or materials with little or no moisture.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Free from moisture, rain, or liquid water; arid.',
+        ctx: 'Describes arid climates, soil, or materials with little or no moisture.',
+      },
+      {
+        pos: 'verb',
+        def: 'To remove water or moisture from something.',
+        ctx: 'Describes removing moisture so something becomes dry.',
+      },
+    ],
+  },
+  wet: {
+    pos: 'adjective',
+    def: 'Covered, soaked, or saturated with water or another liquid; rainy.',
+    ctx: 'Describes soil, surfaces, or seasons containing plenty of water.',
+  },
+  hard: {
+    pos: 'adjective',
+    def: 'Firm, solid, and rigid to the touch, or difficult to do and requiring great effort.',
+    ctx: 'Describes either a solid physical material (like rock or shell) or a difficult task.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Firm, solid, and rigid to the touch, or difficult to do and requiring great effort.',
+        ctx: 'Describes either a solid physical material or a difficult task.',
+      },
+      {
+        pos: 'adverb',
+        def: 'With a great deal of effort, force, or intensity.',
+        ctx: 'Shows that an action is performed with intense effort.',
+      },
+    ],
+  },
+  harder: {
+    pos: 'adjective',
+    def: 'More difficult to achieve or understand, or firmer and more solid (comparative of "hard").',
+    ctx: 'Shows that a task is more difficult or a material is firmer.',
+    lemma: 'hard',
+    inflection: 'comparative form of "hard"',
+  },
+  hardest: {
+    pos: 'adjective',
+    def: 'Most difficult to do, or most solid and firm (superlative of "hard").',
+    ctx: 'Identifies what is most challenging or most solid.',
+    lemma: 'hard',
+    inflection: 'superlative form of "hard"',
+  },
+  difficult: {
+    pos: 'adjective',
+    def: 'Needing much effort, skill, or care to do, solve, or understand; not easy.',
+    ctx: 'Describes a problem, condition, or task that is hard to manage or accomplish.',
+  },
+  soft: {
+    pos: 'adjective',
+    def: 'Easy to press, bend, or shape; not hard or stiff, or gentle and quiet.',
+    ctx: 'Describes gentle light/sound or pliable material like moss and tissue.',
+  },
+  heavy: {
+    pos: 'adjective',
+    def: 'Having great weight and hard to lift, or intense and abundant in amount (such as heavy rain or traffic).',
+    ctx: 'Describes either a large physical weight/mass or intense rainfall, traffic, or demand.',
+  },
+  fast: {
+    pos: 'adjective',
+    def: 'Moving, happening, or able to work at high speed; rapid.',
+    ctx: 'Describes high speed or rapid action in the sentence.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Moving, happening, or able to work at high speed; rapid.',
+        ctx: 'Describes something that moves or operates at high speed.',
+      },
+      {
+        pos: 'adverb',
+        def: 'At high speed; quickly and in a short time.',
+        ctx: 'Shows that an action or movement happens quickly.',
+      },
+    ],
+  },
+  faster: {
+    pos: 'adjective',
+    def: 'At a higher speed or in less time than something else (comparative of "fast").',
+    ctx: 'Shows that a process, movement, or reaction happens more quickly.',
+    lemma: 'fast',
+    inflection: 'comparative form of "fast"',
+  },
+  quickly: {
+    pos: 'adverb',
+    def: 'At a fast speed; within a short amount of time.',
+    ctx: 'Shows that an action or change happens rapidly.',
+  },
+  rapidly: {
+    pos: 'adverb',
+    def: 'Very quickly and at a fast rate over a short period of time.',
+    ctx: 'Shows that a change, growth, or movement happens at high speed.',
+  },
+  slow: {
+    pos: 'adjective',
+    def: 'Moving, happening, or developing at a low speed; taking a long time.',
+    ctx: 'Describes a gradual pace or low rate of movement.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Moving, happening, or developing at a low speed; taking a long time.',
+        ctx: 'Describes a gradual pace or low rate of change.',
+      },
+      {
+        pos: 'verb',
+        def: 'To reduce speed or make a process happen less quickly.',
+        ctx: 'Describes reducing the speed or rate of a process.',
+      },
+    ],
+  },
+  slowing: {
+    pos: 'verb',
+    def: 'Reducing the speed, rate, or progress of something (present participle of "slow").',
+    ctx: 'Describes making a movement, reaction, or process happen more slowly.',
+    lemma: 'slow',
+    inflection: 'present participle of "slow"',
+  },
+  slowly: {
+    pos: 'adverb',
+    def: 'At a low speed; gradually over time rather than all at once.',
+    ctx: 'Shows that a movement or change takes place gradually.',
+  },
+  full: {
+    pos: 'adjective',
+    def: 'Containing as much or as many as possible; complete and entire.',
+    ctx: 'Describes something completely filled or at its complete extent.',
+  },
+  empty: {
+    pos: 'adjective',
+    def: 'Containing nothing or nobody inside.',
+    ctx: 'Describes a space or container with nothing inside.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Containing nothing or nobody inside.',
+        ctx: 'Describes a space or container with nothing inside.',
+      },
+      {
+        pos: 'verb',
+        def: 'To remove or pour out the contents of something, or (of a river) to flow into a sea.',
+        ctx: 'Describes removing contents or flowing out into a larger body of water.',
+      },
+    ],
+  },
+  rich: {
+    pos: 'adjective',
+    def: 'Containing a large supply of something valuable or nutritious (such as rich soil), or having abundant wealth.',
+    ctx: 'Describes soil, habitats, or materials abundant in nutrients, carbon, or resources.',
+  },
+  poor: {
+    pos: 'adjective',
+    def: 'Lacking sufficient money or resources, or low in quality, fertility, or a needed substance.',
+    ctx: 'Describes either people with little money or conditions lacking a key element.',
+  },
+  free: {
+    pos: 'adjective',
+    def: 'Costing no money, not restricted or trapped, or lacking something undesirable.',
+    ctx: 'Describes something available without cost or restriction.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Costing no money, not restricted or trapped, or lacking something undesirable.',
+        ctx: 'Describes something available without cost or restriction.',
+      },
+      {
+        pos: 'verb',
+        def: 'To release from a restriction, burden, or task so it becomes available.',
+        ctx: 'Describes releasing time, energy, or capacity for other uses.',
+      },
+    ],
+  },
+  freed: {
+    pos: 'verb',
+    def: 'Released from a restriction, burden, or task so it can be used for something else (past tense and participle of "free").',
+    ctx: 'Describes mental capacity, time, or resources released for other activities.',
+    lemma: 'free',
+    inflection: 'past tense and participle of "free"',
+  },
+  open: {
+    pos: 'adjective',
+    def: 'Not closed, blocked, or covered; accessible and unobstructed.',
+    ctx: 'Describes an unblocked space, courtyard, or system.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Not closed, blocked, or covered; accessible and unobstructed.',
+        ctx: 'Describes an unblocked space, courtyard, or system.',
+      },
+      {
+        pos: 'verb',
+        def: 'To move from a shut position so passage, view, or access is possible.',
+        ctx: 'Describes unblocking an entrance or starting access.',
+      },
+    ],
+  },
+  close: {
+    pos: 'adjective',
+    def: 'Near in space, time, or relationship; careful and thorough.',
+    ctx: 'Describes something situated nearby or done with careful attention.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Near in space, time, or relationship; careful and thorough.',
+        ctx: 'Describes something situated nearby or done with careful attention.',
+      },
+      {
+        pos: 'verb',
+        def: 'To shut an opening or bring something to an end.',
+        ctx: 'Describes shutting a barrier, valve, or opening.',
+      },
+    ],
+  },
+  clear: {
+    pos: 'adjective',
+    def: 'Easy to see through, hear, or understand; obvious and free from confusion or obstruction.',
+    ctx: 'Describes transparent water/glass, an unobstructed path, or an easy-to-understand pattern.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Easy to see through, hear, or understand; obvious and free from confusion or obstruction.',
+        ctx: 'Describes transparent water/glass, an unobstructed path, or an obvious pattern.',
+      },
+      {
+        pos: 'verb',
+        def: 'To remove obstructions or unwanted objects from an area.',
+        ctx: 'Describes removing obstacles, trees, or blockages.',
+      },
+    ],
+  },
+  direct: {
+    pos: 'adjective',
+    def: 'Going straight from one place or cause to another without stopping or turning aside.',
+    ctx: 'Describes straight, unblocked sunlight, contact, or measurement.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Going straight from one place or cause to another without stopping or turning aside.',
+        ctx: 'Describes straight, unblocked sunlight, contact, or measurement.',
+      },
+      {
+        pos: 'verb',
+        def: 'To aim, guide, or channel something toward a particular target or purpose.',
+        ctx: 'Describes guiding water, light, or resources toward a target.',
+      },
+    ],
+  },
+  directly: {
+    pos: 'adverb',
+    def: 'In a straight line or immediate way, without anything in between.',
+    ctx: 'Shows that an action or connection happens straightaway without intermediate steps.',
+  },
+  firm: {
+    pos: 'adjective',
+    def: 'Solid, steady, and not easily pressed, moved, or shaken.',
+    ctx: 'Describes solid ground, material, or a definite conclusion.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Solid, steady, and not easily pressed, moved, or shaken.',
+        ctx: 'Describes solid ground, material, or a definite conclusion.',
+      },
+      {
+        pos: 'noun',
+        def: 'A business company or professional partnership.',
+        ctx: 'Refers to a commercial business or engineering company.',
+        keywords: ['company', 'business', 'commercial', 'engineering', 'law', 'hire'],
+      },
+    ],
+  },
+  novel: {
+    pos: 'adjective',
+    def: 'New, original, and different from anything seen, known, or used before.',
+    ctx: 'Describes a newly invented problem, method, material, or situation.',
+    ex: 'Students were able to apply the mathematical principle to novel problems.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'New, original, and different from anything seen, known, or used before.',
+        ctx: 'Describes a newly encountered problem, method, material, or situation.',
+        ex: 'Students were able to apply the mathematical principle to novel problems.',
+      },
+      {
+        pos: 'noun',
+        def: 'A long printed book of fiction that tells a story about characters and events.',
+        ctx: 'Refers to a book-length work of fictional literature.',
+        keywords: ['book', 'read', 'author', 'fiction', 'writer', 'literature', 'story', 'published'],
+      },
+    ],
+  },
+  uniform: {
+    pos: 'adjective',
+    def: 'Remaining the same in form, rate, temperature, or character everywhere; consistent and unchanging.',
+    ctx: 'Describes a property or distribution that stays even and consistent across a space or time.',
+  },
+  minute: {
+    pos: 'adjective',
+    def: 'Extremely small and tiny in size, amount, or degree.',
+    ctx: 'Describes a tiny, microscopic detail, amount, or change.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Extremely small and tiny in size, amount, or degree.',
+        ctx: 'Describes a tiny, microscopic detail, amount, or change.',
+        keywords: ['tiny', 'small', 'changes', 'amounts', 'differences', 'particles', 'details', 'variations'],
+      },
+      {
+        pos: 'noun',
+        def: 'A unit of time equal to 60 seconds (one sixtieth of an hour).',
+        ctx: 'Refers to a 60-second period of time.',
+        keywords: ['time', 'hour', 'hours', 'seconds', 'wait', 'twenty', 'thirty', 'ten', 'five', 'every', 'per'],
+      },
+    ],
+  },
+  fresh: {
+    pos: 'adjective',
+    def: 'Clean, cool, and recently made or gathered; or (of water) not salty.',
+    ctx: 'Describes clean drinking water without salt, or newly gathered food and air.',
+  },
+  wild: {
+    pos: 'adjective',
+    def: 'Living or growing in the natural environment without being tamed, farmed, or controlled by humans.',
+    ctx: 'Describes animals, plants, or habitats existing naturally outside human cultivation.',
+  },
+  native: {
+    pos: 'adjective',
+    def: 'Naturally originating and living in a particular region or ecosystem rather than introduced from elsewhere.',
+    ctx: 'Describes plant or animal species that naturally belong to a local habitat.',
+  },
+  local: {
+    pos: 'adjective',
+    def: 'Belonging or relating to a particular nearby area, neighbourhood, or community.',
+    ctx: 'Describes people, ecosystems, materials, or conditions within the surrounding area.',
+  },
+  global: {
+    pos: 'adjective',
+    def: 'Relating to or affecting the whole world; worldwide.',
+    ctx: 'Describes processes, markets, or climate patterns that span the entire planet.',
+  },
+  natural: {
+    pos: 'adjective',
+    def: 'Existing in or produced by nature rather than made or caused by humans.',
+    ctx: 'Describes materials, processes, or habitats formed by nature.',
+  },
+  human: {
+    pos: 'adjective',
+    def: 'Relating to or characteristic of people (Homo sapiens).',
+    ctx: 'Describes activities, bodies, societies, or needs belonging to people.',
+  },
+  public: {
+    pos: 'adjective',
+    def: 'Open to, shared by, or provided for all people in a community or country.',
+    ctx: 'Describes services, spaces, health systems, or opinions shared across the community.',
+  },
+  social: {
+    pos: 'adjective',
+    def: 'Relating to human society and how people interact, or living together in organized communities or colonies.',
+    ctx: 'Describes either human community life or animals (like bees and ants) that live in cooperative colonies.',
+  },
+  modern: {
+    pos: 'adjective',
+    def: 'Relating to the present or recent times; using current technology, methods, or designs.',
+    ctx: 'Contrasts present-day cities, tools, or science with historical or traditional ones.',
+  },
+  ancient: {
+    pos: 'adjective',
+    def: 'Belonging to the very distant past, thousands of years ago.',
+    ctx: 'Describes historical civilizations, inscriptions, or geological records from long ago.',
+  },
+  daily: {
+    pos: 'adjective',
+    def: 'Happening, done, or needed every day.',
+    ctx: 'Describes a routine, cycle, or need that repeats every twenty-four hours.',
+  },
+  annual: {
+    pos: 'adjective',
+    def: 'Happening once every year, or calculated over a full twelve-month period.',
+    ctx: 'Describes yearly rainfall, migration, or financial totals.',
+  },
+  single: {
+    pos: 'adjective',
+    def: 'Only one; individual and separate rather than multiple.',
+    ctx: 'Emphasizes that only one unit, cause, or item is involved.',
+  },
+  equal: {
+    pos: 'adjective',
+    def: 'Being the same in quantity, size, value, degree, or status.',
+    ctx: 'Shows that two amounts, groups, or measurements are identical in value or weight.',
+  },
+  common: {
+    pos: 'adjective',
+    def: 'Happening, found, or used often; or shared by two or more people, species, or groups.',
+    ctx: 'Describes something widespread and frequent, or shared in common.',
+  },
+  rare: {
+    pos: 'adjective',
+    def: 'Not happening, seen, or found very often; uncommon and scarce.',
+    ctx: 'Describes an event, mineral, or species that occurs only infrequently.',
+  },
+  major: {
+    pos: 'adjective',
+    def: 'Very important, large, or serious in scale, effect, or rank.',
+    ctx: 'Highlights a primary, large-scale cause, benefit, or challenge.',
+  },
+  minor: {
+    pos: 'adjective',
+    def: 'Small in size, degree, or importance compared with other things; not serious.',
+    ctx: 'Describes a small adjustment, detail, or effect of limited scale.',
+  },
+  key: {
+    pos: 'adjective',
+    def: 'Of crucial importance; essential for understanding or solving something.',
+    ctx: 'Identifies an essential factor, role, or element.',
+    senses: [
+      {
+        pos: 'adjective',
+        def: 'Of crucial importance; essential for understanding or solving something.',
+        ctx: 'Identifies an essential factor, role, or element.',
+      },
+      {
+        pos: 'noun',
+        def: 'A metal instrument that opens a lock, a button on a keyboard, or an explanatory list of symbols.',
+        ctx: 'Refers to a physical key, keyboard button, or map legend.',
+        keywords: ['lock', 'door', 'piano', 'keyboard', 'map', 'symbol'],
+      },
+    ],
+  },
+  vital: {
+    pos: 'adjective',
+    def: 'Absolutely necessary and essential for life, health, or the success of a system.',
+    ctx: 'Describes a resource or process that is essential for survival or operation.',
+  },
+  central: {
+    pos: 'adjective',
+    def: 'In the middle of a place, or most important and main within a system or argument.',
+    ctx: 'Describes either a physical location in the centre or the core part of a system.',
+  },
+  critical: {
+    pos: 'adjective',
+    def: 'Extremely important and decisive for an outcome, or involving careful evaluation of evidence.',
+    ctx: 'Describes a decisive factor/stage or careful analytical thinking.',
+  },
+  essential: {
+    pos: 'adjective',
+    def: 'Completely necessary; indispensable for something to exist, live, or work properly.',
+    ctx: 'Highlights something that cannot be done without.',
+  },
+  important: {
+    pos: 'adjective',
+    def: 'Having great value, meaning, or influence on what happens.',
+    ctx: 'Marks a factor, discovery, or step that has a strong influence.',
+  },
+  necessary: {
+    pos: 'adjective',
+    def: 'Required in order to achieve a result or maintain a condition; needed.',
+    ctx: 'States what is required for a process or action to succeed.',
+  },
+  possible: {
+    pos: 'adjective',
+    def: 'Able to happen, exist, or be done under the given conditions.',
+    ctx: 'Indicates that an outcome or action can be achieved.',
+  },
+  likely: {
+    pos: 'adjective',
+    def: 'Probable; expected to happen or be true based on the circumstances.',
+    ctx: 'Indicates a high probability that something will occur.',
+  },
+  certain: {
+    pos: 'adjective',
+    def: 'Specific and particular (though not fully named), or completely sure and without doubt.',
+    ctx: 'Refers either to specific types/conditions ("certain plants") or to complete confidence.',
+  },
+  active: {
+    pos: 'adjective',
+    def: 'Engaged in action, movement, or chemical/biological work rather than resting or passive.',
+    ctx: 'Describes organisms, brain regions, volcanoes, or systems that are working and operating.',
+  },
+  passive: {
+    pos: 'adjective',
+    def: 'Operating naturally without mechanical pumps, motors, or active effort; or receiving without acting.',
+    ctx: 'Describes building designs that cool/heat naturally or systems that receive input without active work.',
+  },
+  stable: {
+    pos: 'adjective',
+    def: 'Steady, firmly established, and not likely to change, collapse, or break down.',
+    ctx: 'Describes temperatures, populations, or chemical atoms that remain steady over time.',
+  },
+  steady: {
+    pos: 'adjective',
+    def: 'Continuing at a regular, even rate without sudden changes or interruptions.',
+    ctx: 'Describes a constant, regular flow, slope, or pace.',
+  },
+  steadily: {
+    pos: 'adverb',
+    def: 'In a regular, even, and continuous way over time.',
+    ctx: 'Shows that a change or movement progresses at an even, uninterrupted rate.',
+  },
+  rapid: {
+    pos: 'adjective',
+    def: 'Happening in a short time or at a fast pace; quick.',
+    ctx: 'Describes fast growth, change, or movement.',
+  },
+  gradual: {
+    pos: 'adjective',
+    def: 'Happening slowly by small steps over a long period of time rather than suddenly.',
+    ctx: 'Describes a slow, step-by-step change over time.',
+  },
+  gradually: {
+    pos: 'adverb',
+    def: 'Slowly and step by step over a period of time.',
+    ctx: 'Shows that a process unfolds little by little over time.',
+  },
+  sudden: {
+    pos: 'adjective',
+    def: 'Happening quickly and unexpectedly without advance warning.',
+    ctx: 'Describes an abrupt shift, collapse, or event.',
+  },
+  vast: {
+    pos: 'adjective',
+    def: 'Extremely large in area, size, amount, or extent.',
+    ctx: 'Emphasizes an immense geographic area or huge quantity.',
+  },
+  tiny: {
+    pos: 'adjective',
+    def: 'Extremely small in size or amount; minute.',
+    ctx: 'Describes something very small—often microscopic or barely visible.',
+  },
+  harsh: {
+    pos: 'adjective',
+    def: 'Unpleasantly rough, severe, or difficult for living things to survive in.',
+    ctx: 'Describes extreme climates, bright glare, or difficult environmental conditions.',
+  },
+  extreme: {
+    pos: 'adjective',
+    def: 'Reaching the highest or most severe degree; far beyond what is ordinary or moderate.',
+    ctx: 'Describes very intense heat, cold, drought, or pressure.',
+  },
+  mild: {
+    pos: 'adjective',
+    def: 'Gentle and moderate; not severe, harsh, or extreme.',
+    ctx: 'Describes gentle weather or slight symptoms of illness.',
+  },
+  intense: {
+    pos: 'adjective',
+    def: 'Very strong, concentrated, or extreme in degree, force, or heat.',
+    ctx: 'Describes strong heat, sunlight, pressure, or effort.',
+  },
+  frequent: {
+    pos: 'adjective',
+    def: 'Happening or done often, at short intervals.',
+    ctx: 'Describes events, storms, or actions that occur many times.',
+  },
+  frequently: {
+    pos: 'adverb',
+    def: 'Often; many times at short intervals.',
+    ctx: 'Shows that an event or behavior happens regularly and often.',
+  },
+  inevitable: {
+    pos: 'adjective',
+    def: 'Certain to happen; impossible to avoid or prevent.',
+    ctx: 'Describes an outcome that cannot be avoided once conditions are set.',
+  },
+  negative: {
+    pos: 'adjective',
+    def: 'Harmful, undesirable, or unfavorable; or expressing denial or a value below zero.',
+    ctx: 'Describes harmful effects/consequences or a value/charge below zero.',
+  },
+  positive: {
+    pos: 'adjective',
+    def: 'Beneficial, constructive, and helpful; or greater than zero.',
+    ctx: 'Describes a helpful effect, confirming result, or upward feedback loop.',
+  },
+  bare: {
+    pos: 'adjective',
+    def: 'Uncovered and exposed; lacking plants, leaves, trees, or protective covering.',
+    ctx: 'Describes soil, rock, or steel that has no protective layer or vegetation on top.',
+  },
+  sunken: {
+    pos: 'adjective',
+    def: 'Built or positioned at a lower level than the surrounding ground or surface, or submerged underwater.',
+    ctx: 'Describes a courtyard, garden, or object recessed below the surrounding surface.',
+  },
+  spiny: {
+    pos: 'adjective',
+    def: 'Covered with sharp, needle-like spines or thorns for protection.',
+    ctx: 'Describes an animal (such as a sea urchin) or plant covered in sharp protective spines.',
+  },
+  wooden: {
+    pos: 'adjective',
+    def: 'Made of wood (timber from trees).',
+    ctx: 'Describes structures, beams, or tools constructed from wood.',
+  },
+  endogenous: {
+    pos: 'adjective',
+    def: 'Originating or developing from within a system, organism, or economic model rather than caused by outside forces.',
+    ctx: 'Describes internal factors generated inside the system itself.',
+  },
+  actionable: {
+    pos: 'adjective',
+    def: 'Practical, specific, and clear enough to guide real decisions or immediate action.',
+    ctx: 'Describes scientific advice or data that decision-makers can act on directly.',
+  },
+  bounded: {
+    pos: 'adjective / verb',
+    def: 'Limited or constrained within definite boundaries, rules, or cognitive capacity.',
+    ctx: 'Describes limits on human information processing ("bounded rationality") or physical boundaries.',
+  },
+  punctuated: {
+    pos: 'verb / adjective',
+    def: 'Interrupted or marked at intervals by sudden, significant events or shifts.',
+    ctx: 'Describes long periods of stability interrupted by sudden bursts of change.',
+  },
+  tall: {
+    pos: 'adjective',
+    def: 'Having a greater than average height from bottom to top; high.',
+    ctx: 'Describes trees, buildings, or structures that rise high above the ground.',
+  },
+  regular: {
+    pos: 'adjective',
+    def: 'Happening or arranged in a steady, even pattern at fixed intervals; usual or standard.',
+    ctx: 'Describes repeated intervals, standard practices, or predictable patterns.',
+  },
+  blue: {
+    pos: 'adjective',
+    def: 'Having the colour of a clear daytime sky or deep ocean, or relating to short-wavelength visible light.',
+    ctx: 'Describes the colour blue or short-wavelength light emitted by screens and the sky.',
+  },
+  vertical: {
+    pos: 'adjective',
+    def: 'Standing or pointing straight up and down, perpendicular to a flat ground surface.',
+    ctx: 'Describes walls, cliffs, or stacked farm layers arranged straight up and down.',
+  },
+  electric: {
+    pos: 'adjective',
+    def: 'Produced by, carrying, or powered by electricity.',
+    ctx: 'Describes lamps, currents, vehicles, or signals powered by electricity.',
+  },
+  ideal: {
+    pos: 'adjective',
+    def: 'Most suitable, best possible, and meeting every requirement for a particular purpose.',
+    ctx: 'Describes conditions or materials that are perfectly suited to a task or organism.',
+  },
+  national: {
+    pos: 'adjective',
+    def: 'Relating to, owned by, or shared across an entire nation or country.',
+    ctx: 'Describes policies, governments, or networks operating at the level of a whole country.',
+  },
+  levantine: {
+    pos: 'adjective',
+    def: 'Relating to the Levant, the historical region along the eastern coast of the Mediterranean Sea.',
+    ctx: 'Describes ancient cities, ports, and cultures of the eastern Mediterranean coast.',
+  },
+  'long-distance': {
+    pos: 'adjective',
+    def: 'Travelling, operating, or communicating between places that are far apart.',
+    ctx: 'Describes trade routes, migration flights, or transport across great distances.',
+  },
+  challenging: {
+    pos: 'adjective / verb',
+    def: 'Difficult in a way that tests one’s skill, effort, or understanding; or questioning the truth of a claim.',
+    ctx: 'Describes a demanding task/environment or questioning an established assumption.',
+  },
+  disturbing: {
+    pos: 'verb / adjective',
+    def: 'Interrupting or altering the normal, calm state of a habitat, soil, or system; or causing worry.',
+    ctx: 'Describes disrupting wildlife, soil layers, or natural processes.',
+  },
+  endangered: {
+    pos: 'adjective',
+    def: 'At serious risk of becoming extinct because very few individuals remain in the wild.',
+    ctx: 'Describes rare animal or plant species threatened with extinction.',
+  },
+  structured: {
+    pos: 'adjective / verb',
+    def: 'Organized and arranged according to a clear plan, pattern, or framework.',
+    ctx: 'Describes a system, lesson, or material arranged in a clear, deliberate order.',
+  },
+  spiking: {
+    pos: 'adjective / verb',
+    def: 'Communicating through brief, sharp electrical pulses (spikes), or rising sharply to a peak.',
+    ctx: 'Describes neuromorphic neural networks that send discrete electrical pulses like brain cells.',
+  },
+  juggling: {
+    pos: 'verb',
+    def: 'Managing or dealing with several competing tasks, demands, or responsibilities at the same time.',
+    ctx: 'Describes trying to handle multiple mental tasks or responsibilities simultaneously.',
+  },
+  battery: {
+    pos: 'noun',
+    def: 'A device that stores chemical energy and converts it into electrical power for lamps, phones, or vehicles.',
+    ctx: 'The rechargeable unit that stores electrical energy for later use.',
+    ex: 'A solar lamp stores daytime energy in a small battery.',
+  },
+  batteries: {
+    pos: 'noun',
+    def: 'Devices that store chemical energy and supply electricity when needed (plural of "battery").',
+    ctx: 'Energy-storage units used in electronics, vehicles, and renewable power grids.',
+    lemma: 'battery',
+    inflection: 'plural of "battery"',
+  },
+  bulb: {
+    pos: 'noun',
+    def: 'The glass or LED part of an electric lamp that gives off light, or a rounded underground plant stem (such as an onion or tulip).',
+    ctx: 'The light-emitting component of a lamp that produces illumination.',
+    ex: 'An LED bulb uses far less electricity than an old filament bulb.',
+  },
+  bulbs: {
+    pos: 'noun',
+    def: 'Light-emitting lamp units, or rounded underground plant stems (plural of "bulb").',
+    ctx: 'Electric light bulbs used for illumination.',
+    lemma: 'bulb',
+    inflection: 'plural of "bulb"',
+  },
+  evening: {
+    pos: 'noun',
+    def: 'The part of the day between the end of the afternoon and night, when the sun sets and darkness begins.',
+    ctx: 'Refers to the hours after sunset before people go to sleep.',
+    ex: 'Children use the solar lamp to read their books in the evening.',
+  },
+  morning: {
+    pos: 'noun',
+    def: 'The early part of the day from sunrise until noon.',
+    ctx: 'Refers to the first hours of the day after waking up.',
+  },
+  building: {
+    pos: 'noun / verb',
+    def: 'A permanent roofed structure with walls, such as a house, school, or office (noun), or the act of constructing something (verb).',
+    ctx: 'Refers either to an architectural structure (like a school or tower) or to constructing something.',
+  },
+  buildings: {
+    pos: 'noun',
+    def: 'Permanent structures with roofs and walls, such as houses, schools, and offices (plural of "building").',
+    ctx: 'Refers to architectural structures in towns and cities.',
+    lemma: 'building',
+    inflection: 'plural of "building"',
+  },
+  handwriting: {
+    pos: 'noun',
+    def: 'Writing done with a pen or pencil by hand rather than typing on a keyboard.',
+    ctx: 'Refers to taking notes or writing text manually by hand.',
+  },
+  farming: {
+    pos: 'noun',
+    def: 'The activity or business of growing crops and raising animals for food and raw materials; agriculture.',
+    ctx: 'Refers to agricultural food production on land or in vertical indoor systems.',
+  },
+  lighting: {
+    pos: 'noun',
+    def: 'Equipment and systems—such as lamps or daylighting windows—that provide illumination in a room or street.',
+    ctx: 'Refers to the illumination provided inside buildings or outdoor spaces.',
+  },
+  heating: {
+    pos: 'noun / verb',
+    def: 'Systems and processes used to make a building, water, or material warm, or raising the temperature of something.',
+    ctx: 'Refers to warming indoor spaces or raising the temperature of water and materials.',
+  },
+  meaning: {
+    pos: 'noun',
+    def: 'The idea, message, or sense that a word, sign, text, or action expresses.',
+    ctx: 'Refers to what a word, symbol, or observation signifies.',
+  },
+  feeling: {
+    pos: 'noun / verb',
+    def: 'An emotional state or physical sensation (noun), or experiencing a sensation or emotion (verb).',
+    ctx: 'Refers to a physical sensation (like warmth or tiredness) or an emotional state.',
+  },
+  finding: {
+    pos: 'noun / verb',
+    def: 'A conclusion, fact, or discovery reached after scientific research or investigation (noun), or discovering something (verb).',
+    ctx: 'Refers to a specific result discovered by a study or the act of locating something.',
+  },
+  findings: {
+    pos: 'noun',
+    def: 'The results, conclusions, and data discovered through scientific research or an investigation (plural of "finding").',
+    ctx: 'Refers to the evidence and conclusions discovered by researchers.',
+    lemma: 'finding',
+    inflection: 'plural of "finding"',
+  },
+  spring: {
+    pos: 'noun / verb',
+    def: 'The season between winter and summer when plants begin to grow, a natural place where underground water flows to the surface, or an elastic coil.',
+    ctx: 'Refers either to the spring season after winter or to a natural freshwater spring.',
+  },
+  string: {
+    pos: 'noun',
+    def: 'A thin cord made of twisted threads, a stretched wire on a musical instrument, or a connected sequence of items.',
+    ctx: 'Refers to a thin cord, a vibrating musical string, or a sequence of symbols.',
+  },
+  fall: {
+    pos: 'verb / noun',
+    def: 'To move downward toward the ground or drop to a lower level, amount, or temperature (verb); or a decrease / autumn season (noun).',
+    ctx: 'Describes dropping downward in position, temperature, or amount.',
+  },
+  falls: {
+    pos: 'verb / noun',
+    def: 'Drops downward or decreases in level, temperature, or amount (3rd-person singular of "fall"), or waterfalls.',
+    ctx: 'Shows something dropping downward or decreasing in level.',
+    lemma: 'fall',
+    inflection: '3rd-person singular of "fall"',
+  },
+  meet: {
+    pos: 'verb',
+    def: 'To come together in one place, or to satisfy and fulfill a need, requirement, or goal.',
+    ctx: 'Means either coming together or supplying enough to satisfy a need.',
+  },
+  meets: {
+    pos: 'verb',
+    def: 'Comes together with, or satisfies a need or requirement (3rd-person singular of "meet").',
+    ctx: 'Shows where two things join or how a system satisfies a requirement.',
+    lemma: 'meet',
+    inflection: '3rd-person singular of "meet"',
+  },
+  cover: {
+    pos: 'verb / noun',
+    def: 'To spread over the surface of something to protect or hide it, or to include a topic/cost (verb); or a protective top layer (noun).',
+    ctx: 'Describes spreading across a surface (like snow, moss, or forest canopy) or paying for an expense.',
+  },
+  covers: {
+    pos: 'verb / noun',
+    def: 'Spreads over the surface of something or includes an area/topic (3rd-person singular of "cover"), or protective outer layers.',
+    ctx: 'Shows how a layer or material spreads across a surface.',
+    lemma: 'cover',
+    inflection: '3rd-person singular of "cover"',
+  },
+  covered: {
+    pos: 'adjective / verb',
+    def: 'Having a layer of material, water, snow, or vegetation spread over the surface (past tense and participle of "cover").',
+    ctx: 'Describes a surface overlaid or protected by another material.',
+    lemma: 'cover',
+    inflection: 'past tense and participle of "cover"',
+  },
+  chew: {
+    pos: 'verb',
+    def: 'To bite and grind food or plant material repeatedly with the teeth or jaws.',
+    ctx: 'Describes how animals or insects bite and crush plant material or food.',
+  },
+  miss: {
+    pos: 'verb',
+    def: 'To fail to notice, catch, reach, or include something.',
+    ctx: 'Means failing to detect, notice, or catch something important.',
+  },
+  see: {
+    pos: 'verb',
+    def: 'To perceive with the eyes, or to understand, notice, and observe a fact or pattern.',
+    ctx: 'Describes observing visually with the eyes or understanding a result.',
+  },
+  burn: {
+    pos: 'verb / noun',
+    def: 'To consume fuel with fire to produce heat or light, or to be damaged by fire or extreme heat.',
+    ctx: 'Describes consuming fuel (such as wood, coal, or kerosene) by fire.',
+  },
+  burned: {
+    pos: 'verb / adjective',
+    def: 'Consumed by fire or heated by combustion (past tense and participle of "burn").',
+    ctx: 'Describes fuel or structures consumed by fire.',
+    lemma: 'burn',
+    inflection: 'past tense and participle of "burn"',
+  },
+  capture: {
+    pos: 'verb',
+    def: 'To catch, collect, and hold energy, water, carbon, or images so they can be used or studied.',
+    ctx: 'Describes collecting and trapping sunlight, rainwater, carbon, or data.',
+    ex: 'Solar panels capture energy from sunlight during the day.',
+  },
+  captures: {
+    pos: 'verb',
+    def: 'Catches, collects, and holds energy, water, or information (3rd-person singular of "capture").',
+    ctx: 'Shows how a panel, plant, or sensor collects energy, water, or signals.',
+    lemma: 'capture',
+    inflection: '3rd-person singular of "capture"',
+  },
+  captured: {
+    pos: 'verb / adjective',
+    def: 'Collected, trapped, or recorded for use or study (past tense and participle of "capture").',
+    ctx: 'Describes energy, water, carbon, or images that have been collected.',
+    lemma: 'capture',
+    inflection: 'past tense and participle of "capture"',
+  },
+  deliver: {
+    pos: 'verb',
+    def: 'To carry, supply, or bring water, goods, energy, or information to the place where it is needed.',
+    ctx: 'Describes transporting or supplying a resource or signal to its target.',
+  },
+  delivers: {
+    pos: 'verb',
+    def: 'Carries, supplies, or brings something to where it is needed (3rd-person singular of "deliver").',
+    ctx: 'Shows how a pipe, network, or system supplies water, energy, or goods.',
+    lemma: 'deliver',
+    inflection: '3rd-person singular of "deliver"',
+  },
+  delivering: {
+    pos: 'verb',
+    def: 'Carrying, supplying, or bringing something to where it is needed (present participle of "deliver").',
+    ctx: 'Describes transporting or providing water, nutrients, or goods.',
+    lemma: 'deliver',
+    inflection: 'present participle of "deliver"',
+  },
+  release: {
+    pos: 'verb / noun',
+    def: 'To let go and send out energy, gas, heat, water, or chemicals into the surrounding environment.',
+    ctx: 'Describes emitting or letting out stored heat, oxygen, carbon, or water.',
+  },
+  released: {
+    pos: 'verb',
+    def: 'Sent out or let go into the air, water, or surroundings (past tense and participle of "release").',
+    ctx: 'Describes heat, gas, energy, or substances emitted into the environment.',
+    lemma: 'release',
+    inflection: 'past tense and participle of "release"',
+  },
+  condense: {
+    pos: 'verb',
+    def: 'To change from a gas or vapour (such as steam) into liquid drops when cooled.',
+    ctx: 'Describes water vapour or steam cooling and turning into liquid water.',
+  },
+  foraminifera: {
+    pos: 'noun',
+    def: 'Microscopic single-celled marine organisms that build tiny mineral shells, whose fossils preserve records of ancient ocean temperatures.',
+    ctx: 'Tiny ocean organisms whose fossilized carbonate shells are analyzed by climate scientists.',
+  },
+  unprecedented: {
+    pos: 'adjective',
+    def: 'Never having happened, existed, or been seen before in history.',
+    ctx: 'Describes a scale, speed, or event that has no earlier equal in history.',
+  },
+  incompatible: {
+    pos: 'adjective',
+    def: 'Unable to exist, work, or be used together because of conflicting rules, properties, or needs.',
+    ctx: 'Describes two methods, systems, or explanations that cannot work together.',
+  },
+  uninformed: {
+    pos: 'adjective',
+    def: 'Not having the necessary facts, knowledge, or training about a situation.',
+    ctx: 'Describes people or observers who do not yet know the specific signal or information.',
+  },
+  uncooked: {
+    pos: 'adjective',
+    def: 'Raw; not heated, boiled, or baked.',
+    ctx: 'Describes raw plant scraps or food before cooking.',
+  },
+  selective: {
+    pos: 'adjective',
+    def: 'Choosing or affecting only certain specific things rather than everything equally.',
+    ctx: 'Describes a process that favors or chooses specific items, ideas, or traits.',
+  },
+  survival: {
+    pos: 'noun',
+    def: 'The state of continuing to live or exist, especially through dangerous or difficult conditions.',
+    ctx: 'Refers to an organism, species, or community staying alive through challenges.',
+  },
+  failure: {
+    pos: 'noun',
+    def: 'Lack of success in achieving a goal, or the breakdown and stopping of a machine, crop, or system.',
+    ctx: 'Refers either to unsuccessful problem-solving attempts or to the breakdown of a system/crop.',
+  },
+  investment: {
+    pos: 'noun',
+    def: 'Money, time, or energy spent now in order to build something useful or gain future benefits.',
+    ctx: 'Refers to spending money, energy, or resources to achieve a long-term benefit.',
+  },
+  investments: {
+    pos: 'noun',
+    def: 'Commitments of money, effort, or resources made to produce future benefits (plural of "investment").',
+    ctx: 'Refers to financial or biological resources committed for future return.',
+    lemma: 'investment',
+    inflection: 'plural of "investment"',
+  },
+  emissions: {
+    pos: 'noun',
+    def: 'Gases, smoke, or particles (such as carbon dioxide) sent out into the air by factories, vehicles, or natural sources.',
+    ctx: 'Refers to greenhouse gases or pollutants released into the atmosphere.',
+    lemma: 'emission',
+    inflection: 'plural of "emission"',
+  },
+  invasion: {
+    pos: 'noun',
+    def: 'The entry of an armed force or a fast-spreading species into a region or habitat.',
+    ctx: 'Refers to external military attacks or the rapid spread of an outside group/species.',
+  },
+  visitor: {
+    pos: 'noun',
+    def: 'A person (or animal) who goes to see or stay at a place temporarily rather than living there permanently.',
+    ctx: 'Refers to someone visiting a park, museum, city, or building.',
+  },
+  visitors: {
+    pos: 'noun',
+    def: 'People who travel to or spend time at a place temporarily (plural of "visitor").',
+    ctx: 'Refers to guests, tourists, or members of the public visiting a site.',
+    lemma: 'visitor',
+    inflection: 'plural of "visitor"',
+  },
+  riverbank: {
+    pos: 'noun',
+    def: 'The sloping ground along the edge of a river.',
+    ctx: 'Refers to the land bordering the side of a river.',
+  },
+  overpopulations: {
+    pos: 'noun',
+    def: 'Situations in which the number of animals or people in an area grows too large for the environment to support.',
+    ctx: 'Refers to excessive population growth that depletes local food or habitat.',
+  },
+  cleanup: {
+    pos: 'noun',
+    def: 'The organized removal of pollution, trash, or debris from an environment or space.',
+    ctx: 'Refers to clearing away waste, pollution, or orbital debris.',
+  },
+  licence: {
+    pos: 'noun',
+    def: 'An official permit to do or use something, or the registered identification plate on a vehicle.',
+    ctx: 'Refers to official permission or a vehicle registration plate.',
+  },
+  stance: {
+    pos: 'noun',
+    def: 'A person’s intellectual attitude, viewpoint, or way of judging claims and evidence.',
+    ctx: 'Refers to an intellectual viewpoint or approach toward evaluating knowledge.',
+  },
+  portland: {
+    pos: 'proper noun / adjective',
+    def: 'Used in "Portland cement", the most common type of grey construction cement made by heating limestone and clay.',
+    ctx: 'Identifies standard Portland cement used to make concrete in construction.',
+  },
+  frames: {
+    pos: 'noun',
+    def: 'Strong rigid structures of wood, metal, or bone that support a building, machine, or body (plural of "frame").',
+    ctx: 'Refers to structural frameworks supporting buildings or equipment.',
+    lemma: 'frame',
+    inflection: 'plural of "frame"',
+  },
+  fasteners: {
+    pos: 'noun',
+    def: 'Hardware devices such as screws, bolts, nails, or clips that hold separate parts together securely.',
+    ctx: 'Refers to metal screws, bolts, or connectors that join building panels.',
+    lemma: 'fastener',
+    inflection: 'plural of "fastener"',
+  },
+  north: {
+    pos: 'noun / adverb / adjective',
+    def: 'The compass direction toward the North Pole (to the left of east when facing sunrise).',
+    ctx: 'Indicates the northern direction or region.',
+  },
+  south: {
+    pos: 'noun / adverb / adjective',
+    def: 'The compass direction opposite to north, toward the South Pole.',
+    ctx: 'Indicates the southern direction or region.',
+  },
+  east: {
+    pos: 'noun / adverb / adjective',
+    def: 'The compass direction toward the point on the horizon where the sun rises.',
+    ctx: 'Indicates the eastern direction or region.',
+  },
+  west: {
+    pos: 'noun / adverb / adjective',
+    def: 'The compass direction toward the point on the horizon where the sun sets, opposite east.',
+    ctx: 'Indicates the western direction or region.',
+  },
+  inside: {
+    pos: 'preposition / adverb / noun',
+    def: 'In or into the interior part of a room, container, body, or system.',
+    ctx: 'Indicates location within the interior of something.',
+  },
+  outside: {
+    pos: 'preposition / adverb / adjective',
+    def: 'On, toward, or coming from the exterior of a building, body, or system; outdoors.',
+    ctx: 'Indicates location or origin beyond the outer boundary of something.',
+  },
+  under: {
+    pos: 'preposition',
+    def: 'Directly below or beneath something, or subject to a particular condition, rule, or pressure.',
+    ctx: 'Shows position beneath a surface or operation under specific conditions.',
+  },
+  above: {
+    pos: 'preposition / adverb',
+    def: 'At a higher level, position, or number than something else.',
+    ctx: 'Indicates position higher than a surface or a value greater than a benchmark.',
+  },
+  below: {
+    pos: 'preposition / adverb',
+    def: 'At a lower level, depth, or value than something else.',
+    ctx: 'Indicates position deeper than a surface or a measurement lower than a benchmark.',
+  },
+  behind: {
+    pos: 'preposition / adverb',
+    def: 'At the back of something, remaining after something leaves, or acting as the underlying cause.',
+    ctx: 'Shows position at the back, what remains afterward, or the underlying reason.',
+  },
+  beyond: {
+    pos: 'preposition',
+    def: 'Further away than a place or limit, or exceeding the reach of something.',
+    ctx: 'Indicates going past a boundary, time period, or limit.',
+  },
+  unlike: {
+    pos: 'preposition',
+    def: 'Different from; in contrast to someone or something else.',
+    ctx: 'Highlights how one organism, method, or material differs from another.',
+  },
+  despite: {
+    pos: 'preposition',
+    def: 'Without being prevented by; even though there is an obstacle or contrasting fact.',
+    ctx: 'Shows that something happens even in the presence of a difficulty or opposite condition.',
+  },
+  however: {
+    pos: 'adverb',
+    def: 'Used to introduce a statement that contrasts with or qualifies what was just said; nevertheless.',
+    ctx: 'Signals an important contrast, limitation, or exception to the previous point.',
+  },
+  therefore: {
+    pos: 'adverb',
+    def: 'For that reason; as a logical result or consequence of what was just stated.',
+    ctx: 'Introduces the logical conclusion or effect of the preceding statement.',
+  },
+  moreover: {
+    pos: 'adverb',
+    def: 'In addition to what has already been said; furthermore.',
+    ctx: 'Adds a further important point or piece of evidence to support the argument.',
+  },
+  furthermore: {
+    pos: 'adverb',
+    def: 'In addition; besides; used to introduce an extra supporting fact.',
+    ctx: 'Adds another supporting reason or observation.',
+  },
+  nevertheless: {
+    pos: 'adverb',
+    def: 'In spite of that; notwithstanding; even so.',
+    ctx: 'Shows that the following fact remains true despite the difficulty just mentioned.',
+  },
+  nonetheless: {
+    pos: 'adverb',
+    def: 'In spite of what has just been stated; nevertheless.',
+    ctx: 'Introduces a point that holds true despite the preceding contrast.',
+  },
+  consequently: {
+    pos: 'adverb',
+    def: 'As a direct result or effect of something that happened earlier.',
+    ctx: 'Connects an earlier cause to the outcome that follows from it.',
+  },
+  meanwhile: {
+    pos: 'adverb',
+    def: 'At the same time while something else is happening, or in the intervening period.',
+    ctx: 'Describes a second process or event occurring during the same time.',
+  },
+  instead: {
+    pos: 'adverb',
+    def: 'As an alternative or substitute in place of something else.',
+    ctx: 'Presents what actually happens or is chosen in place of the other option.',
+  },
+  otherwise: {
+    pos: 'adverb',
+    def: 'If not; in circumstances different from those present or considered.',
+    ctx: 'Explains what would happen if the stated condition or action were absent.',
+  },
+  actually: {
+    pos: 'adverb',
+    def: 'In reality; as a matter of real fact, especially when correcting an assumption.',
+    ctx: 'Emphasizes what is truly happening in reality.',
+  },
+  simply: {
+    pos: 'adverb',
+    def: 'Merely and nothing more; or in an easy, straightforward way.',
+    ctx: 'Emphasizes how straightforward a point is, or means "only / merely".',
+  },
+  primarily: {
+    pos: 'adverb',
+    def: 'Mainly; for the most part; above all else.',
+    ctx: 'Identifies the main reason, source, or function.',
+  },
+  mainly: {
+    pos: 'adverb',
+    def: 'For the most part; chiefly; more than anything else.',
+    ctx: 'Shows what accounts for the largest share or primary purpose.',
+  },
+  mostly: {
+    pos: 'adverb',
+    def: 'In most cases or for the greatest part; mainly.',
+    ctx: 'Indicates what is true of the majority of a group or substance.',
+  },
+  largely: {
+    pos: 'adverb',
+    def: 'To a great extent; mainly or predominantly.',
+    ctx: 'Shows that a result or condition is due mainly to the stated factor.',
+  },
+  principally: {
+    pos: 'adverb',
+    def: 'For the most part; chiefly and above all.',
+    ctx: 'Identifies the primary cause, use, or component.',
+  },
+  especially: {
+    pos: 'adverb',
+    def: 'To a particularly great degree, or above all for one specific group or case.',
+    ctx: 'Singles out a notable case or emphasizes a strong degree.',
+  },
+  particularly: {
+    pos: 'adverb',
+    def: 'To a higher degree than usual; especially or specifically.',
+    ctx: 'Highlights a case where the statement is especially true.',
+  },
+  specifically: {
+    pos: 'adverb',
+    def: 'For a precise, exact purpose or referring to one exact thing in particular.',
+    ctx: 'Pinpoints the exact target, purpose, or detail involved.',
+  },
+  generally: {
+    pos: 'adverb',
+    def: 'In most cases; usually, or without focusing on small exceptions.',
+    ctx: 'Describes the broad pattern that holds true across most examples.',
+  },
+  typically: {
+    pos: 'adverb',
+    def: 'In the way that happens most often under normal conditions; usually.',
+    ctx: 'Describes what is normal or characteristic for a group or process.',
+  },
+  rarely: {
+    pos: 'adverb',
+    def: 'Not often; only on very few occasions.',
+    ctx: 'Shows that an event or condition happens almost never.',
+  },
+  eventually: {
+    pos: 'adverb',
+    def: 'In the end, especially after a long time, process, or series of steps.',
+    ctx: 'Marks the final outcome reached after a gradual process.',
+  },
+  ultimately: {
+    pos: 'adverb',
+    def: 'Finally, at the end of a full chain of events, or at the most fundamental level.',
+    ctx: 'Identifies the final outcome or underlying fundamental reason.',
+  },
+  finally: {
+    pos: 'adverb',
+    def: 'After a long time or as the last step in a sequence.',
+    ctx: 'Marks the concluding step or long-awaited result.',
+  },
+  initially: {
+    pos: 'adverb',
+    def: 'At the beginning; at first, before later changes occur.',
+    ctx: 'Describes the starting stage or first impression before things changed.',
+  },
+  recently: {
+    pos: 'adverb',
+    def: 'Not long ago; during a time period shortly before the present.',
+    ctx: 'Refers to events or discoveries from the near past.',
+  },
+  recent: {
+    pos: 'adjective',
+    def: 'Having happened, begun, or been created only a short time ago; modern.',
+    ctx: 'Describes studies, events, or developments from the near past.',
+  },
+  cease: {
+    pos: 'verb',
+    def: 'To stop happening, operating, or existing; to come or bring to an end.',
+    ctx: 'Describes an activity, flow, or process stopping completely.',
+  },
+  currently: {
+    pos: 'adverb',
+    def: 'At the present time; right now.',
+    ctx: 'Refers to what is happening or being used at the present time.',
+  },
+  simultaneously: {
+    pos: 'adverb',
+    def: 'At the exact same time; occurring together at one moment.',
+    ctx: 'Shows that two or more actions or measurements happen at the same moment.',
+  },
+  crucially: {
+    pos: 'adverb',
+    def: 'In a way that is extremely important and decisive for the outcome.',
+    ctx: 'Highlights a critical, decisive fact in the explanation.',
+  },
+  drastically: {
+    pos: 'adverb',
+    def: 'In an extreme, forceful, and sudden way that produces a major change.',
+    ctx: 'Shows that a quantity or condition changed by an extreme amount.',
+  },
+  severely: {
+    pos: 'adverb',
+    def: 'To a very harsh, serious, or damaging degree.',
+    ctx: 'Shows that something was affected or restricted to a serious, harmful extent.',
+  },
+  remarkably: {
+    pos: 'adverb',
+    def: 'To an unusual, striking, or surprising degree worth special notice.',
+    ctx: 'Highlights how impressive or surprisingly strong a quality is.',
+  },
+  consistently: {
+    pos: 'adverb',
+    def: 'In the same reliable way every time, without dropping in quality or changing.',
+    ctx: 'Shows that a pattern or result holds steady across repeated tests or times.',
+  },
+  explicitly: {
+    pos: 'adverb',
+    def: 'In a clear, direct, and detailed way that leaves nothing merely implied.',
+    ctx: 'Shows that a rule, variable, or idea is stated directly and clearly.',
+  },
+  systematically: {
+    pos: 'adverb',
+    def: 'According to a careful, organized plan or method rather than at random.',
+    ctx: 'Describes testing, collecting, or changing something in a thorough, orderly way.',
+  },
+  predictably: {
+    pos: 'adverb',
+    def: 'In a dependable way that can be expected or calculated in advance.',
+    ctx: 'Shows that a material or system behaves in a steady, foreseeable way.',
+  },
+  effortlessly: {
+    pos: 'adverb',
+    def: 'In a smooth, easy way that requires little or no physical or mental effort.',
+    ctx: 'Describes an action accomplished easily without strain.',
+  },
+  routinely: {
+    pos: 'adverb',
+    def: 'As a normal, regular part of an everyday procedure or habit.',
+    ctx: 'Shows that an action is carried out regularly as standard practice.',
+  },
+  deliberately: {
+    pos: 'adverb',
+    def: 'On purpose; intentionally and with conscious planning.',
+    ctx: 'Shows that an action was chosen intentionally rather than by accident.',
+  },
+  periodically: {
+    pos: 'adverb',
+    def: 'From time to time at regular or repeated intervals.',
+    ctx: 'Shows that an event or maintenance step repeats at intervals.',
+  },
+  historically: {
+    pos: 'adverb',
+    def: 'In past times, or throughout history.',
+    ctx: 'Refers to how something was done or experienced in earlier historical periods.',
+  },
+  uniquely: {
+    pos: 'adverb',
+    def: 'In a distinctive way that belongs to only one person, species, or thing.',
+    ctx: 'Emphasizes a special quality not shared by others.',
+  },
+  disproportionately: {
+    pos: 'adverb',
+    def: 'To a degree that is much too large or too small in comparison with something else.',
+    ctx: 'Shows that one group or factor bears an unequal, outsized share of an effect.',
+  },
+  comparatively: {
+    pos: 'adverb',
+    def: 'To a moderate degree when judged in comparison with other things.',
+    ctx: 'Evaluates a quality by comparing it against another standard.',
+  },
+  relatively: {
+    pos: 'adverb',
+    def: 'In comparison with other similar things or with what might be expected; fairly.',
+    ctx: 'Indicates a moderate degree when compared with a reference point.',
+  },
+  chemically: {
+    pos: 'adverb',
+    def: 'By means of chemical reactions or with respect to chemical composition.',
+    ctx: 'Refers to how substances interact or are structured at the chemical level.',
+  },
+  structurally: {
+    pos: 'adverb',
+    def: 'In terms of physical construction, framework, or organizational arrangement.',
+    ctx: 'Refers to how a building, organism, or model is physically or logically built.',
+  },
+  socially: {
+    pos: 'adverb',
+    def: 'In relation to society, community life, or interaction with others.',
+    ctx: 'Refers to how people or colony animals interact within a group.',
+  },
+  measurably: {
+    pos: 'adverb',
+    def: 'To a degree large enough to be detected and measured with instruments or tests.',
+    ctx: 'Shows that a change is large enough to be quantified.',
+  },
+  harmlessly: {
+    pos: 'adverb',
+    def: 'In a safe way that causes no damage, injury, or danger.',
+    ctx: 'Shows that something dissipates or burns up without causing harm.',
+  },
+  wisely: {
+    pos: 'adverb',
+    def: 'In a sensible, well-judged way that shows good knowledge and foresight.',
+    ctx: 'Describes making smart, careful choices about resources or actions.',
+  },
+  tightly: {
+    pos: 'adverb',
+    def: 'Firmly, closely, and securely so that nothing can easily slip or escape.',
+    ctx: 'Describes parts held closely together or strictly controlled.',
+  },
+  carefully: {
+    pos: 'adverb',
+    def: 'With close attention and caution in order to avoid mistakes or harm.',
+    ctx: 'Shows that an action or observation is done with thorough attention.',
+  },
+  generously: {
+    pos: 'adverb',
+    def: 'In a plentiful, abundant, or unselfish way.',
+    ctx: 'Shows that something is provided or shared in large, helpful amounts.',
+  },
+  quietly: {
+    pos: 'adverb',
+    def: 'With very little noise or sound; calmly and unobtrusively.',
+    ctx: 'Describes operating or moving with minimal noise.',
+  },
+  preferentially: {
+    pos: 'adverb',
+    def: 'With a tendency to favor or take up one specific type over another.',
+    ctx: 'Shows that a physical or biological process favors one isotope, molecule, or option.',
+  },
+  superficially: {
+    pos: 'adverb',
+    def: 'On the surface only, or at first glance without examining deeper differences.',
+    ctx: 'Describes things that look similar on the surface even if their deeper structure differs.',
+  },
+  paradoxically: {
+    pos: 'adverb',
+    def: 'In a surprising way that seems contradictory at first but is actually true.',
+    ctx: 'Highlights a counterintuitive outcome that seems to contradict common expectations.',
+  },
+  prohibitively: {
+    pos: 'adverb',
+    def: 'To such a high degree (especially of cost or difficulty) that it prevents something from being done.',
+    ctx: 'Describes a cost or barrier so high that it makes an action impractical.',
+  },
+  alternatively: {
+    pos: 'adverb',
+    def: 'As another option or possibility instead of the one just mentioned.',
+    ctx: 'Introduces a second possible explanation, method, or choice.',
+  },
+  up: {
+    pos: 'adverb / preposition',
+    def: 'Toward a higher position, level, or intensity, or completely (as in "warm up" or "use up").',
+    ctx: 'Indicates upward movement, an increase in level, or completion of an action.',
+  },
+  away: {
+    pos: 'adverb',
+    def: 'To or at a distance from a particular place, person, or thing.',
+    ctx: 'Indicates movement or distance further from a starting point.',
+  },
+  ago: {
+    pos: 'adverb',
+    def: 'Before the present time; in the past (used after a measurement of time such as "years ago").',
+    ctx: 'Places an event a specific amount of time in the past.',
+  },
+  before: {
+    pos: 'preposition / conjunction / adverb',
+    def: 'Earlier in time than a particular event, or in front of someone or something.',
+    ctx: 'Marks an earlier stage or time prior to another event.',
+  },
+  once: {
+    pos: 'adverb / conjunction',
+    def: 'On one single occasion, at an earlier time in the past, or as soon as.',
+    ctx: 'Means either "in the past", "one time", or "as soon as" a condition is met.',
+  },
+  twice: {
+    pos: 'adverb',
+    def: 'Two times; on two occasions, or double in amount or degree.',
+    ctx: 'Indicates an action happening two times or a quantity that is double.',
+  },
+  again: {
+    pos: 'adverb',
+    def: 'One more time; returning to a previous state or repeating an action.',
+    ctx: 'Shows that an action repeats or something returns to its earlier state.',
+  },
+  about: {
+    pos: 'preposition / adverb',
+    def: 'On the subject of; concerning; or approximately (nearly).',
+    ctx: 'Indicates either the topic being discussed or an approximate number.',
+  },
+  like: {
+    pos: 'preposition / verb',
+    def: 'Similar to; in the same way as; or such as (preposition); or to enjoy and prefer (verb).',
+    ctx: 'Compares one thing with a similar example or introduces an illustration.',
+  },
+  near: {
+    pos: 'preposition / adjective / adverb',
+    def: 'At or to a short distance away in space or time; close to.',
+    ctx: 'Indicates proximity in location, time, or level.',
+  },
+  nearby: {
+    pos: 'adjective / adverb',
+    def: 'Located a short distance away; not far off.',
+    ctx: 'Describes places, trees, or communities situated close at hand.',
+  },
+  lasts: {
+    pos: 'verb',
+    def: 'Continues in time or remains in working condition for a specified duration (3rd-person singular of "last").',
+    ctx: 'Shows how long an event, battery, or effect continues.',
+    lemma: 'last',
+    inflection: '3rd-person singular of "last"',
+  },
+  lasted: {
+    pos: 'verb',
+    def: 'Continued in time or remained active for a specific duration (past tense of "last").',
+    ctx: 'Shows how long a drought, trial, or historical period continued.',
+    lemma: 'last',
+    inflection: 'past tense of "last"',
+  },
+  lasting: {
+    pos: 'adjective / verb',
+    def: 'Continuing or enduring for a long time; permanent or durable.',
+    ctx: 'Describes an effect, change, or memory that endures over a long period.',
+  },
+  site: {
+    pos: 'noun',
+    def: 'A specific place, piece of land, or location where a building, settlement, or study is situated.',
+    ctx: 'Refers to a physical location, construction site, or archaeological settlement.',
+  },
+  sites: {
+    pos: 'noun',
+    def: 'Specific places, locations, or areas where buildings, habitats, or archaeological remains are situated (plural of "site").',
+    ctx: 'Refers to physical locations, study areas, or historical settlements.',
+    lemma: 'site',
+    inflection: 'plural of "site"',
+  },
+  beaver: {
+    pos: 'noun',
+    def: 'A large semi-aquatic rodent with a flat tail and strong teeth, known for building dams and lodges across streams using branches and mud.',
+    ctx: 'Refers to the dam-building mammal that reshapes stream and wetland habitats.',
+  },
+  beavers: {
+    pos: 'noun',
+    def: 'Large semi-aquatic rodents that build dams across streams using branches and mud (plural of "beaver").',
+    ctx: 'Refers to the animals whose dams create ponds and wetlands.',
+    lemma: 'beaver',
+    inflection: 'plural of "beaver"',
+  },
+  budget: {
+    pos: 'noun',
+    def: 'The total amount of money, energy, or resources available and planned for a specific purpose or period.',
+    ctx: 'Refers to the available financial funds or energy allocation of a household, city, or system.',
+  },
+  pour: {
+    pos: 'verb',
+    def: 'To flow or cause a liquid to flow steadily in a stream from one container or place into another.',
+    ctx: 'Describes transferring water or liquid by letting it flow.',
+  },
+  pouring: {
+    pos: 'verb',
+    def: 'Flowing or causing a liquid to flow steadily in a stream (present participle of "pour").',
+    ctx: 'Describes transferring or directing a steady stream of liquid.',
+    lemma: 'pour',
+    inflection: 'present participle of "pour"',
+  },
+  sleep: {
+    pos: 'noun / verb',
+    def: 'The natural daily state of rest in which the eyes are closed and the body and mind recover, or to rest in this state.',
+    ctx: 'Refers to nightly rest that restores the brain and body.',
+  },
+  sleeping: {
+    pos: 'verb / adjective',
+    def: 'Resting in a state of sleep (present participle of "sleep").',
+    ctx: 'Describes people or animals resting in sleep.',
+    lemma: 'sleep',
+    inflection: 'present participle of "sleep"',
+  },
+  sit: {
+    pos: 'verb',
+    def: 'To rest with the body supported in an upright seated position, or to be located in a particular place.',
+    ctx: 'Describes where people sit or where a structure/component is positioned.',
+  },
+  sits: {
+    pos: 'verb',
+    def: 'Rests in a seated position or is positioned in a specific place (3rd-person singular of "sit").',
+    ctx: 'Indicates where an object, building, or layer is located.',
+    lemma: 'sit',
+    inflection: '3rd-person singular of "sit"',
+  },
+  sitting: {
+    pos: 'verb',
+    def: 'Resting in a seated position or remaining in a particular place (present participle of "sit").',
+    ctx: 'Describes being seated or positioned in a place.',
+    lemma: 'sit',
+    inflection: 'present participle of "sit"',
+  },
+  occurs: {
+    pos: 'verb',
+    def: 'Happens, takes place, or is found in a particular place or condition (3rd-person singular of "occur").',
+    ctx: 'Shows when, where, or how a natural process or event happens.',
+    lemma: 'occur',
+    inflection: '3rd-person singular of "occur"',
+  },
+  happens: {
+    pos: 'verb',
+    def: 'Takes place or occurs as an event or result (3rd-person singular of "happen").',
+    ctx: 'Describes what takes place during a process or experiment.',
+    lemma: 'happen',
+    inflection: '3rd-person singular of "happen"',
+  },
+  differs: {
+    pos: 'verb',
+    def: 'Is unlike or distinct from something else in form, quality, or amount (3rd-person singular of "differ").',
+    ctx: 'Highlights a contrast between two things or methods.',
+    lemma: 'differ',
+    inflection: '3rd-person singular of "differ"',
+  },
+  accelerate: {
+    pos: 'verb',
+    def: 'To begin to move or happen more quickly; to increase the speed or rate of a process.',
+    ctx: 'Describes speeding up a physical, chemical, or social process.',
+  },
+  accelerates: {
+    pos: 'verb',
+    def: 'Moves or happens faster; increases the speed or rate of a process (3rd-person singular of "accelerate").',
+    ctx: 'Shows how a factor speeds up a reaction or change.',
+    lemma: 'accelerate',
+    inflection: '3rd-person singular of "accelerate"',
+  },
+  accelerating: {
+    pos: 'verb / adjective',
+    def: 'Increasing in speed or rate over time (present participle of "accelerate").',
+    ctx: 'Describes a process or rate of change that is speeding up.',
+    lemma: 'accelerate',
+    inflection: 'present participle of "accelerate"',
+  },
+  fluctuations: {
+    pos: 'noun',
+    def: 'Irregular rises and falls in number, temperature, price, or level over time (plural of "fluctuation").',
+    ctx: 'Refers to ups and downs in temperature, water supply, or measurements.',
+    lemma: 'fluctuation',
+    inflection: 'plural of "fluctuation"',
+  },
+  inhabit: {
+    pos: 'verb',
+    def: 'To live, dwell, or occupy a particular environment, region, or habitat.',
+    ctx: 'Describes the environment where a species or community lives.',
+  },
+  inhabited: {
+    pos: 'verb / adjective',
+    def: 'Lived in or occupied by people, animals, or organisms (past tense and participle of "inhabit").',
+    ctx: 'Describes a region or habitat where organisms or people live.',
+    lemma: 'inhabit',
+    inflection: 'past tense and participle of "inhabit"',
+  },
+  sparse: {
+    pos: 'adjective',
+    def: 'Thinly scattered or distributed in small numbers across a wide area; not dense.',
+    ctx: 'Describes scarce rainfall, thin vegetation, or limited data points.',
+  },
+  persistent: {
+    pos: 'adjective',
+    def: 'Continuing firmly over a long period of time without stopping, fading, or giving up.',
+    ctx: 'Describes a long-lasting condition, problem, or effort.',
+  },
+  exert: {
+    pos: 'verb',
+    def: 'To apply or bring to bear a force, pressure, or strong influence on something.',
+    ctx: 'Describes applying physical pressure or a strong influence.',
+  },
+  ascend: {
+    pos: 'verb',
+    def: 'To move, rise, or climb upward toward a higher level or position.',
+    ctx: 'Describes warm air, water, or signals rising upward.',
+  },
+  ascending: {
+    pos: 'verb / adjective',
+    def: 'Rising or moving upward toward a higher level (present participle of "ascend").',
+    ctx: 'Describes pathways, air currents, or signals moving upward.',
+    lemma: 'ascend',
+    inflection: 'present participle of "ascend"',
+  },
+  regarding: {
+    pos: 'preposition',
+    def: 'Concerning; about or in relation to a particular topic or question.',
+    ctx: 'Introduces the topic or issue being considered.',
+  },
+  regarded: {
+    pos: 'verb',
+    def: 'Considered, viewed, or thought of in a specified way (past tense and participle of "regard").',
+    ctx: 'Shows how scholars or observers view or classify something.',
+    lemma: 'regard',
+    inflection: 'past tense and participle of "regard"',
+  },
+  undergoing: {
+    pos: 'verb',
+    def: 'Experiencing or passing through a change, test, or physical process (present participle of "undergo").',
+    ctx: 'Describes a material or organism going through a transformation.',
+    lemma: 'undergo',
+    inflection: 'present participle of "undergo"',
+  },
+  recharges: {
+    pos: 'verb',
+    def: 'Restores electrical energy to a battery, or refills an underground water supply (3rd-person singular of "recharge").',
+    ctx: 'Shows how sunlight refills a battery or rainwater refills groundwater.',
+    lemma: 'recharge',
+    inflection: '3rd-person singular of "recharge"',
+  },
+  accomplishes: {
+    pos: 'verb',
+    def: 'Successfully achieves or completes a task, goal, or function (3rd-person singular of "accomplish").',
+    ctx: 'Shows what a biological or engineering system successfully achieves.',
+    lemma: 'accomplish',
+    inflection: '3rd-person singular of "accomplish"',
+  },
+  damp: {
+    pos: 'adjective',
+    def: 'Slightly wet or moist, especially in soil, air, or cloth.',
+    ctx: 'Describes soil or material that holds a small amount of moisture.',
+  },
+  sore: {
+    pos: 'adjective',
+    def: 'Painful, aching, or uncomfortable from overuse, strain, or irritation.',
+    ctx: 'Describes eyes or muscles that feel tired and painful.',
+  },
+  ponds: {
+    pos: 'noun',
+    def: 'Small bodies of still water, smaller than lakes, formed naturally or built to hold water (plural of "pond").',
+    ctx: 'Refers to small water basins that hold rainwater or stream water.',
+    lemma: 'pond',
+    inflection: 'plural of "pond"',
+  },
+  overflow: {
+    pos: 'verb / noun',
+    def: 'To flow over the edges or brim of a full river, pipe, or basin because there is too much water.',
+    ctx: 'Describes excess stormwater or river water spilling over its normal banks or drains.',
+  },
+  rush: {
+    pos: 'verb / noun',
+    def: 'To move, flow, or act with sudden speed, or a busy period of heavy activity.',
+    ctx: 'Describes water or air moving rapidly, or busy traffic hours.',
+  },
+  person: {
+    pos: 'noun',
+    def: 'An individual human being.',
+    ctx: 'Refers to a single human individual.',
+  },
+  individual: {
+    pos: 'noun / adjective',
+    def: 'A single person, animal, or plant considered separately from its group (noun), or separate and single (adjective).',
+    ctx: 'Refers to one single member of a population or species.',
+  },
+  individuals: {
+    pos: 'noun',
+    def: 'Single people, animals, or organisms considered as separate members of a group (plural of "individual").',
+    ctx: 'Refers to distinct members of a population or study group.',
+    lemma: 'individual',
+    inflection: 'plural of "individual"',
+  },
+  plenty: {
+    pos: 'noun / pronoun',
+    def: 'A large or more than sufficient amount or supply of something.',
+    ctx: 'Indicates an abundant, more than enough supply.',
+  },
+  alongside: {
+    pos: 'preposition / adverb',
+    def: 'Next to, side by side with, or working together with someone or something else.',
+    ctx: 'Shows two things positioned next to each other or operating together.',
+  },
+  approaching: {
+    pos: 'verb / adjective',
+    def: 'Coming nearer in distance, time, or level (present participle of "approach").',
+    ctx: 'Describes something moving closer in space or time.',
+    lemma: 'approach',
+    inflection: 'present participle of "approach"',
+  },
+  dying: {
+    pos: 'verb / adjective',
+    def: 'Ceasing to live, or gradually disappearing and coming to an end (present participle of "die").',
+    ctx: 'Describes plants, trees, or cells that are losing life or failing.',
+    lemma: 'die',
+    inflection: 'present participle of "die"',
+  },
+  castes: {
+    pos: 'noun',
+    def: 'Distinct specialized groups within a social insect colony (such as queens, workers, and soldiers) or society (plural of "caste").',
+    ctx: 'Refers to specialized reproductive and non-reproductive worker groups in ant, bee, or termite colonies.',
+    lemma: 'caste',
+    inflection: 'plural of "caste"',
+  },
+  speaker: {
+    pos: 'noun',
+    def: 'A person who speaks or delivers a talk, or a user of a particular language.',
+    ctx: 'Refers to the person speaking or delivering a lecture.',
+  },
+  stacked: {
+    pos: 'adjective / verb',
+    def: 'Arranged in neat vertical layers or piles one on top of another (past tense and participle of "stack").',
+    ctx: 'Describes trays, layers, or materials placed vertically one above another.',
+    lemma: 'stack',
+    inflection: 'past tense and participle of "stack"',
+  },
+  amount: {
+    pos: 'noun',
+    def: 'A quantity, total, or volume of a substance, energy, time, or material.',
+    ctx: 'Refers to how much of a substance, energy, or resource is present.',
+  },
+  amounts: {
+    pos: 'noun',
+    def: 'Quantities, totals, or volumes of a substance, energy, or resource (plural of "amount").',
+    ctx: 'Refers to measured quantities or volumes of something.',
+    lemma: 'amount',
+    inflection: 'plural of "amount"',
+  },
+  declining: {
+    pos: 'verb / adjective',
+    def: 'Becoming smaller, fewer, or weaker over time; decreasing (present participle of "decline").',
+    ctx: 'Describes populations, resources, or rates that are dropping over time.',
+    lemma: 'decline',
+    inflection: 'present participle of "decline"',
+  },
+  declined: {
+    pos: 'verb',
+    def: 'Became smaller, fewer, or weaker; decreased in number, level, or strength (past tense of "decline").',
+    ctx: 'Shows that a population, city, or measurement dropped over time.',
+    lemma: 'decline',
+    inflection: 'past tense of "decline"',
+  },
+  harmonized: {
+    pos: 'adjective / verb',
+    def: 'Made consistent and compatible across different studies, laboratories, or standards (past tense and participle of "harmonize").',
+    ctx: 'Describes research protocols or measurements standardized so results can be compared fairly.',
+    lemma: 'harmonize',
+    inflection: 'past tense and participle of "harmonize"',
+  },
+  portray: {
+    pos: 'verb',
+    def: 'To describe, represent, or show someone or something in a particular way.',
+    ctx: 'Describes how a model or historical account represents a process.',
+  },
+  portrayed: {
+    pos: 'verb',
+    def: 'Described, represented, or pictured in a particular way (past tense and participle of "portray").',
+    ctx: 'Shows how earlier theories or texts represented a system.',
+    lemma: 'portray',
+    inflection: 'past tense and participle of "portray"',
+  },
+  peer: {
+    pos: 'noun',
+    def: 'A person of the same age, academic level, or professional standing as another (as in "peer teaching" or "peer review").',
+    ctx: 'Refers to fellow students or fellow scientists in the same field.',
+  },
+  peers: {
+    pos: 'noun',
+    def: 'People of the same age, class, or professional standing (plural of "peer").',
+    ctx: 'Refers to fellow students, classmates, or colleagues.',
+    lemma: 'peer',
+    inflection: 'plural of "peer"',
+  },
+  pinpoint: {
+    pos: 'verb',
+    def: 'To find, identify, or locate something with exact precision.',
+    ctx: 'Describes locating the exact source, time, or position of something.',
+  },
+  out: {
+    pos: 'adverb / preposition',
+    def: 'Away from the inside or centre toward the outside, or into open view.',
+    ctx: 'Indicates movement outward, release, or completion.',
+  },
+  things: {
+    pos: 'noun',
+    def: 'Objects, living creatures, materials, or matters (plural of "thing").',
+    ctx: 'Refers to objects, organisms, or items in context.',
+    lemma: 'thing',
+    inflection: 'plural of "thing"',
+  },
+  lend: {
+    pos: 'verb',
+    def: 'To allow someone to use something temporarily on the condition that it is returned, or to add a quality.',
+    ctx: 'Describes sharing tools or books temporarily, or adding support.',
+  },
+  upfront: {
+    pos: 'adjective / adverb',
+    def: 'Paid, required, or happening at the very beginning before a project, purchase, or process starts.',
+    ctx: 'Describes initial costs or effort required at the start.',
+  },
+  challenge: {
+    pos: 'noun / verb',
+    def: 'A difficult problem or task that requires effort and skill to overcome (noun), or to question and test a claim (verb).',
+    ctx: 'Refers to a demanding obstacle/problem or testing an assumption.',
+  },
+  launch: {
+    pos: 'verb / noun',
+    def: 'To send a rocket or satellite into space, or to start an organized program or study; or the act of launching.',
+    ctx: 'Refers to sending spacecraft into orbit or starting a new initiative.',
+  },
+  launches: {
+    pos: 'noun / verb',
+    def: 'Events in which rockets or satellites are sent into space (plural noun), or sends forth (verb).',
+    ctx: 'Refers to space rocket launches or starting new programs.',
+    lemma: 'launch',
+    inflection: 'plural or 3rd-person singular of "launch"',
+  },
 };
 
 const POLYSEMOUS_WORD_SENSES: Record<string, PrecomputedSense[]> = {
@@ -2346,6 +4714,20 @@ const POLYSEMOUS_WORD_SENSES: Record<string, PrecomputedSense[]> = {
       keywords: ['roof', 'plants', 'leaves', 'sunlight', 'ground'],
     },
   ],
+  sound: [
+    {
+      pos: 'noun',
+      def: 'Vibrations that travel through air or water and can be heard when they reach the ear.',
+      ctx: 'Audible vibrations, calls, or acoustic signals travelling through air or water.',
+      keywords: ['hear', 'ear', 'noise', 'frequency', 'pitch', 'calls', 'acoustic', 'waves', 'water', 'record', 'microphones'],
+    },
+    {
+      pos: 'adjective',
+      def: 'Reliable, well-reasoned, and in good, healthy condition.',
+      ctx: 'Describes reasoning, evidence, or structures that are solid and reliable.',
+      keywords: ['evidence', 'judgment', 'method', 'reasoning', 'scientifically', 'structure'],
+    },
+  ],
 };
 
 function ukToUsVariants(w: string): string[] {
@@ -2368,12 +4750,15 @@ interface CandidateMorph {
   lemma: string;
   inflection?: string;
   preferredPos?: 'noun' | 'verb' | 'adjective' | 'adverb';
+  isExact?: boolean;
 }
 
 function getMorphologicalCandidates(rawWord: string): CandidateMorph[] {
   const results: CandidateMorph[] = [];
   for (const w of ukToUsVariants(rawWord.toLowerCase())) {
-    // For -ing and -ed words, check the base verb first before a potentially obscure exact-form noun!
+    // Exact form candidate
+    results.push({ lemma: w, isExact: true });
+
     if (w.endsWith('ing') && w.length > 4) {
       const stem = w.slice(0, -3);
       results.push({ lemma: stem + 'e', inflection: `present participle of "${stem + 'e'}"`, preferredPos: 'verb' });
@@ -2403,10 +4788,6 @@ function getMorphologicalCandidates(rawWord: string): CandidateMorph[] {
       results.push({ lemma: w.slice(0, -2), inflection: `plural or 3rd-person singular of "${w.slice(0, -2)}"` });
       results.push({ lemma: w.slice(0, -1), inflection: `plural or 3rd-person singular of "${w.slice(0, -1)}"` });
     }
-
-    // Exact form candidate
-    results.push({ lemma: w });
-
     if (w.endsWith('ier') && w.length > 4) {
       results.push({ lemma: w.slice(0, -3) + 'y', inflection: `comparative form of "${w.slice(0, -3) + 'y'}"`, preferredPos: 'adjective' });
     }
@@ -2460,6 +4841,92 @@ export function normalizeLookupToken(token: string): string {
     .trim();
 }
 
+const DETERMINERS_SET = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'my', 'your', 'his', 'her', 'its', 'our', 'their',
+  'some', 'any', 'each', 'every', 'no', 'another', 'many', 'several', 'few', 'all', 'both',
+]);
+
+const LINKING_VERBS_SET = new Set([
+  'is', 'are', 'was', 'were', 'be', 'been', 'being', 'seem', 'seems', 'seemed', 'become', 'becomes', 'became',
+  'remain', 'remains', 'remained', 'stay', 'stays', 'stayed', 'appear', 'appears', 'appeared', 'feel', 'feels', 'felt',
+  'look', 'looks', 'looked',
+]);
+
+const MODALS_AUX_SET = new Set([
+  'can', 'cannot', 'could', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'do', 'does', 'did',
+]);
+
+const PREPOSITIONS_SET = new Set([
+  'of', 'in', 'on', 'at', 'from', 'with', 'without', 'into', 'onto', 'upon', 'during', 'between', 'among',
+  'within', 'through', 'throughout', 'across', 'toward', 'towards', 'against', 'beside', 'under', 'above',
+  'below', 'behind', 'beyond', 'by', 'for', 'about', 'after', 'before', 'around', 'over',
+]);
+
+const SUBJECT_PRONOUNS_SET = new Set(['i', 'you', 'he', 'she', 'it', 'we', 'they', 'who', 'which', 'that']);
+
+const DEGREE_ADVERBS_SET = new Set([
+  'very', 'quite', 'rather', 'extremely', 'highly', 'remarkably', 'particularly', 'especially', 'too', 'so',
+  'more', 'most', 'less', 'least', 'completely', 'entirely', 'almost', 'nearly',
+]);
+
+function inferPosScoresFromSentence(norm: string, sentence: string): Record<'noun' | 'verb' | 'adjective' | 'adverb', number> {
+  const scores: Record<'noun' | 'verb' | 'adjective' | 'adverb', number> = {
+    noun: 0,
+    verb: 0,
+    adjective: 0,
+    adverb: 0,
+  };
+  if (!sentence) return scores;
+
+  const tokens = (sentence.toLowerCase().match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || []).map(normalizeLookupToken);
+  const idx = tokens.indexOf(norm);
+  if (idx === -1) return scores;
+
+  const prev = idx > 0 ? tokens[idx - 1] : '';
+  const next = idx < tokens.length - 1 ? tokens[idx + 1] : '';
+
+  // Suffix cues
+  if (norm.endsWith('ly') && norm.length > 4 && !['early', 'daily', 'weekly', 'monthly', 'yearly', 'costly', 'likely', 'unlikely', 'friendly', 'lively', 'lonely', 'lovely', 'orderly', 'timely', 'chilly'].includes(norm)) {
+    scores.adverb += 8;
+  }
+  if (/(?:tion|sion|ment|ness|ity|ism|ist|ance|ence|ship|ology|ometry)$/.test(norm)) {
+    scores.noun += 6;
+  }
+  if (/(?:ous|ive|able|ible|ful|less|ic|ical)$/.test(norm)) {
+    scores.adjective += 6;
+  }
+
+  // Left context cues
+  if (prev === 'to' || MODALS_AUX_SET.has(prev)) {
+    scores.verb += 8;
+  } else if (SUBJECT_PRONOUNS_SET.has(prev)) {
+    scores.verb += 6;
+  } else if (DEGREE_ADVERBS_SET.has(prev)) {
+    scores.adjective += 6;
+    scores.adverb += 3;
+  } else if (LINKING_VERBS_SET.has(prev)) {
+    if (!next || PREPOSITIONS_SET.has(next) || ['and', 'or', 'but', 'that', 'to', 'than', 'as', 'when', 'while', 'because', 'if'].includes(next)) {
+      scores.adjective += 6;
+    } else if (DETERMINERS_SET.has(next)) {
+      scores.verb += 4;
+    }
+  } else if (DETERMINERS_SET.has(prev) || PREPOSITIONS_SET.has(prev)) {
+    if (!next || PREPOSITIONS_SET.has(next) || LINKING_VERBS_SET.has(next) || MODALS_AUX_SET.has(next) || ['and', 'or', 'but', 'that', 'which', 'who'].includes(next)) {
+      scores.noun += 7;
+    } else {
+      scores.adjective += 6;
+      scores.noun += 2;
+    }
+  }
+
+  // Right context cues
+  if (DETERMINERS_SET.has(next) && !DETERMINERS_SET.has(prev) && !PREPOSITIONS_SET.has(prev)) {
+    scores.verb += 6;
+  }
+
+  return scores;
+}
+
 const regularLessons = INITIAL_LESSONS;
 const diagnosticLessons = DIAGNOSTIC_PASSAGES.map(addLessonVocabulary);
 const allLessons: ReadingLesson[] = [...regularLessons, ...diagnosticLessons];
@@ -2483,6 +4950,7 @@ const wordOccurrences = new Map<
     count: number;
     sampleSentence: string;
     sampleTopic: string;
+    sentences: string[];
   }
 >();
 
@@ -2501,12 +4969,14 @@ for (const lesson of allLessons) {
       if (existing) {
         existing.count += 1;
         existing.surfaceForms.add(raw);
+        if (existing.sentences.length < 5) existing.sentences.push(sentence.trim());
       } else {
         wordOccurrences.set(norm, {
           surfaceForms: new Set([raw]),
           count: 1,
           sampleSentence: sentence.trim(),
           sampleTopic: lesson.topic,
+          sentences: [sentence.trim()],
         });
       }
     }
@@ -2521,8 +4991,103 @@ for (const key of [...Object.keys(POLYSEMOUS_WORD_SENSES), ...Object.keys(CURATE
       count: 0,
       sampleSentence: '',
       sampleTopic: 'Academic reading',
+      sentences: [],
     });
   }
+}
+
+function expandCircularDerivativeDefinition(norm: string, pos: string, currentDef: string): string {
+  if (!isCircularDefinition(norm, norm, currentDef)) return currentDef;
+
+  // 1. -ly Adverbs: expand using the base adjective's non-circular definition
+  if (norm.endsWith('ly') && norm.length > 4) {
+    const stems = [norm.slice(0, -2)];
+    if (norm.endsWith('ily')) stems.unshift(norm.slice(0, -3) + 'y');
+    if (norm.endsWith('ally')) stems.unshift(norm.slice(0, -4) + 'ic');
+    for (const st of stems) {
+      const coreAdj = CURATED_CORE_DICTIONARY[st];
+      if (coreAdj) {
+        const cleanAdj = coreAdj.def.replace(/\.$/, '');
+        return `In a way that is ${cleanAdj.charAt(0).toLowerCase() + cleanAdj.slice(1)}.`;
+      }
+      const adjSyns = getWordNetSynsets(st).filter((s) => s.pos === 'adjective' && !isCircularDefinition(st, st, s.definition));
+      if (adjSyns.length > 0) {
+        const cleanAdj = adjSyns[0].definition.replace(/\.$/, '');
+        return `In a way that is ${cleanAdj.charAt(0).toLowerCase() + cleanAdj.slice(1)}.`;
+      }
+    }
+  }
+
+  // 2. Negative prefixes (un-, in-, im-, non-)
+  for (const prefix of ['un', 'in', 'im', 'non-']) {
+    if (norm.startsWith(prefix) && norm.length > prefix.length + 3) {
+      const base = norm.slice(prefix.length);
+      const baseSyns = getWordNetSynsets(base).filter((s) => !isCircularDefinition(base, base, s.definition));
+      if (baseSyns.length > 0) {
+        const cleanBase = baseSyns[0].definition.replace(/\.$/, '');
+        return `Not ${cleanBase.charAt(0).toLowerCase() + cleanBase.slice(1)}.`;
+      }
+    }
+  }
+
+  return currentDef;
+}
+
+function extractForwardNounPhrase(
+  rawWords: string[],
+  normWords: string[],
+  startIdx: number
+): string {
+  const stopTokens = new Set([
+    ...Array.from(PREPOSITIONS_SET),
+    ...Array.from(LINKING_VERBS_SET),
+    ...Array.from(MODALS_AUX_SET),
+    'and',
+    'or',
+    'but',
+    'that',
+    'which',
+    'who',
+    'whom',
+    'whose',
+    'where',
+    'when',
+    'while',
+    'because',
+    'although',
+    'though',
+    'if',
+    'than',
+    'as',
+    'to',
+    'so',
+  ]);
+  const collected: string[] = [];
+  for (let i = startIdx; i < Math.min(rawWords.length, startIdx + 4); i++) {
+    const n = normWords[i];
+    if (!n) break;
+    if (collected.length > 0 && (stopTokens.has(n) || DETERMINERS_SET.has(n))) {
+      break;
+    }
+    if (collected.length === 0 && stopTokens.has(n)) {
+      break;
+    }
+    collected.push(rawWords[i].toLowerCase());
+    // Stop once we have reached a likely head noun (not a determiner and not a common adjective suffix when another content word follows)
+    const nextN = i + 1 < normWords.length ? normWords[i + 1] : '';
+    const isDet = DETERMINERS_SET.has(n);
+    const looksLikeModifier =
+      isDet ||
+      /(?:al|ic|ive|ous|ful|less|able|ible|ary|ory|ent|ant|ed|ing)$/.test(n);
+    if (!looksLikeModifier || !nextN || stopTokens.has(nextN) || DETERMINERS_SET.has(nextN)) {
+      break;
+    }
+  }
+  // Never return a trailing determiner alone
+  if (collected.length === 1 && DETERMINERS_SET.has(collected[0])) {
+    return '';
+  }
+  return collected.join(' ');
 }
 
 function buildContextualMeaning(
@@ -2530,14 +5095,79 @@ function buildContextualMeaning(
   pos: string,
   def: string,
   inflection: string | undefined,
+  sampleSentence: string,
   sampleTopic: string
 ): string {
-  const cleanDef = def.replace(/\.$/, '');
+  const cleanDef = def.replace(/\.$/, '').trim();
   const lowerDef = cleanDef.charAt(0).toLowerCase() + cleanDef.slice(1);
-  if (inflection) {
-    return `Used here as the ${inflection}: ${lowerDef}.`;
+  const shortDef = lowerDef.split(';')[0].trim();
+
+  // Extract neighboring words in sampleSentence if available
+  if (sampleSentence) {
+    const rawWords = sampleSentence.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || [];
+    const normWords = rawWords.map(normalizeLookupToken);
+    const idx = normWords.indexOf(norm);
+
+    if (idx !== -1) {
+      const prevRaw = idx > 0 ? rawWords[idx - 1] : '';
+      const nextRaw = idx < rawWords.length - 1 ? rawWords[idx + 1] : '';
+      const prevNorm = idx > 0 ? normWords[idx - 1] : '';
+      const nextNorm = idx < normWords.length - 1 ? normWords[idx + 1] : '';
+
+      if (pos.startsWith('adjective')) {
+        const targetPhrase = extractForwardNounPhrase(rawWords, normWords, idx + 1);
+        if (targetPhrase) {
+          return `Describes the ${targetPhrase} in this passage—meaning ${shortDef}.`;
+        }
+        if (prevRaw && LINKING_VERBS_SET.has(prevNorm) && idx >= 2) {
+          const subj = rawWords[idx - 2].toLowerCase();
+          if (!DETERMINERS_SET.has(subj) && !PREPOSITIONS_SET.has(subj)) {
+            return `Describes the quality or state of the ${subj} here: ${shortDef}.`;
+          }
+        }
+        return `Describes a key quality or characteristic in this ${sampleTopic.toLowerCase()} passage: ${shortDef}.`;
+      }
+
+      if (pos.startsWith('adverb')) {
+        if (prevRaw && !DETERMINERS_SET.has(prevNorm) && !PREPOSITIONS_SET.has(prevNorm)) {
+          return `Modifies "${prevRaw.toLowerCase()}" in the passage, showing how the action or state happens (${shortDef}).`;
+        }
+        if (nextRaw && !DETERMINERS_SET.has(nextNorm) && !PREPOSITIONS_SET.has(nextNorm)) {
+          return `Modifies "${nextRaw.toLowerCase()}" in the passage, explaining the degree or manner (${shortDef}).`;
+        }
+        return `Explains the manner, degree, or timing of the action in this sentence (${shortDef}).`;
+      }
+
+      if (pos.startsWith('verb')) {
+        const objPhrase = extractForwardNounPhrase(rawWords, normWords, idx + 1);
+        if (inflection && objPhrase) {
+          return `Describes the action on ${objPhrase} (${inflection}): ${shortDef}.`;
+        }
+        if (objPhrase) {
+          return `Describes the action performed on ${objPhrase} in the passage: ${shortDef}.`;
+        }
+        if (inflection) {
+          return `Expresses the action in this clause (${inflection}): ${shortDef}.`;
+        }
+        return `Describes the action or process taking place in this sentence: ${shortDef}.`;
+      }
+
+      if (pos.startsWith('noun')) {
+        if (prevRaw && !DETERMINERS_SET.has(prevNorm) && !PREPOSITIONS_SET.has(prevNorm) && !LINKING_VERBS_SET.has(prevNorm) && !MODALS_AUX_SET.has(prevNorm)) {
+          return `Refers in this passage (${prevRaw.toLowerCase()} ${rawWords[idx].toLowerCase()}) to ${shortDef}.`;
+        }
+        if (inflection) {
+          return `Refers in this ${sampleTopic.toLowerCase()} passage (${inflection}) to ${shortDef}.`;
+        }
+        return `Refers in this ${sampleTopic.toLowerCase()} passage to ${shortDef}.`;
+      }
+    }
   }
-  return `In this ${sampleTopic.toLowerCase()} context, "${norm}" (${pos}) means ${lowerDef}.`;
+
+  if (inflection) {
+    return `Expresses the ${inflection} in context: ${shortDef}.`;
+  }
+  return `Explains the ${pos} in this ${sampleTopic.toLowerCase()} passage: ${shortDef}.`;
 }
 
 // 3. Build the precomputed dictionary for every distinct word
@@ -2642,64 +5272,93 @@ for (const [norm, occ] of wordOccurrences.entries()) {
     continue;
   }
 
-  // Priority 6: WordNet 3.1 lookup (direct or via morphological candidate lemmas)
+  // Priority 6: WordNet 3.1 lookup with SemCor frequency + passage syntactic POS scoring
   const isAlwaysCapitalized =
     occ.surfaceForms.size > 0 &&
     Array.from(occ.surfaceForms).every((sf) => /^[A-Z]/.test(sf));
 
+  const sentencePosScores: Record<'noun' | 'verb' | 'adjective' | 'adverb', number> = {
+    noun: 0,
+    verb: 0,
+    adjective: 0,
+    adverb: 0,
+  };
+  for (const s of occ.sentences) {
+    const sc = inferPosScoresFromSentence(norm, s);
+    sentencePosScores.noun += sc.noun;
+    sentencePosScores.verb += sc.verb;
+    sentencePosScores.adjective += sc.adjective;
+    sentencePosScores.adverb += sc.adverb;
+  }
+
   const morphCandidates = getMorphologicalCandidates(norm);
-  let matchedSynsets: WordNetSynset[] = [];
-  let matchedCand: CandidateMorph | null = null;
+  let bestPool: Array<{ synset: WordNetSynset; cand: CandidateMorph; score: number }> = [];
 
   for (const cand of morphCandidates) {
-    const synsets = getWordNetSynsets(cand.lemma, isAlwaysCapitalized);
-    if (synsets.length > 0) {
-      if (cand.preferredPos) {
-        const posFiltered = synsets.filter((s) => s.pos === cand.preferredPos);
-        if (posFiltered.length > 0) {
-          matchedSynsets = [...posFiltered, ...synsets];
-          matchedCand = cand;
-          break;
-        }
-      } else {
-        matchedSynsets = synsets;
-        matchedCand = cand;
-        break;
+    let synsets = getWordNetSynsets(cand.lemma, isAlwaysCapitalized);
+    if (synsets.length === 0) {
+      synsets = getWordNetSynsets(cand.lemma, true);
+    }
+    for (const syn of synsets) {
+      let score = Math.min(syn.tagCnt, 100) * 1.5;
+      if (syn.senseNum === 1) score += 12;
+      else if (syn.senseNum === 2) score += 5;
+
+      // Syntactic POS alignment with actual passage sentences
+      const effectiveSynPos = norm.endsWith('ly') && cand.preferredPos === 'adjective' ? 'adverb' : syn.pos;
+      score += sentencePosScores[effectiveSynPos] * 2.5;
+
+      // Morphological preferred POS bonus
+      if (cand.preferredPos && syn.pos === cand.preferredPos) {
+        score += 14;
       }
+
+      // Exact lemma bonus when the exact form has real corpus frequency
+      if (cand.isExact && syn.tagCnt >= 3) {
+        score += 18;
+      } else if (cand.isExact && syn.tagCnt === 0 && !cand.preferredPos) {
+        // Penalize obscure zero-count exact-form nouns when an inflected verb/adj stem exists
+        score -= 8;
+      }
+
+      // Strongly penalize circular definitions
+      if (isCircularDefinition(norm, cand.lemma, syn.definition)) {
+        score -= 35;
+      }
+
+      bestPool.push({ synset: syn, cand, score });
     }
   }
 
-  if (matchedSynsets.length === 0) {
-    for (const cand of morphCandidates) {
-      const synsets = getWordNetSynsets(cand.lemma, true);
-      if (synsets.length > 0) {
-        matchedSynsets = synsets;
-        matchedCand = cand;
-        break;
-      }
-    }
-  }
+  if (bestPool.length > 0) {
+    bestPool.sort((a, b) => b.score - a.score);
+    const topItem = bestPool[0];
+    const primary = topItem.synset;
+    const matchedCand = topItem.cand;
 
-  if (matchedSynsets.length > 0 && matchedCand) {
-    const nonCircular = matchedSynsets.filter(
-      (s) => !isCircularDefinition(norm, matchedCand!.lemma, s.definition)
-    );
-    const chosenList = nonCircular.length > 0 ? nonCircular : matchedSynsets;
-    const primary = chosenList[0];
+    const effectivePos =
+      norm.endsWith('ly') && matchedCand.preferredPos === 'adjective'
+        ? 'adverb'
+        : primary.pos;
+
+    const finalDef = expandCircularDerivativeDefinition(norm, effectivePos, primary.definition);
 
     const syns = primary.synonyms
-      .filter((s) => s.toLowerCase() !== norm && s.toLowerCase() !== matchedCand!.lemma)
+      .filter((s) => s.toLowerCase() !== norm && s.toLowerCase() !== matchedCand.lemma)
       .slice(0, 3);
 
     const distinctPosSenses: PrecomputedSense[] = [];
     const seenPos = new Set<string>();
-    for (const s of chosenList) {
-      if (!seenPos.has(s.pos) && distinctPosSenses.length < 3) {
-        seenPos.add(s.pos);
+    for (const item of bestPool) {
+      const s = item.synset;
+      const itemPos = norm.endsWith('ly') && item.cand.preferredPos === 'adjective' ? 'adverb' : s.pos;
+      if (!seenPos.has(itemPos) && distinctPosSenses.length < 3) {
+        seenPos.add(itemPos);
+        const sDef = expandCircularDerivativeDefinition(norm, itemPos, s.definition);
         distinctPosSenses.push({
-          pos: s.pos,
-          def: s.definition,
-          ctx: buildContextualMeaning(norm, s.pos, s.definition, matchedCand.inflection, occ.sampleTopic),
+          pos: itemPos,
+          def: sDef,
+          ctx: buildContextualMeaning(norm, itemPos, sDef, item.cand.inflection, occ.sampleSentence, occ.sampleTopic),
           ex: s.examples[0],
         });
       }
@@ -2709,20 +5368,16 @@ for (const [norm, occ] of wordOccurrences.entries()) {
       ambiguousCount += 1;
     }
 
-    const effectivePos =
-      norm.endsWith('ly') && matchedCand.preferredPos === 'adjective'
-        ? 'adverb'
-        : primary.pos;
-
     dictionary[norm] = {
       word: norm,
       pos: effectivePos,
-      def: primary.definition,
+      def: finalDef,
       ctx: buildContextualMeaning(
         norm,
         effectivePos,
-        primary.definition,
+        finalDef,
         matchedCand.inflection,
+        occ.sampleSentence,
         occ.sampleTopic
       ),
       ...(primary.examples[0] ? { ex: primary.examples[0] } : {}),
@@ -2763,7 +5418,14 @@ for (const [norm, occ] of wordOccurrences.entries()) {
       word: norm,
       pos: 'adjective / compound',
       def: `Compound expression combining ${partDefs.join(' and ')}.`,
-      ctx: `Used in this ${occ.sampleTopic.toLowerCase()} passage to describe ${parts.join(' ')}.`,
+      ctx: buildContextualMeaning(
+        norm,
+        'adjective',
+        `combining ${parts.join(' and ')}`,
+        undefined,
+        occ.sampleSentence,
+        occ.sampleTopic
+      ),
     };
     continue;
   }

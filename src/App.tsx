@@ -177,6 +177,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [activeTab, setActiveTab] = useState<NavTab>('library');
   const [mobileNavOpen, setMobileNavOpen] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
   const [geminiConfigured, setGeminiConfigured] = useState<boolean>(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
@@ -342,8 +343,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   };
 
   useEffect(() => {
-    testConnection();
-  }, []);
+    if (authReady) {
+      testConnection();
+    }
+  }, [authReady]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -357,10 +360,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         sessionStorage.setItem('fluentloop_initial_signout_done_v1', 'true');
         await signOut(auth).catch(() => {});
         setCurrentUser(null);
+        setAuthReady(true);
         return;
       }
 
       setCurrentUser(user);
+      setAuthReady(true);
       if (user && !user.isAnonymous) {
         try {
           const isFreshNewUserMode =
@@ -491,6 +496,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   }, [currentUser, isAdminVerified, activeTab]);
 
   useEffect(() => {
+    if (!authReady) return;
     const q = query(collection(db, 'lessons'), where('status', '==', 'published'));
     const unsub = onSnapshot(
       q,
@@ -515,10 +521,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       }
     );
     return () => unsub();
-  }, []);
+  }, [authReady]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!authReady || !currentUser || currentUser.isAnonymous) return;
 
     const attemptsQ = query(collection(db, 'attempts'), where('userId', '==', currentUser.uid));
     const unsubAttempts = onSnapshot(
@@ -571,7 +577,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       unsubAttempts();
       unsubVocab();
     };
-  }, [currentUser]);
+  }, [authReady, currentUser]);
 
   useEffect(() => {
     if (placementLevel || startingLevel) {
@@ -901,7 +907,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
       if (currentUser && !currentUser.isAnonymous) {
         try {
-          await setDoc(doc(db, 'vocabulary', newItem.id), newItem);
+          await setDoc(doc(db, 'vocabulary', newItem.id), {
+            ...newItem,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
         } catch (err) {
           handleFirestoreError(err, OperationType.CREATE, `vocabulary/${newItem.id}`);
         }
@@ -1116,16 +1126,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setCompletionNotice(null);
     setPendingStepFeedback(null);
 
-    // 1. Try Firebase Anonymous Authentication first; fall back automatically if not enabled in console
-    let activeUid = auth.currentUser?.uid;
-    if (!auth.currentUser) {
-      try {
-        const anonCred = await signInAnonymously(auth);
-        activeUid = anonCred.user.uid;
-      } catch {
-        // Automatic fallback to server/local session ID when Anonymous Sign-In is disabled in Firebase Console
-      }
-    }
+    const activeUid = auth.currentUser?.uid;
 
     try {
       const existingSession = !forceNew ? placementSession : null;

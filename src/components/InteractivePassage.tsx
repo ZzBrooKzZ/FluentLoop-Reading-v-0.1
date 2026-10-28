@@ -4,6 +4,7 @@ import { Bookmark, Check, Volume2, X, Sparkles, BookOpen } from 'lucide-react';
 import { CEFRLevel, VocabularyAnnotation } from '../types/reading';
 import {
   extractSentenceWithOffset,
+  formatPartOfSpeechLabel,
   lookupPassageWord,
   normalizeLookupToken,
   stripSurroundingPunctuation,
@@ -751,8 +752,11 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
                       <Volume2 className="h-3.5 w-3.5" />
                     </button>
                     {activeVocab.partOfSpeech && (
-                      <span className="font-mono-code text-[11px] font-semibold uppercase tracking-wider text-[#A63816]">
-                        {activeVocab.partOfSpeech}
+                      <span
+                        data-vocab-pos="true"
+                        className="rounded bg-[#F7E9DC] px-1.5 py-0.5 font-mono-code text-[11px] font-semibold tracking-wide text-[#A63816]"
+                      >
+                        {formatPartOfSpeechLabel(activeVocab.partOfSpeech)}
                       </span>
                     )}
                   </div>
@@ -802,37 +806,46 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
 
               {/* English-to-English Definitions Stack */}
               <div className="mt-2.5 space-y-2">
-                <div className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-2.5">
+                <div
+                  data-vocab-definition="general"
+                  className="rounded-lg border border-[#E3D7C3] bg-[#FAF7F1] p-2.5"
+                >
                   <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#76675B]">
                     <BookOpen className="h-3 w-3 text-[#A63816]" />
-                    <span>English Definition</span>
+                    <span>General meaning</span>
                   </div>
                   <p className="mt-0.5 text-xs leading-relaxed text-[#171615]">
-                    {activeVocab.simpleDefinition}
+                    {activeVocab.simpleDefinition || 'A word or expression used in this English passage.'}
                   </p>
                 </div>
 
-                <div
-                  data-vocab-definition="context"
-                  className="rounded-lg border border-[#E3D7C3] bg-[#F7E9DC]/70 p-2.5"
-                >
-                  <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#A63816]">
-                    <Sparkles className="h-3 w-3 text-[#A63816]" />
-                    <span>Meaning in This Passage</span>
-                  </div>
-                  <p className="mt-0.5 text-xs leading-relaxed text-[#171615]">
-                    {activeVocab.contextMeaning}
-                  </p>
-                </div>
+                {activeVocab.contextMeaning &&
+                  activeVocab.contextMeaning.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ') !==
+                    (activeVocab.simpleDefinition || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ') && (
+                    <div
+                      data-vocab-definition="context"
+                      className="rounded-lg border border-[#E3D7C3] bg-[#F7E9DC]/70 p-2.5"
+                    >
+                      <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#A63816]">
+                        <Sparkles className="h-3 w-3 text-[#A63816]" />
+                        <span>Meaning here</span>
+                      </div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-[#171615]">
+                        {activeVocab.contextMeaning}
+                      </p>
+                    </div>
+                  )}
               </div>
 
               {/* Example Sentence & Synonyms (shown only when adding value) */}
-              {activeVocab.exampleSentence && (
-                <div className="mt-2.5 text-[11px] leading-relaxed text-[#76675B]">
-                  <span className="font-semibold text-[#171615]">Example: </span>
-                  <span className="italic">“{activeVocab.exampleSentence}”</span>
-                </div>
-              )}
+              {activeVocab.exampleSentence &&
+                activeVocab.exampleSentence.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ') !==
+                  (activeVocab.originalSentence || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ') && (
+                  <div className="mt-2.5 text-[11px] leading-relaxed text-[#76675B]">
+                    <span className="font-semibold text-[#171615]">Example: </span>
+                    <span className="italic">“{activeVocab.exampleSentence}”</span>
+                  </div>
+                )}
 
               {activeVocab.synonyms && activeVocab.synonyms.length > 0 && (
                 <div className="mt-1.5 text-[11px] text-[#76675B]">
@@ -1005,7 +1018,7 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
                 }`}
               >
                 <span>{v.word}</span>
-                <span className="text-[10px] opacity-70">({v.partOfSpeech})</span>
+                <span className="text-[10px] opacity-70">({formatPartOfSpeechLabel(v.partOfSpeech)})</span>
                 {isSaved && <Check className="h-3 w-3 text-[#287A52]" />}
               </button>
             );

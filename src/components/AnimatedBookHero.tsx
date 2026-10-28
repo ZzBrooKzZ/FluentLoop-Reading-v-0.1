@@ -1,35 +1,47 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface AnimatedBookHeroProps {
   className?: string;
 }
 
+// Track within the browser session whether the opening sequence has already played
+// so tab switches or parent re-mounts do not replay the animation or cause visual jitter.
+let hasPlayedBookOpeningInSession = false;
+
 /**
  * AnimatedBookHero
  *
  * A custom literary hardcover book illustration built with crisp inline SVG
- * and hardware-accelerated CSS animations (transform & opacity only).
+ * and strictly hardware-accelerated CSS animations (`transform` & `opacity` only).
  *
- * Opening sequence (plays once per visit):
- * 1. Closed hardcover book fades in with a gentle upward lift.
- * 2. The dark-rust & burnt-orange front cover opens smoothly around the central spine.
- * 3. Layered cream pages turn with staggered natural timing.
- * 4. The book settles into an open editorial spread with contextual vocabulary callouts,
- *    a botanical sketch, and a terracotta silk bookmark ribbon.
- * 5. Hand-drawn autumn leaves drift softly in the margins.
- * 6. Respects `prefers-reduced-motion: reduce` and simplifies motion on mobile screens.
+ * Performance & Layout-Stability Guarantees:
+ * 1. Wrapped in `React.memo` so parent state updates (auth, Firestore snapshots, theme)
+ *    never trigger re-renders during the animation sequence.
+ * 2. Fixed `aspect-[440/300]` stage with explicit SVG `width={440}` and `height={300}`
+ *    and CSS `contain: layout paint` to guarantee zero Cumulative Layout Shift (CLS = 0)
+ *    on mobile and desktop.
+ * 3. Uses only compositor properties (`transform`, `opacity`)—no `visibility`, `filter`,
+ *    `drop-shadow`, or layout geometry mutations.
+ * 4. Plays the opening sequence once per session and respects `prefers-reduced-motion: reduce`.
  */
-export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = '' }) => {
+const AnimatedBookHeroComponent: React.FC<AnimatedBookHeroProps> = ({ className = '' }) => {
+  const [skipEntrance] = useState<boolean>(() => hasPlayedBookOpeningInSession);
+
+  useEffect(() => {
+    hasPlayedBookOpeningInSession = true;
+  }, []);
+
   return (
     <div
       className={`relative select-none ${className}`}
+      data-book-settled={skipEntrance ? 'true' : 'false'}
       role="img"
       aria-label="Illustrated open hardcover book showing an English reading passage with highlighted vocabulary in context and autumn botanical leaves"
     >
-      {/* Subtle layered warm paper backing cards */}
+      {/* Subtle layered warm paper backing cards (composited transforms only) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-4 top-3 bottom-2 -rotate-1 rounded-3xl border border-[#E3D7C3] bg-[#FAF7F1] opacity-80 shadow-xs"
+        className="pointer-events-none absolute inset-x-4 top-3 bottom-2 -rotate-1 rounded-3xl border border-[#E3D7C3] bg-[#FAF7F1] opacity-80"
       />
       <div
         aria-hidden="true"
@@ -37,31 +49,39 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
       />
 
       {/* Main editorial book showcase card */}
-      <div className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-4 sm:p-6 shadow-md">
+      <div className="relative overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-4 sm:p-6 shadow-xs">
         {/* Top journal header bar */}
         <div className="relative z-10 flex items-center justify-between border-b border-[#E3D7C3] pb-3 mb-2">
           <span className="font-mono-code text-[10px] font-bold uppercase tracking-[0.18em] text-[#A63816]">
             Read · Understand · Grow
           </span>
-          <span className="rounded-full border border-[#E3D7C3] bg-[#FAF7F1] px-2.5 py-0.5 font-mono-code text-[10px] font-semibold text-[#842B12]">
+          <span className="font-mono-code text-[10px] font-semibold text-[#842B12]">
             CEFR A1–C1 Edition
           </span>
         </div>
 
-        {/* 3D Perspective Stage for the Animated Book & Botanical Leaves */}
+        {/* Fixed Aspect-Ratio Stage for the Animated Book & Botanical Leaves (Zero Layout Shift) */}
         <div
           aria-hidden="true"
-          className="fl-book-stage relative mx-auto my-1 flex w-full max-w-[460px] items-center justify-center py-2 sm:py-4"
+          className="fl-book-stage relative mx-auto my-1 flex w-full max-w-[460px] aspect-[440/300] items-center justify-center overflow-hidden"
         >
-          {/* Soft ambient paper glow behind the book */}
-          <div className="pointer-events-none absolute inset-x-8 inset-y-6 rounded-full bg-[#F2EDE3] opacity-85 blur-xl" />
+          {/* Soft ambient paper glow behind the book using radial gradient instead of CSS filter blur */}
+          <div
+            className="pointer-events-none absolute inset-4 rounded-full opacity-85"
+            style={{
+              background:
+                'radial-gradient(closest-side, rgba(242, 237, 227, 0.95) 0%, rgba(242, 237, 227, 0) 100%)',
+            }}
+          />
 
-          {/* Drifting Hand-Drawn Botanical Leaves (Understated, behind main book) */}
+          {/* Drifting Hand-Drawn Botanical Leaves (Strictly transform & opacity) */}
           {/* Top-left rust & olive leaf sprig */}
           <svg
             viewBox="0 0 90 90"
+            width={80}
+            height={80}
             fill="none"
-            className="fl-leaf-drift-1 pointer-events-none absolute -left-2 -top-1 h-14 w-14 sm:h-20 sm:w-20 opacity-85"
+            className="fl-leaf-drift-1 pointer-events-none absolute left-0 top-0 h-14 w-14 sm:h-20 sm:w-20"
           >
             <path
               d="M16 72 C28 52, 46 36, 74 18"
@@ -96,8 +116,10 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
           {/* Top-right floating autumn oak/botanical leaf */}
           <svg
             viewBox="0 0 80 80"
+            width={64}
+            height={64}
             fill="none"
-            className="fl-leaf-drift-2 pointer-events-none absolute -right-1 top-0 h-12 w-12 sm:h-16 sm:w-16 opacity-85"
+            className="fl-leaf-drift-2 pointer-events-none absolute right-0 top-0 h-12 w-12 sm:h-16 sm:w-16"
           >
             <path
               d="M64 16 C48 28, 34 44, 18 62"
@@ -125,8 +147,10 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
           {/* Bottom-left delicate olive sprig (hidden on small mobile to reduce clutter) */}
           <svg
             viewBox="0 0 80 70"
+            width={64}
+            height={56}
             fill="none"
-            className="fl-leaf-drift-3 pointer-events-none absolute -bottom-1 left-2 hidden sm:block h-14 w-16 opacity-75"
+            className="fl-leaf-drift-3 pointer-events-none absolute bottom-0 left-2 hidden sm:block h-14 w-16"
           >
             <path
               d="M12 52 C30 46, 48 38, 66 26"
@@ -149,8 +173,10 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
           {/* Bottom-right warm terracotta leaf accent (hidden on small mobile) */}
           <svg
             viewBox="0 0 80 70"
+            width={64}
+            height={56}
             fill="none"
-            className="fl-leaf-drift-2 pointer-events-none absolute -bottom-1 right-2 hidden sm:block h-14 w-16 opacity-75"
+            className="fl-leaf-drift-2 pointer-events-none absolute bottom-0 right-2 hidden sm:block h-14 w-16"
           >
             <path
               d="M68 50 C52 44, 36 36, 20 24"
@@ -167,14 +193,16 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
           </svg>
 
           {/* Animated Book Assembly */}
-          <div className="fl-book-entrance relative w-full">
-            <div className="fl-book-float relative mx-auto w-full">
-              {/* OPEN BOOK SPREAD SVG */}
+          <div className="fl-book-entrance relative w-full h-full flex items-center justify-center">
+            <div className="fl-book-float relative mx-auto w-full h-full flex items-center justify-center">
+              {/* OPEN BOOK SPREAD SVG (Explicit width/height prevents layout shifts) */}
               <svg
                 viewBox="0 0 440 300"
+                width={440}
+                height={300}
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
-                className="fl-book-spread h-auto w-full drop-shadow-xs"
+                className="fl-book-spread block h-full w-full"
               >
                 {/* Soft Ground Shadow beneath the open book */}
                 <ellipse
@@ -340,7 +368,7 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
                   </text>
                   <line x1="66" y1="70" x2="196" y2="73" stroke="#E3D7C3" strokeWidth="1" />
 
-                  {/* Decorative Drop Cap "T" Box */}
+                  {/* Decorative Drop Cap "R" Box */}
                   <rect
                     x="66"
                     y="82"
@@ -438,7 +466,7 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
                   <rect x="244" y="84" width="124" height="3.5" rx="1.75" fill="#76675B" fillOpacity="0.65" />
                   <rect x="244" y="94" width="42" height="3.5" rx="1.75" fill="#76675B" fillOpacity="0.65" />
 
-                  {/* Highlighted Vocabulary Word Pill in Context */}
+                  {/* Highlighted Vocabulary Word in Context */}
                   <rect
                     x="290"
                     y="89"
@@ -516,10 +544,10 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
 
                 {/* =========================================================
                     ANIMATED TURNING PAGES & OPENING COVER OVERLAYS
-                    (Uses CSS 3D rotateY around spine x=220px; settles open & hidden)
+                    (Uses GPU-accelerated transform & opacity around spine x=220px)
                    ========================================================= */}
                 {/* Turning Page 3 (Final page settling softly to the left) */}
-                <g className="fl-turn-page fl-turn-page-3">
+                <g className="fl-turn-page fl-turn-page-3 pointer-events-none">
                   <path
                     d="M220 49 C275 40, 342 38, 390 43 L390 230 C342 224, 275 226, 220 235 Z"
                     fill="#FFFDFA"
@@ -533,7 +561,7 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
                 </g>
 
                 {/* Turning Page 2 (Middle staggered page turn) */}
-                <g className="fl-turn-page fl-turn-page-2">
+                <g className="fl-turn-page fl-turn-page-2 pointer-events-none">
                   <path
                     d="M220 49 C276 40, 343 38, 391 43 L391 230 C343 224, 276 226, 220 235 Z"
                     fill="#FAF7F1"
@@ -546,7 +574,7 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
                 </g>
 
                 {/* Turning Page 1 (First page turn right after cover opens) */}
-                <g className="fl-turn-page fl-turn-page-1">
+                <g className="fl-turn-page fl-turn-page-1 pointer-events-none">
                   <path
                     d="M220 49 C276 40, 344 38, 392 43 L392 231 C344 225, 276 227, 220 236 Z"
                     fill="#F2EDE3"
@@ -558,7 +586,7 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
                 </g>
 
                 {/* Animated Hardcover Front Cover (Starts closed on right, swings open to left) */}
-                <g className="fl-book-front-cover">
+                <g className="fl-book-front-cover pointer-events-none">
                   <path
                     d="M220 44 L398 40 C405 40, 410 45, 410 52 L410 236 C410 243, 405 248, 398 248 L220 252 Z"
                     fill="#842B12"
@@ -610,8 +638,7 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
               Click any word in a passage for a clear, contextual English-to-English definition.
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-2.5 py-1 font-mono-code text-[10px] font-bold text-[#A63816]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#A63816]" />
+          <span className="font-mono-code text-[10px] font-bold text-[#A63816] whitespace-nowrap shrink-0">
             Interactive Reader
           </span>
         </div>
@@ -619,3 +646,10 @@ export const AnimatedBookHero: React.FC<AnimatedBookHeroProps> = ({ className = 
     </div>
   );
 };
+
+export const AnimatedBookHero = React.memo(
+  AnimatedBookHeroComponent,
+  (prevProps, nextProps) => prevProps.className === nextProps.className
+);
+AnimatedBookHero.displayName = 'AnimatedBookHero';
+

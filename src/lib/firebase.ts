@@ -1,10 +1,35 @@
 import { getApps, initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  setLogLevel,
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+function createFirestoreInstance() {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalAutoDetectLongPolling: true,
+      },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+// Suppress noisy internal WebChannel transport reconnect logs in proxied/iframe environments
+// while preserving explicit structured error reporting in handleFirestoreError below.
+setLogLevel('silent');
+
+export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -62,8 +87,11 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+let connectionTested = false;
+
 export async function testConnection() {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || connectionTested) return;
+  connectionTested = true;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -73,6 +101,3 @@ export async function testConnection() {
   }
 }
 
-if (typeof window !== 'undefined') {
-  testConnection();
-}
