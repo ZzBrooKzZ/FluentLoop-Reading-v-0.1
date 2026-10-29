@@ -9,7 +9,7 @@ import {
 import { QUESTION_TYPE_LABELS } from './gradingService';
 import { isQualifyingStreakAttempt, parseActivityTimestamp } from './streakService';
 
-const LEVEL_ORDER: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+const LEVEL_ORDER: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 
 /**
  * Transparent, rule-based adaptive reading difficulty recommender.
@@ -112,6 +112,10 @@ export function computeAdaptiveRecommendation(
     recommendedLevel = LEVEL_ORDER[currentIdx + 1];
     action = 'harder';
     reason = `Strong mastery across ${completedAtCurrentLevel} passages at ${currentSelectedLevel} (${recentAverageAccuracy}% recent accuracy). You are ready to try ${recommendedLevel} passages with denser academic syntax and deeper inference questions.`;
+  } else if (recentAverageAccuracy >= 85 && currentIdx === LEVEL_ORDER.length - 1) {
+    recommendedLevel = 'C2';
+    action = 'similar';
+    reason = `Exceptional mastery across ${completedAtCurrentLevel} passages at C2 Proficiency (${recentAverageAccuracy}% recent accuracy), our highest CEFR reading level. Continue exploring unseen C2 scholarly passages to deepen your analytical stamina.`;
   } else if (recentAverageAccuracy < 55 && currentIdx > 0) {
     recommendedLevel = LEVEL_ORDER[currentIdx - 1];
     action = 'easier';

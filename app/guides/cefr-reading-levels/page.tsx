@@ -63,6 +63,14 @@ export default function CefrReadingLevelsGuidePage() {
       focus:
         'Dense scholarly texts requiring synthesis of competing hypotheses, subtle writer stance evaluation, and idiomatic academic discourse.',
     },
+    {
+      level: 'C2',
+      name: 'Mastery & Proficiency',
+      wordRange: '1,050–1,250 words',
+      sampleSlug: 'c2-01-quantum-decoherence-topological',
+      focus:
+        'Long-form critical essays and cross-disciplinary monographs demanding nuanced rhetorical critique, epistemological evaluation, and mastery of implicit argumentation.',
+    },
   ];
 
   return (
@@ -72,10 +80,10 @@ export default function CefrReadingLevelsGuidePage() {
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 sm:px-8 py-10 space-y-10">
         <header className="space-y-4 border-b border-[#E3D7C3] pb-8">
           <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#A63816]">
-            CEFR A1–C1 Curriculum · Reading Stamina & Progression
+            CEFR A1–C2 Curriculum · Reading Stamina & Progression
           </div>
           <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#171615]">
-            English Reading Levels Explained: From CEFR A1 Foundation to C1 Academic Fluency
+            English Reading Levels Explained: From CEFR A1 Foundation to C2 Academic Mastery
           </h1>
           <p className="text-base sm:text-lg text-[#76675B] leading-relaxed">
             Building academic reading fluency requires gradual exposure to longer passages, denser

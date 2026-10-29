@@ -40,7 +40,7 @@ export const DocumentationView: React.FC = () => {
             1. CEFR Passage Lengths & Precomputed English Lexicon
           </div>
           <p className="text-xs leading-relaxed text-[#76675B]">
-            Every reading passage is calibrated to strict CEFR word-count targets: <strong>A1</strong> (150–250 words), <strong>A2</strong> (250–400 words), <strong>B1</strong> (500–700 words), <strong>B2</strong> (800–900 words), and <strong>C1</strong> (900–1,000 words). Every word across all 54 regular lessons and 15 diagnostic passages is backed by precomputed English-to-English definitions for instant, zero-API-call lookup.
+            Every reading passage is calibrated to strict CEFR word-count targets: <strong>A1</strong> (150–250 words), <strong>A2</strong> (250–400 words), <strong>B1</strong> (500–700 words), <strong>B2</strong> (800–900 words), <strong>C1</strong> (900–1,000 words), and <strong>C2</strong> (1,050–1,250 words). Every word across all 114 regular lessons and 18 diagnostic passages is backed by precomputed English-to-English definitions for instant, zero-API-call lookup.
           </p>
         </div>
 

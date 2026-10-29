@@ -173,9 +173,11 @@ function purgeLocalLearnerCache() {
   localStorage.removeItem('fluentloop_difficulty_target_v1');
   localStorage.removeItem('fluentloop_pass_streak_v1');
   localStorage.removeItem('fluentloop_fail_streak_v1');
+  localStorage.removeItem('fluentloop_option_orders_v1');
+  localStorage.removeItem('fluentloop_in_progress_answers_v1');
 }
 
-const CEFR_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+const CEFR_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 
 const LEVEL_DESCRIPTIONS: Record<CEFRLevel, string> = {
   A1: 'A1 — Beginner Foundation (Concrete Everyday & Popular Science Texts)',
@@ -183,6 +185,7 @@ const LEVEL_DESCRIPTIONS: Record<CEFRLevel, string> = {
   B1: 'B1 — Intermediate Academic (Structured Multi-Paragraph Arguments)',
   B2: 'B2 — Upper-Intermediate IELTS (Analytical Texts & Nuanced Lexicon)',
   C1: 'C1 — Advanced Academic (Dense Scholarly Synthesis & Complex Inference)',
+  C2: 'C2 — Mastery & Proficiency (Rhetorical Critique & Interdisciplinary Synthesis)',
 };
 
 interface AppProps {
@@ -239,6 +242,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [savedVocab, setSavedVocab] = useState<SavedVocabularyItem[]>([]);
 
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  const [activeAttemptId, setActiveAttemptId] = useState<string | undefined>(undefined);
   const [activeAttemptMode, setActiveAttemptMode] = useState<'first' | 'practice' | 'review'>(
     'first'
   );
@@ -343,7 +347,21 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     } catch {}
 
     const lastLesson = localStorage.getItem(STORAGE_KEYS.LAST_LESSON_ID);
-    if (lastLesson) setActiveLessonId(lastLesson);
+    if (lastLesson) {
+      setActiveLessonId(lastLesson);
+      const inProg = attemptsRef.current.find(
+        (a) =>
+          a.lessonId === lastLesson &&
+          a.status === 'in_progress' &&
+          (a.attemptType || 'first') === 'first'
+      );
+      if (inProg) {
+        setActiveAttemptId(inProg.id);
+        if (inProg.answers && Object.keys(inProg.answers).length > 0) {
+          setReviewInitialAnswers(inProg.answers);
+        }
+      }
+    }
 
     const savedFont = localStorage.getItem(STORAGE_KEYS.FONT_SIZE) as any;
     if (savedFont && ['sm', 'md', 'lg', 'xl'].includes(savedFont)) {
@@ -1004,6 +1022,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
     if (mode === 'review' && existingAttempt && existingAttempt.status === 'completed') {
       setActiveAttemptMode('review');
+      setActiveAttemptId(existingAttempt.id);
       setReviewInitialAnswers(existingAttempt.answers || {});
       setReviewInitialResult({
         score: existingAttempt.score,
@@ -1030,7 +1049,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         })
         .catch(() => {});
     } else if (mode === 'practice') {
+      const freshPracticeId = `att-prac-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setActiveAttemptMode('practice');
+      setActiveAttemptId(freshPracticeId);
       setReviewInitialAnswers(undefined);
       setReviewInitialResult(null);
     } else {
@@ -1041,14 +1062,59 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           a.status === 'completed' &&
           (a.attemptType || 'first') === 'first'
       );
-      setActiveAttemptMode(alreadyCompletedFirst ? 'practice' : 'first');
-      setReviewInitialAnswers(undefined);
-      setReviewInitialResult(null);
+      if (alreadyCompletedFirst) {
+        const freshPracticeId = `att-prac-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        setActiveAttemptMode('practice');
+        setActiveAttemptId(freshPracticeId);
+        setReviewInitialAnswers(undefined);
+        setReviewInitialResult(null);
+      } else {
+        const inProgAttempt =
+          (existingAttempt && existingAttempt.status === 'in_progress'
+            ? existingAttempt
+            : undefined) ||
+          attemptsRef.current.find(
+            (a) =>
+              a.lessonId === lesson.id &&
+              a.status === 'in_progress' &&
+              (a.attemptType || 'first') === 'first'
+          );
+        setActiveAttemptMode('first');
+        setActiveAttemptId(inProgAttempt ? inProgAttempt.id : `inprog-${lesson.id}`);
+        setReviewInitialAnswers(
+          inProgAttempt?.answers && Object.keys(inProgAttempt.answers).length > 0
+            ? inProgAttempt.answers
+            : undefined
+        );
+        setReviewInitialResult(null);
+      }
     }
 
     triggerPassageLoadingDelay();
     setActiveTab('reader');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleInProgressAnswersChange = (nextAnswers: Record<string, string>) => {
+    if (!activeLesson || activeAttemptMode !== 'first') return;
+    const currentList = attemptsRef.current;
+    const inProgIdx = currentList.findIndex(
+      (a) =>
+        a.lessonId === activeLesson.id &&
+        a.status === 'in_progress' &&
+        (a.attemptType || 'first') === 'first'
+    );
+    if (inProgIdx === -1) return;
+    const updatedAttempt: LessonAttempt = {
+      ...currentList[inProgIdx],
+      answers: nextAnswers,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextList = [...currentList];
+    nextList[inProgIdx] = updatedAttempt;
+    attemptsRef.current = nextList;
+    setAttempts(nextList);
+    localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(nextList));
   };
 
   const handleToggleSaveWord = async (vocab: VocabularyAnnotation, lessonOverride?: ReadingLesson) => {
@@ -1137,8 +1203,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const attemptId =
       effectiveAttemptType === 'first' && existingInProgress
         ? existingInProgress.id
+        : effectiveAttemptType === 'practice' &&
+          activeAttemptId &&
+          activeAttemptId.startsWith('att-prac-')
+        ? activeAttemptId
         : effectiveAttemptType === 'practice'
         ? `att-prac-${Date.now()}-${uniqueSuffix}`
+        : activeAttemptId && activeAttemptId.startsWith('att-')
+        ? activeAttemptId
         : `att-${Date.now()}-${uniqueSuffix}`;
 
     const initialProfile = createAdaptiveProfile(startingLevel || currentLevel);
@@ -3139,13 +3211,19 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     <QuestionAssessment
                       lessonId={activeLesson.id}
                       questions={activeLesson.questions}
+                      attemptId={activeAttemptId}
                       attemptMode={activeAttemptMode}
                       initialAnswers={reviewInitialAnswers}
                       initialResult={reviewInitialResult}
+                      onAnswersChange={handleInProgressAnswersChange}
                       onSubmitAttempt={handleSubmitAttempt}
                       onHighlightEvidence={(quote) => setHighlightedEvidenceQuote(quote)}
                       onStartPracticeAgain={() => {
+                        const freshPracticeId = `att-prac-${Date.now()}-${Math.random()
+                          .toString(36)
+                          .slice(2, 7)}`;
                         setActiveAttemptMode('practice');
+                        setActiveAttemptId(freshPracticeId);
                         setReviewInitialAnswers(undefined);
                         setReviewInitialResult(null);
                       }}

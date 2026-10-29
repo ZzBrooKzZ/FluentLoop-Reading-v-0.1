@@ -22,6 +22,13 @@ import {
 } from '../types/reading';
 import { InteractivePassage } from './InteractivePassage';
 import { GradedQuestionResult, QUESTION_TYPE_LABELS } from '../services/gradingService';
+import {
+  clearInProgressAttemptAnswers,
+  getRandomizedOptionsForQuestion,
+  loadInProgressAttemptAnswers,
+  RandomizedOptionItem,
+  saveInProgressAttemptAnswers,
+} from '../services/optionRandomizer';
 import { getPassagePhotoMetadata } from '../utils/illustrations';
 import { CornerBotanicalSprig, OliveTerracottaLeafCluster } from './BotanicalIllustrations';
 import { AnimatedBookLoader } from './AnimatedBookLoader';
@@ -34,6 +41,7 @@ const LEVEL_NAMES: Record<CEFRLevel, string> = {
   B1: 'Intermediate Academic',
   B2: 'Upper-Intermediate Academic',
   C1: 'Advanced Academic',
+  C2: 'Proficiency Academic',
 };
 
 interface PlacementAssessmentViewProps {
@@ -87,15 +95,39 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
   onRetakePlacement,
   onBackToOverview,
 }) => {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const placementPassageAttemptKey = useMemo(() => {
+    if (!activePassage) return '';
+    return `placement-${session.id || 'session'}-${activePassage.id}`;
+  }, [session.id, activePassage]);
+
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    if (!activePassage) return {};
+    const key = `placement-${session.id || 'session'}-${activePassage.id}`;
+    return loadInProgressAttemptAnswers(key) || {};
+  });
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isLinkingGoogle, setIsLinkingGoogle] = useState(false);
 
-  // Reset local answers when active passage changes
+  // Restore saved draft answers or reset when active passage changes
   React.useEffect(() => {
-    setAnswers({});
+    if (!activePassage) {
+      setAnswers({});
+      setValidationError(null);
+      return;
+    }
+    const saved = loadInProgressAttemptAnswers(placementPassageAttemptKey);
+    setAnswers(saved && Object.keys(saved).length > 0 ? saved : {});
     setValidationError(null);
-  }, [activePassage?.id]);
+  }, [activePassage, placementPassageAttemptKey]);
+
+  const randomizedDiagnosticOptions = useMemo(() => {
+    const map: Record<string, RandomizedOptionItem[]> = {};
+    if (!activePassage || !placementPassageAttemptKey) return map;
+    for (const q of activePassage.questions) {
+      map[q.id] = getRandomizedOptionsForQuestion(q, placementPassageAttemptKey);
+    }
+    return map;
+  }, [activePassage, placementPassageAttemptKey]);
 
   const savedWordIdsForActivePassage = useMemo(() => {
     if (!activePassage) return new Set<string>();
@@ -125,7 +157,13 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
   );
 
   const handleSelectAnswer = (qId: string, val: string) => {
-    setAnswers((prev) => ({ ...prev, [qId]: val }));
+    setAnswers((prev) => {
+      const next = { ...prev, [qId]: val };
+      if (placementPassageAttemptKey) {
+        saveInProgressAttemptAnswers(placementPassageAttemptKey, next);
+      }
+      return next;
+    });
     if (validationError) setValidationError(null);
   };
 
@@ -144,6 +182,9 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
     }
 
     setValidationError(null);
+    if (placementPassageAttemptKey) {
+      clearInProgressAttemptAnswers(placementPassageAttemptKey);
+    }
     await onSubmitPassage(activePassage.id, answers);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -609,14 +650,7 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
             <div className="space-y-5 lg:max-h-[68vh] lg:overflow-y-auto lg:pr-1">
               {activePassage.questions.map((q, idx) => {
                 const selected = answers[q.id] || '';
-                const choiceOptions =
-                  q.options && q.options.length > 0
-                    ? q.options
-                    : q.type === 'true_false_not_given'
-                    ? ['True', 'False', 'Not Given']
-                    : q.type === 'yes_no_not_given'
-                    ? ['Yes', 'No', 'Not Given']
-                    : null;
+                const choiceOptions = randomizedDiagnosticOptions[q.id] || [];
 
                 return (
                   <div
@@ -660,13 +694,13 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
                       </div>
                     )}
 
-                    {choiceOptions ? (
+                    {choiceOptions.length > 0 ? (
                       <div className="space-y-1.5">
-                        {choiceOptions.map((opt) => {
-                          const isChecked = selected === opt;
+                        {choiceOptions.map((optItem) => {
+                          const isChecked = selected === optItem.value;
                           return (
                             <label
-                              key={opt}
+                              key={optItem.id}
                               className={`flex items-start gap-2.5 rounded-lg border p-2.5 text-xs cursor-pointer transition ${
                                 isChecked
                                   ? 'border-[#A63816] bg-[#F7E9DC]/70 font-semibold text-[#171615]'
@@ -676,12 +710,12 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
                               <input
                                 type="radio"
                                 name={`diag-q-${q.id}`}
-                                value={opt}
+                                value={optItem.value}
                                 checked={isChecked}
-                                onChange={() => handleSelectAnswer(q.id, opt)}
+                                onChange={() => handleSelectAnswer(q.id, optItem.value)}
                                 className="mt-0.5 accent-[#A63816]"
                               />
-                              <span className="leading-relaxed">{opt}</span>
+                              <span className="leading-relaxed">{optItem.label}</span>
                             </label>
                           );
                         })}

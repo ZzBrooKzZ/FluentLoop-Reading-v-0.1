@@ -1,4 +1,7 @@
 import { CEFRLevel, ComprehensionQuestion, ReadingLesson } from '../types/reading';
+import { LEGACY_A2_B1_EXTENSIONS } from './batches/legacyA2B1Extensions';
+import { LEGACY_B2_EXTENSIONS } from './batches/legacyB2Extensions';
+import { LEGACY_C1_EXTENSIONS } from './batches/legacyC1Extensions';
 
 export const CEFR_VOCAB_TARGET_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
   A1: { min: 8, max: 12 },
@@ -6,14 +9,16 @@ export const CEFR_VOCAB_TARGET_RANGES: Record<CEFRLevel, { min: number; max: num
   B1: { min: 16, max: 22 },
   B2: { min: 20, max: 28 },
   C1: { min: 25, max: 35 },
+  C2: { min: 28, max: 40 },
 };
 
 export const CEFR_TARGET_WORD_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
-  A1: { min: 150, max: 250 },
-  A2: { min: 250, max: 400 },
-  B1: { min: 500, max: 700 },
-  B2: { min: 800, max: 900 },
-  C1: { min: 900, max: 1000 },
+  A1: { min: 150, max: 220 },
+  A2: { min: 250, max: 350 },
+  B1: { min: 400, max: 600 },
+  B2: { min: 650, max: 860 },
+  C1: { min: 850, max: 1050 },
+  C2: { min: 1050, max: 1250 },
 };
 
 interface LessonExtensionSpec {
@@ -124,7 +129,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'It saves mental energy and helps the brain focus without stress',
         acceptedAnswers: ['reduces stress and helps the brain focus', 'saves energy for important tasks'],
         explanation: 'A steady routine reduces small morning choices so the brain stays calm and focused.',
-        passageEvidence: 'Writing a short list of three main goals on a paper notebook also keeps the mind calm before work begins.',
+        passageEvidence: 'Your brain can perform habits almost automatically without using much effort. As a result, you save your best mental energy for difficult classes, exams, and creative problem-solving during the afternoon.',
       },
     ],
   },
@@ -155,7 +160,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'They were built with deep stone layers and curved tops so rainwater drained into ditches',
         acceptedAnswers: ['rainwater flowed into side ditches and they used strong stone layers'],
         explanation: 'Engineers built deep layers of stone and angled the surface so rain flowed into ditches.',
-        passageEvidence: 'Travellers could read the distance to the next town and stop at roadside rest houses to give their tired horses fresh water and hay.',
+        passageEvidence: 'Instead, they dug a deep trench and filled it with layers of sand, small stones, and gravel. On top, they placed heavy, flat stones that fitted tightly together. The middle of the road was slightly higher than the edges so rainwater could flow into ditches on both sides.',
       },
     ],
   },
@@ -186,7 +191,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'By pointing to pictures, asking questions, and letting children retell the story',
         acceptedAnswers: ['listening to audio recordings together and discussing characters'],
         explanation: 'Interactive reading and retelling the story in their own words builds strong vocabulary.',
-        passageEvidence: 'After finishing a story, children often draw pictures of their favourite characters and explain the plot in their own words.',
+        passageEvidence: 'As the adult reads, children look at the colourful illustrations on the page. Connecting the spoken word with the picture helps them understand the meaning immediately.',
       },
     ],
   },
@@ -217,7 +222,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'The direction and distance to flowers with sweet nectar',
         acceptedAnswers: ['where flowers grow and how far away they are'],
         explanation: 'The scout bee’s dance communicates both the distance and direction of flowers.',
-        passageEvidence: 'When bees have safe places to gather nectar, fruit trees produce larger harvests of apples, pears, and cherries.',
+        passageEvidence: 'The angle of her straight walk shows the direction of the flowers relative to the sun, and the length of the shake tells how far away the flowers are.',
       },
     ],
   },
@@ -248,7 +253,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'Soap breaks up oil on the skin and lifts germs so water can rinse them away',
         acceptedAnswers: ['plain water cannot remove sticky oils that trap germs'],
         explanation: 'Soap loosens oils and traps germs in bubbles that rinse away cleanly.',
-        passageEvidence: 'Wet skin can pick up new germs from door handles, whereas dry hands stay clean and safe much longer.',
+        passageEvidence: 'When you rub soap and water together for twenty seconds, the soap surrounds the oil drops and lifts the trapped germs off your skin. When you rinse with clean running water, the soap bubbles carry the germs safely down the drain.',
       },
     ],
   },
@@ -279,7 +284,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'Farmers earn fair prices directly and shoppers get fresh food picked the day before',
         acceptedAnswers: ['food travels a short distance and money stays in the local town'],
         explanation: 'Direct sales support farm families while giving residents fresher produce.',
-        passageEvidence: 'Shoppers bring reusable cloth bags from home, which reduces plastic packaging and keeps town streets tidy and green.',
+        passageEvidence: 'At a farmers market, customers buy directly from the person who grew the food. Shoppers enjoy fresher produce, and farmers keep the full payment for their hard work, helping small family farms stay in business.',
       },
     ],
   },
@@ -310,7 +315,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'Because the Moon travels around Earth and we see different amounts of its sunlit side',
         acceptedAnswers: ['we see different angles of sunlight reflecting off the Moon as it orbits Earth'],
         explanation: 'The Moon’s shape itself does not change; rather, our view of its sunlit half changes as it orbits Earth.',
-        passageEvidence: 'Even a simple pair of binoculars reveals round craters and dark flat plains across the bright lunar surface on a clear night.',
+        passageEvidence: 'The Moon travels in a circle around Earth once every twenty-nine days. As it moves, we see different amounts of its sunlit side from our position on Earth.',
       },
     ],
   },
@@ -341,7 +346,7 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'Cool night air sinks into the shaded courtyard while thick walls keep out strong sunlight',
         acceptedAnswers: ['trees and water fountains cool the air inside the shaded courtyard'],
         explanation: 'Courtyard homes trap cool night air and use shade and water features to reduce heat.',
-        passageEvidence: 'By using thick walls, shaded balconies, and central trees, new buildings can stay comfortable in summer while using much less electricity for air conditioning.',
+        passageEvidence: 'At night, cool evening air sinks into the courtyard and fills the bedrooms. During the hot afternoon, the thick walls, green trees, and evaporating water keep the courtyard pleasant and shady.',
       },
     ],
   },
@@ -372,10 +377,13 @@ const LESSON_EXTENSIONS: Record<string, LessonExtensionSpec> = {
         correctAnswer: 'Moving wind spins the blades to turn a generator without burning coal or gas',
         acceptedAnswers: ['wind turns the blades and generator to make clean power'],
         explanation: 'Wind energy spins the rotor and generator directly without burning fossil fuels.',
-        passageEvidence: 'Small computers inside the tower also turn the top of the turbine so the blades always face into the wind.',
+        passageEvidence: 'When the wind blows against the curved blades, they spin slowly around a central hub. Inside the box at the top of the tower, a machine called a generator turns this spinning motion into electrical power.',
       },
     ],
   },
+  ...LEGACY_A2_B1_EXTENSIONS,
+  ...LEGACY_B2_EXTENSIONS,
+  ...LEGACY_C1_EXTENSIONS,
 };
 
 const SUBJECT_NOUN_PHRASES: Record<string, string> = {
@@ -435,19 +443,74 @@ function countCleanedWords(raw: string): number {
   return cleaned.split(/\s+/).filter(Boolean).length;
 }
 
+const ORDERED_LEGACY_YNNG_IDS = [
+  'b1-sci-sodium-batteries',
+  'b1-env-beaver-wetlands',
+  'b1-psy-spacing-effect',
+  'b1-his-rosetta-stone',
+  'b1-edu-peer-teaching',
+  'b1-bio-octopus-camouflage',
+  'b1-hea-antibiotic-stewardship',
+  'b1-eco-circular-repair',
+  'b1-ast-exoplanet-transits',
+  'b1-arc-daylighting-schools',
+  'b1-sci-geothermal-heating',
+  'b2-sci-bioluminescence-tech',
+  'b2-env-permafrost-peatlands',
+  'b2-psy-cognitive-offloading',
+  'b2-his-lidar-maya-cities',
+  'b2-edu-productive-failure',
+  'b2-bio-mycorrhizal-networks',
+  'b2-hea-wastewater-epidemiology',
+  'b2-eco-congestion-pricing',
+  'b2-ast-orbital-debris',
+  'b2-arc-mass-timber',
+  'b2-sci-acoustic-ecology',
+  'c1-01-neuromorphic-computing',
+  'c1-02-paleoclimate-proxies',
+  'c1-03-predictive-processing-cognition',
+  'c1-04-bronze-age-collapse-systems',
+  'c1-05-epistemic-cognition-education',
+  'c1-06-eusociality-inclusive-fitness',
+  'c1-07-antimicrobial-market-failure',
+  'c1-08-agglomeration-baumol-disease',
+  'c1-09-exoplanet-biosignatures-disequilibrium',
+  'c1-10-embodied-carbon-adaptive-reuse',
+];
+
+function getYnngVariantIndex(lessonId: string): number {
+  const idx = ORDERED_LEGACY_YNNG_IDS.indexOf(lessonId);
+  if (idx >= 0) return idx % 3;
+  let hash = 0;
+  for (let i = 0; i < lessonId.length; i++) {
+    hash = (hash * 31 + lessonId.charCodeAt(i)) >>> 0;
+  }
+  return hash % 3;
+}
+
 function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtensionSpec {
   if (LESSON_EXTENSIONS[lesson.id]) {
     return LESSON_EXTENSIONS[lesson.id];
+  }
+
+  // Self-contained full-length lessons (including all 60 newly authored A1–C2 passages)
+  // already have >=10 bespoke questions and must not receive generic extension paragraphs.
+  if (
+    lesson.level === 'C2' ||
+    lesson.questions.length >= 10 ||
+    lesson.generationBatch?.startsWith('batch-expansion-')
+  ) {
+    return { extraParagraphs: [], extraQuestions: [] };
   }
 
   const level = lesson.level;
   const subjectPhrase = getCleanSubjectPhrase(lesson);
   const topic = lesson.topic;
   const baseParaCount = lesson.passage.split(/\n\s*\n/).filter(Boolean).length;
+  const ynVariant = getYnngVariantIndex(lesson.id);
 
   if (level === 'A2') {
     const pFirstExtra = baseParaCount + 1;
-    // Target: 250 - 400 words (currently ~155-179 words -> add ~145 words across 2 paragraphs)
     const p4 = `Researchers and city planners across several countries now collect weekly measurements to see how ${subjectPhrase} performs in different seasons. By comparing summer and winter records, field teams identify practical improvements that lower operating costs and make daily maintenance much easier for local workers. Clear charts and simple training guides also allow students and community volunteers to understand the system and share reliable results with neighbouring towns.`;
     const p5 = `Looking ahead, specialists agree that combining careful engineering with everyday community habits produces the strongest long-term benefits in ${topic.toLowerCase()}. Even modest upgrades—such as stronger weatherproof sensors, cleaner storage materials, and regular equipment inspections—prevent waste and protect natural resources. As more schools and public agencies adopt these practical methods, towns can build healthier, more resilient environments for future generations.`;
 
@@ -488,12 +551,16 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
           instruction: `Choose the correct heading for Paragraph ${pFirstExtra} from the list of headings below`,
           prompt: `Which heading best summarizes the main idea of Paragraph ${pFirstExtra}?`,
           options: [
-            'i. Comparing seasonal records to improve daily maintenance',
-            'ii. Why ancient empires abandoned stone highways',
-            'iii. Eliminating community volunteers from local projects',
-            'iv. The rising cost of international air travel',
+            'Comparing seasonal records to improve daily maintenance',
+            'Why ancient empires abandoned stone highways',
+            'Eliminating community volunteers from local projects',
+            'The rising cost of international air travel',
           ],
-          correctAnswer: 'i. Comparing seasonal records to improve daily maintenance',
+          correctAnswer: 'Comparing seasonal records to improve daily maintenance',
+          acceptedAnswers: [
+            'Comparing seasonal records to improve daily maintenance',
+            'i. Comparing seasonal records to improve daily maintenance',
+          ],
           explanation: `Paragraph ${pFirstExtra} explains how researchers and city planners compare summer and winter records to lower costs and make daily maintenance easier.`,
           passageEvidence: 'By comparing summer and winter records, field teams identify practical improvements that lower operating costs and make daily maintenance much easier for local workers.',
         },
@@ -505,11 +572,41 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
     const p4Num = baseParaCount + 1;
     const p5Num = baseParaCount + 2;
     const p7Num = baseParaCount + 4;
-    // Target: 500 - 700 words (currently ~187-212 words -> add ~380 words across 4 paragraphs)
     const p4 = `To evaluate the long-term effectiveness of these approaches in ${topic.toLowerCase()}, university research teams have conducted multi-year field studies across diverse geographic regions. Rather than relying solely on short laboratory trials, investigators monitor real-world performance under fluctuating environmental and economic conditions. Their findings consistently demonstrate that early investments in preventative design and public education yield substantial savings within the first five years of operation. When local technicians understand both the underlying scientific principles and the practical maintenance schedules, equipment failures decline sharply and community participation remains consistently high.`;
     const p5 = `Nevertheless, transitioning from small pilot projects to city-wide implementation requires coordinated policy frameworks and transparent funding mechanisms. Municipal authorities often face competing budgetary pressures, making it tempting to choose cheaper short-term fixes over durable long-term infrastructure. To overcome this barrier, economists and technical advisors recommend phased deployment strategies in which initial installations are prioritized in high-need districts. Measurable improvements in efficiency, public health, or resource conservation from these early phases then provide compelling empirical evidence to justify broader regional expansion.`;
     const p6 = `Furthermore, comparative evaluations across regional demonstration sites indicate that standardized maintenance protocols significantly extend the service life of essential equipment. In districts where municipal staff record monthly diagnostic readings and share repair logs through regional networks, unexpected breakdowns drop by more than forty percent. Conversely, projects that neglect routine calibration or fail to budget for replacement components often experience declining efficiency after their second year. Establishing dedicated regional training centres therefore serves as a practical safeguard, ensuring that skilled personnel are always available to troubleshoot technical issues before minor wear develops into costly structural damage.`;
     const p7 = `Equally important is the role of interdisciplinary collaboration between engineers, educators, and everyday citizens. Technical innovations rarely succeed in isolation; their lasting impact depends on how seamlessly they integrate into daily routines and institutional norms. By establishing open-access data portals, hands-on training workshops, and clear regulatory standards, communities can ensure that advances in ${subjectPhrase} deliver equitable, sustainable benefits for decades to come.`;
+
+    const b1YnQuestion: ComprehensionQuestion =
+      ynVariant === 0
+        ? {
+            id: `${lesson.id}-q10`,
+            type: 'yes_no_not_given',
+            prompt: 'Do the writer’s claims agree with the following statement? Establishing open-access data portals, hands-on training workshops, and clear regulatory standards helps communities achieve lasting, equitable benefits.',
+            options: ['Yes', 'No', 'Not Given'],
+            correctAnswer: 'Yes',
+            explanation: `Paragraph ${p7Num} explicitly states that establishing open-access data portals, hands-on training workshops, and clear regulatory standards ensures equitable, sustainable benefits.`,
+            passageEvidence: `By establishing open-access data portals, hands-on training workshops, and clear regulatory standards, communities can ensure that advances in ${subjectPhrase} deliver equitable, sustainable benefits for decades to come.`,
+          }
+        : ynVariant === 1
+        ? {
+            id: `${lesson.id}-q10`,
+            type: 'yes_no_not_given',
+            prompt: 'Do the writer’s claims agree with the following statement? Technical innovations succeed automatically even when they are isolated from daily routines and community training.',
+            options: ['Yes', 'No', 'Not Given'],
+            correctAnswer: 'No',
+            explanation: `Paragraph ${p7Num} explicitly states that technical innovations rarely succeed in isolation and depend on seamless integration into daily routines.`,
+            passageEvidence: 'Technical innovations rarely succeed in isolation; their lasting impact depends on how seamlessly they integrate into daily routines and institutional norms.',
+          }
+        : {
+            id: `${lesson.id}-q10`,
+            type: 'yes_no_not_given',
+            prompt: 'Do the writer’s claims agree with the following statement? International patent treaties require municipalities to replace all regional training centres every ten years.',
+            options: ['Yes', 'No', 'Not Given'],
+            correctAnswer: 'Not Given',
+            explanation: 'The passage discusses regional training centres and maintenance protocols, but makes no mention of international patent treaties or a ten-year replacement requirement.',
+            passageEvidence: 'Establishing dedicated regional training centres therefore serves as a practical safeguard, ensuring that skilled personnel are always available to troubleshoot technical issues before minor wear develops into costly structural damage.',
+          };
 
     return {
       extraParagraphs: [p4, p5, p6, p7],
@@ -526,27 +623,23 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
           explanation: `Paragraph ${p5Num} states that economists and technical advisors recommend phased deployment strategies.`,
           passageEvidence: 'To overcome this barrier, economists and technical advisors recommend phased deployment strategies in which initial installations are prioritized in high-need districts.',
         },
-        {
-          id: `${lesson.id}-q10`,
-          type: 'yes_no_not_given',
-          prompt: 'Do the writer’s claims agree with the following statement? Technical innovations succeed automatically even when they are isolated from daily routines and community training.',
-          options: ['Yes', 'No', 'Not Given'],
-          correctAnswer: 'No',
-          explanation: `Paragraph ${p7Num} explicitly states that technical innovations rarely succeed in isolation and depend on seamless integration into daily routines.`,
-          passageEvidence: 'Technical innovations rarely succeed in isolation; their lasting impact depends on how seamlessly they integrate into daily routines and institutional norms.',
-        },
+        b1YnQuestion,
         {
           id: `${lesson.id}-q11`,
           type: 'matching_sentence_endings',
           instruction: 'Complete the sentence by choosing the correct ending from the options below',
           prompt: 'When local technicians understand both the scientific principles and maintenance schedules,',
           options: [
-            'A. equipment failures drop sharply and community participation stays high.',
-            'B. municipal authorities cancel all long-term infrastructure budgets.',
-            'C. laboratory trials completely replace multi-year field studies.',
-            'D. open-access data portals are permanently closed to the public.',
+            'equipment failures drop sharply and community participation stays high.',
+            'municipal authorities cancel all long-term infrastructure budgets.',
+            'laboratory trials completely replace multi-year field studies.',
+            'open-access data portals are permanently closed to the public.',
           ],
-          correctAnswer: 'A. equipment failures drop sharply and community participation stays high.',
+          correctAnswer: 'equipment failures drop sharply and community participation stays high.',
+          acceptedAnswers: [
+            'equipment failures drop sharply and community participation stays high.',
+            'A. equipment failures drop sharply and community participation stays high.',
+          ],
           explanation: `Paragraph ${p4Num} states that when local technicians understand both principles and maintenance schedules, equipment failures decline sharply and participation remains high.`,
           passageEvidence: 'When local technicians understand both the underlying scientific principles and the practical maintenance schedules, equipment failures decline sharply and community participation remains consistently high.',
         },
@@ -558,7 +651,6 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
     const p5Num = baseParaCount + 1;
     const p6Num = baseParaCount + 2;
     const p7Num = baseParaCount + 3;
-    // Target: 800 - 900 words (currently ~231-267 words -> add ~600 words across 6 paragraphs)
     const p5 = `From a methodological standpoint, contemporary longitudinal studies in ${topic.toLowerCase()} have revealed important nuances that earlier short-term observations overlooked. When researchers track systems across full decade-long cycles, they frequently observe non-linear threshold effects: modest initial adjustments may appear negligible for several years until cumulative structural feedbacks trigger a rapid shift in overall performance. Consequently, analytical models that rely on simple linear extrapolation often underestimate both the compounding risks of inaction and the transformative potential of targeted systemic interventions. Recognizing these delayed feedback loops has prompted academic institutions and regulatory bodies to revise their evaluation metrics, placing greater emphasis on long-horizon resilience rather than immediate quarterly outputs.`;
     const p6 = `At the same time, comparative international case studies highlight the critical influence of local institutional governance and socioeconomic context. A technical protocol that achieves exemplary outcomes in a densely populated northern metropolis may encounter unexpected bottlenecks when transplanted without adaptation to a rural watershed or an arid coastal municipality. Variations in baseline infrastructure, regulatory enforcement capacity, and labor market specialization mean that standardized, one-size-fits-all mandates frequently underperform. Instead, empirical evidence favors adaptive co-management frameworks in which overarching scientific standards are paired with flexible local implementation rules tailored to regional ecological and demographic realities.`;
     const p7 = `Financial and infrastructural transition costs also warrant rigorous scrutiny. While lifecycle assessments confirm that sustainable practices in ${subjectPhrase} substantially reduce long-term externalities, the upfront capital expenditure required to retrofit legacy systems can strain municipal balance sheets and small enterprises alike. Policy analysts therefore advocate blended finance instruments—combining targeted public subsidies, green municipal bonds, and performance-based procurement contracts—to distribute initial transition risks equitably. By aligning short-term economic incentives with long-term environmental and social accounting, governments can accelerate adoption without imposing regressive burdens on vulnerable households.`;
@@ -566,6 +658,37 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
     const p9 = `Nevertheless, sociological research cautions that purely technocratic solutions rarely achieve durable public legitimacy without meaningful stakeholder deliberation. Projects that alter urban land use, resource pricing, or institutional workflows inevitably generate distributional trade-offs among residents, commercial operators, and conservation advocates. Structured participatory planning—incorporating citizen advisory panels, transparent environmental impact disclosures, and iterative design revisions—consistently reduces implementation delays and fosters a shared sense of custodial responsibility over public assets.`;
     const p10 = `Furthermore, university curricula and professional accreditation boards have begun integrating real-world case studies from these regional deployments into advanced training modules. By equipping the next generation of engineers, policy analysts, and environmental managers with both quantitative modeling skills and collaborative governance frameworks, educational institutions help bridge the historical divide between academic theory and municipal practice. Graduates who understand how technical specifications interact with legal and financial constraints are far better prepared to lead complex, multi-decade modernization initiatives.`;
     const p11 = `Ultimately, the maturation of this field illustrates a broader paradigm shift across twenty-first-century applied scholarship. Rather than treating technological efficiency, ecological integrity, and human behavioral dynamics as separate domains of inquiry, contemporary researchers increasingly synthesize insights across disciplines. High-resolution telemetry, participatory community auditing, and transparent peer-reviewed benchmarks now allow practitioners to refine interventions continuously in response to empirical feedback, ensuring that theoretical advances translate into durable, measurable improvements in public welfare.`;
+
+    const b2YnQuestion: ComprehensionQuestion =
+      ynVariant === 0
+        ? {
+            id: `${lesson.id}-q10`,
+            type: 'yes_no_not_given',
+            prompt: 'Does the writer agree that pairing overarching scientific standards with flexible local implementation rules is more effective than rigid one-size-fits-all mandates?',
+            options: ['Yes', 'No', 'Not Given'],
+            correctAnswer: 'Yes',
+            explanation: `Paragraph ${p6Num} argues that standardized one-size-fits-all mandates frequently underperform and that empirical evidence favors adaptive co-management pairing overarching standards with flexible local rules.`,
+            passageEvidence: 'Instead, empirical evidence favors adaptive co-management frameworks in which overarching scientific standards are paired with flexible local implementation rules tailored to regional ecological and demographic realities.',
+          }
+        : ynVariant === 1
+        ? {
+            id: `${lesson.id}-q10`,
+            type: 'yes_no_not_given',
+            prompt: 'Does the writer agree that standardized, one-size-fits-all mandates always achieve identical success in every geographic region?',
+            options: ['Yes', 'No', 'Not Given'],
+            correctAnswer: 'No',
+            explanation: `Paragraph ${p6Num} argues that one-size-fits-all mandates frequently underperform because of variations in baseline infrastructure and local context.`,
+            passageEvidence: 'Variations in baseline infrastructure, regulatory enforcement capacity, and labor market specialization mean that standardized, one-size-fits-all mandates frequently underperform.',
+          }
+        : {
+            id: `${lesson.id}-q10`,
+            type: 'yes_no_not_given',
+            prompt: 'Does the writer claim that northern metropolises spend a larger percentage of their municipal tax revenue on sensor telemetry than arid coastal municipalities?',
+            options: ['Yes', 'No', 'Not Given'],
+            correctAnswer: 'Not Given',
+            explanation: `Paragraph ${p6Num} contrasts northern metropolises with rural watersheds and arid coastal municipalities, but never compares the percentage of municipal tax revenue spent on sensor telemetry.`,
+            passageEvidence: 'A technical protocol that achieves exemplary outcomes in a densely populated northern metropolis may encounter unexpected bottlenecks when transplanted without adaptation to a rural watershed or an arid coastal municipality.',
+          };
 
     return {
       extraParagraphs: [p5, p6, p7, p8, p9, p10, p11],
@@ -587,15 +710,7 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
           explanation: `Paragraph ${p7Num} states that policy analysts advocate blended finance instruments to distribute initial transition risks.`,
           passageEvidence: 'Policy analysts therefore advocate blended finance instruments—combining targeted public subsidies, green municipal bonds, and performance-based procurement contracts—to distribute initial transition risks equitably.',
         },
-        {
-          id: `${lesson.id}-q10`,
-          type: 'yes_no_not_given',
-          prompt: 'Does the writer agree that standardized, one-size-fits-all mandates always achieve identical success in every geographic region?',
-          options: ['Yes', 'No', 'Not Given'],
-          correctAnswer: 'No',
-          explanation: `Paragraph ${p6Num} argues that one-size-fits-all mandates frequently underperform because of variations in baseline infrastructure and local context.`,
-          passageEvidence: 'Variations in baseline infrastructure, regulatory enforcement capacity, and labor market specialization mean that standardized, one-size-fits-all mandates frequently underperform.',
-        },
+        b2YnQuestion,
         {
           id: `${lesson.id}-q11`,
           type: 'multiple_choice_two',
@@ -618,12 +733,16 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
           instruction: 'Match the analytical approach with the correct description from the passage',
           prompt: 'Which characteristic is associated with "Analytical models relying on simple linear extrapolation"?',
           options: [
-            'A. They often underestimate compounding risks and non-linear threshold effects',
-            'B. They combine public subsidies with green municipal bonds',
-            'C. They pair international standards with flexible local rules',
-            'D. They eliminate the need for peer-reviewed benchmarks',
+            'They often underestimate compounding risks and non-linear threshold effects',
+            'They combine public subsidies with green municipal bonds',
+            'They pair international standards with flexible local rules',
+            'They eliminate the need for peer-reviewed benchmarks',
           ],
-          correctAnswer: 'A. They often underestimate compounding risks and non-linear threshold effects',
+          correctAnswer: 'They often underestimate compounding risks and non-linear threshold effects',
+          acceptedAnswers: [
+            'They often underestimate compounding risks and non-linear threshold effects',
+            'A. They often underestimate compounding risks and non-linear threshold effects',
+          ],
           explanation: `Paragraph ${p5Num} explains that models relying on simple linear extrapolation often underestimate both the compounding risks of inaction and the transformative potential of systemic interventions.`,
           passageEvidence: 'Consequently, analytical models that rely on simple linear extrapolation often underestimate both the compounding risks of inaction and the transformative potential of targeted systemic interventions.',
         },
@@ -644,6 +763,37 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
   const c1P10 = `In parallel, comparative historical analysis reveals that transformative breakthroughs in this sphere rarely follow a smooth, linear trajectory of cumulative consensus. Instead, periods of methodological incrementalism are periodically punctuated by conceptual reorientations triggered when high-resolution instrumentation exposes anomalies that legacy paradigms cannot accommodate. By archiving negative experimental findings alongside positive replications in federated, machine-readable repositories, contemporary research consortia prevent the wasteful duplication of dead-end inquiries while accelerating cross-disciplinary discovery. Furthermore, standardized reproducibility protocols and pre-registered analytical designs ensure that newly proposed theoretical extensions withstand rigorous independent verification across multiple international laboratories.`;
   const c1P11 = `Ultimately, the intellectual trajectory of scholarship surrounding ${subjectPhrase} exemplifies the maturation of twenty-first-century empirical inquiry. As instrumentation precision accelerates and open-science repositories democratize access to granular longitudinal datasets, the boundary between theoretical formulation and real-time empirical falsification continues to narrow across global research networks. Sustained progress will depend not only on algorithmic or technical ingenuity, but equally on cultivating epistemic humility—recognizing that every formal model is an evolving approximation that must remain accountable to rigorous empirical scrutiny, transparent peer review, and long-term ethical stewardship across international research institutions and public policy forums alike.`;
 
+  const c1YnQuestion: ComprehensionQuestion =
+    ynVariant === 0
+      ? {
+          id: `${lesson.id}-q7`,
+          type: 'yes_no_not_given',
+          prompt: 'Do the writer’s claims agree with the following statement? Hybrid analytical architectures explicitly quantify structural uncertainty so decision-makers can evaluate worst-case tail risks.',
+          options: ['Yes', 'No', 'Not Given'],
+          correctAnswer: 'Yes',
+          explanation: `Paragraph ${c1P6Num} states that hybrid analytical architectures quantify structural uncertainty explicitly, enabling decision-makers to evaluate worst-case tail risks.`,
+          passageEvidence: 'Crucially, these hybrid analytical architectures do not treat model uncertainty as a mere statistical nuisance to be averaged away; rather, they quantify structural uncertainty explicitly, enabling decision-makers to evaluate worst-case tail risks under conditions of deep Knightian ambiguity.',
+        }
+      : ynVariant === 1
+      ? {
+          id: `${lesson.id}-q7`,
+          type: 'yes_no_not_given',
+          prompt: 'Do the writer’s claims agree with the following statement? Hybrid analytical architectures treat model uncertainty as a minor statistical nuisance that should be ignored.',
+          options: ['Yes', 'No', 'Not Given'],
+          correctAnswer: 'No',
+          explanation: `Paragraph ${c1P6Num} explicitly states that hybrid analytical architectures do NOT treat model uncertainty as a mere statistical nuisance to be averaged away, but quantify it explicitly.`,
+          passageEvidence: 'Crucially, these hybrid analytical architectures do not treat model uncertainty as a mere statistical nuisance to be averaged away; rather, they quantify structural uncertainty explicitly',
+        }
+      : {
+          id: `${lesson.id}-q7`,
+          type: 'yes_no_not_given',
+          prompt: 'Do the writer’s claims agree with the following statement? Computational systems biology contributed more mathematical formalisms to state-space modeling than econometrics did during the twentieth century.',
+          options: ['Yes', 'No', 'Not Given'],
+          correctAnswer: 'Not Given',
+          explanation: `Paragraph ${c1P6Num} notes that scholars integrate formalisms from statistical mechanics, econometrics, and computational systems biology, but makes no comparison of which discipline contributed more during the twentieth century.`,
+          passageEvidence: 'By integrating quantitative formalisms from statistical mechanics, econometrics, and computational systems biology, scholars have begun to formulate unified state-space representations capable of capturing both rapid transient shocks and slow secular trends.',
+        };
+
   return {
     extraParagraphs: [c1P4, c1P5, c1P6, c1P7, c1P8, c1P9, c1P10, c1P11],
     extraQuestions: [
@@ -659,15 +809,7 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
         explanation: `Paragraph ${c1P4Num} defines equifinality as the phenomenon whereby distinct underlying mechanisms converge upon superficially indistinguishable macroscopic outcomes.`,
         passageEvidence: 'In complex adaptive systems within ' + topic.toLowerCase() + ', causal attribution is frequently obscured by equifinality—the phenomenon whereby distinct underlying mechanisms converge upon superficially indistinguishable macroscopic outcomes.',
       },
-      {
-        id: `${lesson.id}-q7`,
-        type: 'yes_no_not_given',
-        prompt: 'Do the writer’s claims agree with the following statement? Hybrid analytical architectures treat model uncertainty as a minor statistical nuisance that should be ignored.',
-        options: ['Yes', 'No', 'Not Given'],
-        correctAnswer: 'No',
-        explanation: `Paragraph ${c1P6Num} explicitly states that hybrid analytical architectures do NOT treat model uncertainty as a mere statistical nuisance to be averaged away, but quantify it explicitly.`,
-        passageEvidence: 'Crucially, these hybrid analytical architectures do not treat model uncertainty as a mere statistical nuisance to be averaged away; rather, they quantify structural uncertainty explicitly',
-      },
+      c1YnQuestion,
       {
         id: `${lesson.id}-q8`,
         type: 'summary_completion',
@@ -719,6 +861,42 @@ function buildAcademicExtensionForLesson(lesson: ReadingLesson): LessonExtension
         passageEvidence: 'To mitigate this inferential hazard, contemporary research programs increasingly deploy counterfactual simulation ensembles alongside high-dimensional longitudinal telemetry, systematically isolating primary drivers from stochastic background variance.',
       },
     ],
+  };
+}
+
+let globalFourOptionRotationCounter = 0;
+
+function balanceFourOptionStoredOrder(
+  question: ComprehensionQuestion,
+  targetIndex: number
+): ComprehensionQuestion {
+  if (
+    (question.type !== 'multiple_choice' &&
+      question.type !== 'vocabulary_in_context' &&
+      question.type !== 'matching_headings' &&
+      question.type !== 'matching_sentence_endings' &&
+      question.type !== 'matching_features') ||
+    !Array.isArray(question.options) ||
+    question.options.length !== 4
+  ) {
+    return question;
+  }
+
+  const currentCorrectIdx = question.options.findIndex(
+    (opt) => opt.trim().toLowerCase() === question.correctAnswer.trim().toLowerCase()
+  );
+  if (currentCorrectIdx === -1 || currentCorrectIdx === targetIndex) {
+    return question;
+  }
+
+  const correctOption = question.options[currentCorrectIdx];
+  const distractors = question.options.filter((_, idx) => idx !== currentCorrectIdx);
+  const reordered = [...distractors];
+  reordered.splice(targetIndex, 0, correctOption);
+
+  return {
+    ...question,
+    options: reordered,
   };
 }
 
@@ -788,7 +966,23 @@ export function upgradeLessonToIeltsAcademic(lesson: ReadingLesson): ReadingLess
     return q;
   });
 
-  const allQuestions = [...upgradedExistingQuestions, ...spec.extraQuestions];
+  const combinedQuestions = [...upgradedExistingQuestions, ...spec.extraQuestions];
+  const allQuestions = combinedQuestions.map((q) => {
+    if (
+      (q.type === 'multiple_choice' ||
+        q.type === 'vocabulary_in_context' ||
+        q.type === 'matching_headings' ||
+        q.type === 'matching_sentence_endings' ||
+        q.type === 'matching_features') &&
+      Array.isArray(q.options) &&
+      q.options.length === 4
+    ) {
+      const targetIdx = globalFourOptionRotationCounter % 4;
+      globalFourOptionRotationCounter += 1;
+      return balanceFourOptionStoredOrder(q, targetIdx);
+    }
+    return q;
+  });
 
   return {
     ...lesson,

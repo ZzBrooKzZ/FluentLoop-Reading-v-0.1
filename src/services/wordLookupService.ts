@@ -2468,6 +2468,7 @@ export function computeDictionaryCoverageReport(
     B1: { passageCount: 0, totalTokens: 0, distinctSet: new Set(), definedSet: new Set(), curatedCount: 0, missingSet: new Set() },
     B2: { passageCount: 0, totalTokens: 0, distinctSet: new Set(), definedSet: new Set(), curatedCount: 0, missingSet: new Set() },
     C1: { passageCount: 0, totalTokens: 0, distinctSet: new Set(), definedSet: new Set(), curatedCount: 0, missingSet: new Set() },
+    C2: { passageCount: 0, totalTokens: 0, distinctSet: new Set(), definedSet: new Set(), curatedCount: 0, missingSet: new Set() },
   };
 
   const byLesson: LessonCoverageSummary[] = [];
@@ -2581,7 +2582,7 @@ export function computeDictionaryCoverageReport(
       };
     });
 
-  const levelsOrder: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+  const levelsOrder: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
   const byLevel: LevelCoverageSummary[] = levelsOrder.map((lvl) => {
     const b = levelBuckets[lvl];
     const pct =

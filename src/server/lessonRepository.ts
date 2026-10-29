@@ -137,12 +137,13 @@ export const PUBLIC_SAMPLE_LESSON_IDS: string[] = [
   'b1-sci-sodium-batteries',
   'b2-sci-bioluminescence-tech',
   'c1-01-neuromorphic-computing',
+  'c2-01-quantum-decoherence-topological',
 ];
 
 export function getPublicSampleLessons(): ReadingLesson[] {
   const all = getAllAuthoritativeLessons().filter((l) => l.status === 'published' && !l.isDiagnostic);
   const picked: ReadingLesson[] = [];
-  const levels: Array<'A1' | 'A2' | 'B1' | 'B2' | 'C1'> = ['A1', 'A2', 'B1', 'B2', 'C1'];
+  const levels: Array<'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'> = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
   for (const level of levels) {
     const byPreferredId = all.find(
       (l) => l.level === level && PUBLIC_SAMPLE_LESSON_IDS.includes(l.id)

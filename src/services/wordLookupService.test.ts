@@ -258,9 +258,9 @@ describe('FluentLoop Contextual Vocabulary Dictionary & Lookup Service', () => {
     assert.equal(lookupPassageWord({ rawWord: '   ' }), null);
   });
 
-  it('7. Verifies 100% coverage across all 69 FluentLoop reading & diagnostic passages', () => {
+  it('7. Verifies 100% coverage across all 132 FluentLoop reading & diagnostic passages', () => {
     const report = computeDictionaryCoverageReport(INITIAL_LESSONS, DIAGNOSTIC_PASSAGES);
-    assert.equal(report.totalPassages, 69);
+    assert.equal(report.totalPassages, 132);
     assert.equal(report.missingDistinctWords.length, 0);
     assert.equal(report.overallCoveragePercent, 100);
   });

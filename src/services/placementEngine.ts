@@ -39,6 +39,7 @@ export const LEVEL_LABELS: Record<CEFRLevel, string> = {
   B1: 'Intermediate',
   B2: 'Upper-Intermediate',
   C1: 'Advanced',
+  C2: 'Proficiency',
 };
 
 export const LEVEL_PLACEMENT_DESCRIPTIONS: Record<CEFRLevel, string> = {
@@ -47,6 +48,7 @@ export const LEVEL_PLACEMENT_DESCRIPTIONS: Record<CEFRLevel, string> = {
   B1: 'You can follow structured multi-paragraph articles, identify main ideas and supporting details, and infer meaning from context across familiar academic subjects.',
   B2: 'You demonstrate strong comprehension of analytical texts, nuanced arguments, and cause-and-effect relationships typical of upper-intermediate academic reading.',
   C1: 'You handle dense scholarly prose, subtle conceptual distinctions, and complex inference at an advanced academic reading level.',
+  C2: 'You demonstrate full academic proficiency with complex interdisciplinary synthesis, rhetorical subtlety, and high-density scholarly arguments.',
 };
 
 function clampMaxPassages(requested?: number): number {

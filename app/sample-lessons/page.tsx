@@ -32,13 +32,13 @@ export default function SampleLessonsIndexPage() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 sm:px-8 py-10 space-y-10">
         <header className="space-y-4 border-b border-[#E3D7C3] pb-8">
           <div className="font-mono-code text-xs font-bold uppercase tracking-widest text-[#A63816]">
-            Representative Curriculum Samples · CEFR A1–C1
+            Representative Curriculum Samples · CEFR A1–C2
           </div>
           <h1 className="font-display text-3xl sm:text-5xl font-bold leading-tight text-[#171615]">
             Public Sample Academic Reading Passages
           </h1>
           <p className="text-base sm:text-lg text-[#76675B] max-w-3xl leading-relaxed">
-            Explore one representative reading lesson from each CEFR level (A1 through C1). Each
+            Explore one representative reading lesson from each CEFR level (A1 through C2). Each
             sample demonstrates FluentLoop’s academic prose, contextual English-to-English
             vocabulary explanations, and IELTS-style comprehension tasks while keeping our broader
             adaptive passage library unseen for personalized progression.

@@ -20,13 +20,24 @@ import {
   QUESTION_TYPE_LABELS,
   resolveMaxWords,
 } from '../services/gradingService';
+import {
+  clearInProgressAttemptAnswers,
+  createSeededRng,
+  getRandomizedOptionsForQuestion,
+  isOptionCorrectForQuestion,
+  loadInProgressAttemptAnswers,
+  RandomizedOptionItem,
+  saveInProgressAttemptAnswers,
+} from '../services/optionRandomizer';
 
 interface QuestionAssessmentProps {
   lessonId: string;
   questions: ComprehensionQuestion[];
+  attemptId?: string;
   attemptMode?: 'first' | 'practice' | 'review';
   initialAnswers?: Record<string, string>;
   initialResult?: GradedAttemptSummary | null;
+  onAnswersChange?: (answers: Record<string, string>) => void;
   onSubmitAttempt: (
     answers: Record<string, string>,
     modeOverride?: 'first' | 'practice' | 'review'
@@ -39,38 +50,110 @@ interface QuestionAssessmentProps {
 export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   lessonId,
   questions,
+  attemptId,
   attemptMode = 'first',
   initialAnswers,
   initialResult,
+  onAnswersChange,
   onSubmitAttempt,
   onHighlightEvidence,
   onNextLesson,
   onStartPracticeAgain,
 }) => {
-  const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers || {});
+  const [activeMode, setActiveMode] = useState<'first' | 'practice' | 'review'>(attemptMode);
+  const [practiceRevision, setPracticeRevision] = useState<number>(0);
+
+  // Derive a stable per-attempt key so option order is generated once per attempt,
+  // persists across re-renders and page refreshes for in_progress attempts,
+  // and generates a fresh shuffle when Practice Again is triggered.
+  const effectiveAttemptKey = React.useMemo(() => {
+    if (practiceRevision > 0) {
+      return `prac-${lessonId}-r${practiceRevision}`;
+    }
+    if (attemptId && attemptId.trim()) {
+      return attemptId.trim();
+    }
+    if (activeMode === 'review') {
+      return `review-${lessonId}`;
+    }
+    if (activeMode === 'practice') {
+      return `prac-${lessonId}-initial`;
+    }
+    return `inprog-${lessonId}`;
+  }, [lessonId, attemptId, activeMode, practiceRevision]);
+
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+      return initialAnswers;
+    }
+    if (attemptMode !== 'review' && !initialResult) {
+      const savedDraft = loadInProgressAttemptAnswers(
+        attemptId && attemptId.trim() ? attemptId.trim() : `inprog-${lessonId}`
+      );
+      if (savedDraft && Object.keys(savedDraft).length > 0) {
+        return savedDraft;
+      }
+    }
+    return initialAnswers || {};
+  });
   const [submittedResult, setSubmittedResult] = useState<GradedAttemptSummary | null>(
     initialResult || null
   );
-  const [activeMode, setActiveMode] = useState<'first' | 'practice' | 'review'>(attemptMode);
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
 
   React.useEffect(() => {
-    setAnswers(initialAnswers || {});
-    setSubmittedResult(initialResult || null);
     setActiveMode(attemptMode);
+    setPracticeRevision(0);
+    const baseKey =
+      attemptId && attemptId.trim()
+        ? attemptId.trim()
+        : attemptMode === 'review'
+        ? `review-${lessonId}`
+        : attemptMode === 'practice'
+        ? `prac-${lessonId}-initial`
+        : `inprog-${lessonId}`;
+
+    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+      setAnswers(initialAnswers);
+    } else if (attemptMode !== 'review' && !initialResult) {
+      const savedDraft = loadInProgressAttemptAnswers(baseKey);
+      setAnswers(savedDraft && Object.keys(savedDraft).length > 0 ? savedDraft : {});
+    } else {
+      setAnswers({});
+    }
+    setSubmittedResult(initialResult || null);
     setIsEvaluating(false);
     setValidationMessage(null);
     onHighlightEvidence(null);
-  }, [lessonId, attemptMode, initialAnswers, initialResult]);
+  }, [lessonId, attemptId, attemptMode, initialAnswers, initialResult]);
+
+  // Compute randomized options once per (lessonId, effectiveAttemptKey, questions).
+  // Re-rendering while the user selects answers never re-shuffles the options.
+  const randomizedOptionsByQuestionId = React.useMemo(() => {
+    const map: Record<string, RandomizedOptionItem[]> = {};
+    const rng =
+      activeMode === 'review' ? createSeededRng(effectiveAttemptKey) : Math.random;
+    for (const q of questions) {
+      map[q.id] = getRandomizedOptionsForQuestion(q, effectiveAttemptKey, rng);
+    }
+    return map;
+  }, [questions, effectiveAttemptKey, activeMode]);
 
   const handleSelectAnswer = (questionId: string, value: string) => {
     if (submittedResult || isEvaluating) return;
     setValidationMessage(null);
-    setAnswers((prev) => ({
-      ...prev,
-      [questionId]: value,
-    }));
+    setAnswers((prev) => {
+      const next = {
+        ...prev,
+        [questionId]: value,
+      };
+      saveInProgressAttemptAnswers(effectiveAttemptKey, next);
+      if (onAnswersChange) {
+        onAnswersChange(next);
+      }
+      return next;
+    });
   };
 
   const handleToggleTwoChoice = (questionId: string, optionText: string) => {
@@ -93,10 +176,17 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
       }
     }
 
-    setAnswers((prev) => ({
-      ...prev,
-      [questionId]: nextList.join(' | '),
-    }));
+    setAnswers((prev) => {
+      const next = {
+        ...prev,
+        [questionId]: nextList.join(' | '),
+      };
+      saveInProgressAttemptAnswers(effectiveAttemptKey, next);
+      if (onAnswersChange) {
+        onAnswersChange(next);
+      }
+      return next;
+    });
   };
 
   const isQuestionAnswered = (q: ComprehensionQuestion): boolean => {
@@ -137,6 +227,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
     setIsEvaluating(true);
     try {
       const graded = await onSubmitAttempt(answers, activeMode);
+      clearInProgressAttemptAnswers(effectiveAttemptKey);
       setSubmittedResult(graded);
     } finally {
       setIsEvaluating(false);
@@ -155,9 +246,11 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   };
 
   const handleRetake = () => {
+    clearInProgressAttemptAnswers(effectiveAttemptKey);
     setAnswers({});
     setSubmittedResult(null);
     setActiveMode('practice');
+    setPracticeRevision((prev) => prev + 1);
     setValidationMessage(null);
     onHighlightEvidence(null);
     if (onStartPracticeAgain) {
@@ -281,14 +374,8 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
           const maxWordsLimit = resolveMaxWords(q);
           const typedWords = countAnswerWords(currentAnswer);
 
-          const effectiveOptions =
-            Array.isArray(q.options) && q.options.length > 0
-              ? q.options
-              : q.type === 'true_false_not_given'
-              ? ['True', 'False', 'Not Given']
-              : q.type === 'yes_no_not_given'
-              ? ['Yes', 'No', 'Not Given']
-              : null;
+          const randomizedOptions = randomizedOptionsByQuestionId[q.id] || [];
+          const hasChoiceOptions = randomizedOptions.length > 0;
 
           const instructionBadgeText =
             q.instruction ||
@@ -374,29 +461,21 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
               </p>
 
               {/* Format 1: Multiple Choice requiring TWO answers */}
-              {q.type === 'multiple_choice_two' && effectiveOptions ? (
+              {q.type === 'multiple_choice_two' && hasChoiceOptions ? (
                 <div className="space-y-2">
-                  {effectiveOptions.map((optionText) => {
+                  {randomizedOptions.map((optItem) => {
                     const selectedParts = currentAnswer
                       .split('|')
                       .map((s) => s.trim())
                       .filter(Boolean);
-                    const isSelected = selectedParts.includes(optionText);
-                    const expectedTwo =
-                      Array.isArray(q.correctAnswers) && q.correctAnswers.length >= 2
-                        ? q.correctAnswers
-                        : resolvedCorrectAnswer.split('|').map((s) => s.trim());
+                    const isSelected = selectedParts.includes(optItem.value);
                     const isCorrectOption =
                       Boolean(submittedResult) &&
-                      expectedTwo.some(
-                        (ans) =>
-                          ans.trim().length > 0 &&
-                          ans.trim().toLowerCase() === optionText.trim().toLowerCase()
-                      );
+                      isOptionCorrectForQuestion(q, optItem.value, resolvedCorrectAnswer);
 
                     return (
                       <label
-                        key={optionText}
+                        key={optItem.id}
                         className={`flex items-start gap-2.5 rounded-lg border p-2.5 text-xs sm:text-sm cursor-pointer transition-colors ${
                           submittedResult
                             ? isCorrectOption
@@ -413,27 +492,26 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                           type="checkbox"
                           checked={isSelected}
                           disabled={Boolean(submittedResult || isEvaluating)}
-                          onChange={() => handleToggleTwoChoice(q.id, optionText)}
+                          onChange={() => handleToggleTwoChoice(q.id, optItem.value)}
                           className="mt-0.5 accent-[#A63816]"
                         />
-                        <span className="leading-relaxed">{optionText}</span>
+                        <span className="leading-relaxed">{optItem.label}</span>
                       </label>
                     );
                   })}
                 </div>
-              ) : effectiveOptions ? (
+              ) : hasChoiceOptions ? (
                 /* Format 2: Single-option objective / matching / T-F-NG / Y-N-NG */
                 <div className="space-y-2">
-                  {effectiveOptions.map((optionText) => {
-                    const isSelected = currentAnswer === optionText;
+                  {randomizedOptions.map((optItem) => {
+                    const isSelected = currentAnswer === optItem.value;
                     const isCorrectOption =
-                      submittedResult &&
-                      resolvedCorrectAnswer.trim().length > 0 &&
-                      optionText.trim().toLowerCase() === resolvedCorrectAnswer.trim().toLowerCase();
+                      Boolean(submittedResult) &&
+                      isOptionCorrectForQuestion(q, optItem.value, resolvedCorrectAnswer);
 
                     return (
                       <label
-                        key={optionText}
+                        key={optItem.id}
                         className={`flex items-start gap-2.5 rounded-lg border p-2.5 text-xs sm:text-sm cursor-pointer transition-colors ${
                           submittedResult
                             ? isCorrectOption
@@ -449,13 +527,13 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
                         <input
                           type="radio"
                           name={`question-${q.id}`}
-                          value={optionText}
+                          value={optItem.value}
                           checked={isSelected}
                           disabled={Boolean(submittedResult || isEvaluating)}
-                          onChange={() => handleSelectAnswer(q.id, optionText)}
+                          onChange={() => handleSelectAnswer(q.id, optItem.value)}
                           className="mt-0.5 accent-[#A63816]"
                         />
-                        <span className="leading-relaxed">{optionText}</span>
+                        <span className="leading-relaxed">{optItem.label}</span>
                       </label>
                     );
                   })}

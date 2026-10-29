@@ -78,12 +78,12 @@ test('two easy bottom-boundary failures regress exactly one level', () => {
   assert.equal(result.profile.currentDifficultyScore, DIFFICULTY_RANGES.A2.max - 4);
 });
 
-test('progression never moves below A1 or above C1', () => {
+test('progression never moves below A1 or above C2', () => {
   const a1 = applyAttemptProgression({ profile: { ...createAdaptiveProfile('A1'), currentDifficultyScore: 0, consecutiveFailures: 1 }, attemptType: 'first', completed: true, pendingReviewCount: 0, accuracy: 20, lessonDifficulty: 0 });
-  const c1 = applyAttemptProgression({ profile: { ...createAdaptiveProfile('C1'), currentDifficultyScore: 100, consecutivePasses: 1 }, attemptType: 'first', completed: true, pendingReviewCount: 0, accuracy: 99, lessonDifficulty: 100 });
+  const c2 = applyAttemptProgression({ profile: { ...createAdaptiveProfile('C2'), currentDifficultyScore: 118, consecutivePasses: 1 }, attemptType: 'first', completed: true, pendingReviewCount: 0, accuracy: 99, lessonDifficulty: 120 });
   assert.equal(a1.profile.currentLevel, 'A1');
-  assert.equal(c1.profile.currentLevel, 'C1');
-  assert.ok(c1.profile.currentDifficultyScore <= DIFFICULTY_RANGES.C1.max);
+  assert.equal(c2.profile.currentLevel, 'C2');
+  assert.ok(c2.profile.currentDifficultyScore <= DIFFICULTY_RANGES.C2.max);
 });
 
 test('server learner sanitization strips private answer keys and rubrics before submission', async () => {
@@ -136,10 +136,10 @@ test('server authoritative grading prevents duplicate progression on repeated at
   assert.equal(secondRun.progression?.profile.currentDifficultyScore, 12);
 });
 
-test('diagnostic bank contains 15 validated short passages (3 per CEFR level) with 6 objective questions each', async () => {
+test('diagnostic bank contains 18 validated short passages (3 per CEFR level A1-C2) with 6 objective questions each', async () => {
   const { DIAGNOSTIC_PASSAGES } = await import('../data/diagnosticPassages');
-  assert.equal(DIAGNOSTIC_PASSAGES.length, 15);
-  for (const lvl of ['A1', 'A2', 'B1', 'B2', 'C1'] as const) {
+  assert.equal(DIAGNOSTIC_PASSAGES.length, 18);
+  for (const lvl of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const) {
     const levelPassages = DIAGNOSTIC_PASSAGES.filter((p) => p.level === lvl);
     assert.equal(levelPassages.length, 3, `Expected 3 diagnostic passages for ${lvl}`);
     for (const p of levelPassages) {
@@ -466,15 +466,15 @@ test('regular course lesson selector excludes diagnostic passages', () => {
   assert.equal(selected?.id, 'b1-reg-1');
 });
 
-test('precomputed passage dictionary achieves 100% word coverage across all 54 regular lessons and 15 diagnostic passages with zero missing definitions', async () => {
+test('precomputed passage dictionary achieves 100% word coverage across all 114 regular lessons and 18 diagnostic passages with zero missing definitions', async () => {
   const { INITIAL_LESSONS } = await import('../data/initialLessons');
   const { DIAGNOSTIC_PASSAGES } = await import('../data/diagnosticPassages');
   const { computeDictionaryCoverageReport } = await import('./wordLookupService');
 
   const report = computeDictionaryCoverageReport(INITIAL_LESSONS, DIAGNOSTIC_PASSAGES);
-  assert.equal(report.regularPassageCount, 54);
-  assert.equal(report.diagnosticPassageCount, 15);
-  assert.equal(report.totalPassages, 69);
+  assert.equal(report.regularPassageCount, 114);
+  assert.equal(report.diagnosticPassageCount, 18);
+  assert.equal(report.totalPassages, 132);
   assert.ok(report.totalWordTokens > 25000);
   assert.ok(report.distinctNormalizedWords >= 4500);
   assert.equal(
@@ -911,9 +911,9 @@ test('multi-word expression detection, contextual sense disambiguation, longest-
       false
     );
 
-    // 13. Corpus MWE coverage report across all 54 regular lessons and 15 diagnostic passages
+    // 13. Corpus MWE coverage report across all 114 regular lessons and 18 diagnostic passages
     const mweReport = computeMultiWordExpressionCoverageReport(INITIAL_LESSONS, DIAGNOSTIC_PASSAGES);
-    assert.equal(mweReport.totalPassagesScanned, 69);
+    assert.equal(mweReport.totalPassagesScanned, 132);
     assert.ok(mweReport.totalDictionaryExpressions >= 80);
     assert.ok(mweReport.polysemousExpressionsCount >= 7);
     assert.ok(mweReport.totalCorpusMWEInstances >= 150);

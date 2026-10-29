@@ -211,6 +211,22 @@ export interface GradedAttemptSummary {
   pendingReviewCount?: number;
 }
 
+function resolveOptionValueFromIdOrText(
+  question: ComprehensionQuestion,
+  rawSelection: string
+): string {
+  const trimmed = (rawSelection || '').trim();
+  if (!trimmed) return '';
+  const prefix = `${question.id}__opt_`;
+  if (trimmed.startsWith(prefix) && Array.isArray(question.options)) {
+    const idx = Number.parseInt(trimmed.slice(prefix.length), 10);
+    if (Number.isInteger(idx) && idx >= 0 && idx < question.options.length) {
+      return question.options[idx];
+    }
+  }
+  return trimmed;
+}
+
 /**
  * Evaluates a single question using Step 1 (Deterministic Local Check) and Step 2 (Instruction/Word-Limit Rules).
  */
@@ -219,7 +235,7 @@ export function evaluateQuestionLocally(
   userResponse: string | undefined,
   passageText = ''
 ): GradedQuestionResult {
-  const rawAnswer = (userResponse || '').trim();
+  const rawAnswer = resolveOptionValueFromIdOrText(question, userResponse || '');
   const normalizedUser = normalizeAnswer(rawAnswer);
 
   // 1. Blank response check
@@ -246,6 +262,7 @@ export function evaluateQuestionLocally(
     const selectedParts = rawAnswer
       .split(MULTI_ANSWER_DELIMITER)
       .flatMap((part) => part.split('|'))
+      .map((part) => resolveOptionValueFromIdOrText(question, part))
       .map(normalizeAnswer)
       .filter(Boolean);
 

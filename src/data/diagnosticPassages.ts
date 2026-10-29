@@ -2092,11 +2092,474 @@ const RAW_DIAGNOSTIC_PASSAGES: ReadingLesson[] = [
     createdAt: '2026-01-10T00:00:00.000Z',
     updatedAt: '2026-01-10T00:00:00.000Z',
   },
+  // ============================================================================
+  // C2 DIAGNOSTIC PASSAGES (3)
+  // ============================================================================
+  {
+    id: 'diag-c2-1-epistemic-opacity-algorithms',
+    title: 'Epistemic Opacity and the Dilemma of Algorithmic Interpretability',
+    level: 'C2',
+    topic: 'Science and technology',
+    status: 'published',
+    isDiagnostic: true,
+    diagnosticBand: 'foundation',
+    estimatedMinutes: 4,
+    wordCount: 308,
+    introduction:
+      'Read this C2 passage examining why deep neural networks challenge traditional scientific ideals of mechanistic explanation.',
+    illustrationUrl: getEditorialIllustrationUri(
+      'diag-c2-1-epistemic-opacity-algorithms',
+      'Science and technology',
+      'C2'
+    ),
+    illustrationAlt: 'Illustration of high-dimensional algorithmic networks and scientific lenses',
+    passage: [
+      'Throughout the history of modern science, predictive accuracy and explanatory intelligibility were widely assumed to march in lockstep. Newton’s laws of motion and Maxwell’s equations did not merely forecast physical phenomena; they articulated parsimonious mathematical relationships that human minds could inspect, manipulate, and trace from premise to conclusion. Contemporary deep learning has fractured this compact. By optimizing billions of interdependent parameters across non-linear activation layers, neural architectures routinely achieve superhuman predictive fidelity in protein folding, seismic forecasting, and radiological triage while remaining epistemically opaque to their own designers.',
+      'Philosophers of science distinguish this structural inscrutability from mere corporate secrecy or technical illiteracy. Even when every weight, bias, and training gradient is publicly disclosed, no human investigator can compress a trillion-operation inference path into a concise causal narrative without discarding the very high-dimensional interactions that generate its accuracy. Post-hoc interpretability tools—such as saliency maps and local linear approximations—offer reassuring visual summaries, yet critics warn that these surrogates frequently confabulate simplified rationales that diverge from the model’s actual decision boundary.',
+      'Consequently, high-stakes domains face an acute normative dilemma: either restrict deployment to transparent models that sacrifice diagnostic sensitivity, or institutionalize rigorous empirical auditing protocols that validate reliability without demanding full mechanistic transparency.',
+    ].join('\n\n'),
+    vocabulary: [
+      {
+        id: 'diag-c2-1-v1',
+        word: 'parsimonious',
+        partOfSpeech: 'adjective',
+        simpleDefinition: 'Explaining complex phenomena using the fewest and simplest principles possible.',
+        contextMeaning: 'Concise, economical mathematical laws that are easy for scientists to trace.',
+        originalSentence:
+          'Newton’s laws of motion and Maxwell’s equations did not merely forecast physical phenomena; they articulated parsimonious mathematical relationships that human minds could inspect, manipulate, and trace from premise to conclusion.',
+        exampleSentence: 'Scientists prefer a parsimonious theory over a needlessly complicated one.',
+      },
+      {
+        id: 'diag-c2-1-v2',
+        word: 'inscrutability',
+        partOfSpeech: 'noun',
+        simpleDefinition: 'The quality of being impossible to understand or interpret by inspection.',
+        contextMeaning: 'The inability of humans to trace how billions of neural weights produce a specific output.',
+        originalSentence:
+          'Philosophers of science distinguish this structural inscrutability from mere corporate secrecy or technical illiteracy.',
+        exampleSentence: 'The inscrutability of the ancient script frustrated historians for decades.',
+      },
+    ],
+    questions: [
+      {
+        id: 'diag-c2-1-q1',
+        type: 'multiple_choice',
+        prompt: 'What historical assumption about scientific models has deep learning disrupted?',
+        options: [
+          'That high predictive power naturally goes hand in hand with human-understandable explanation',
+          'That mathematical equations cannot be applied to biological systems',
+          'That larger datasets always reduce the accuracy of physical forecasts',
+          'That classical physics required billions of parameters to predict motion',
+        ],
+        correctAnswer:
+          'That high predictive power naturally goes hand in hand with human-understandable explanation',
+        explanation:
+          'Paragraph 1 states that predictive accuracy and explanatory intelligibility were assumed to march in lockstep until deep learning fractured this compact.',
+        passageEvidence:
+          'Throughout the history of modern science, predictive accuracy and explanatory intelligibility were widely assumed to march in lockstep.',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-1-q2',
+        type: 'true_false_not_given',
+        prompt: 'Publishing all of a neural network’s internal weights and training gradients makes its reasoning easy for humans to summarize without losing accuracy.',
+        options: ['True', 'False', 'Not Given'],
+        correctAnswer: 'False',
+        explanation:
+          'Paragraph 2 states that even when every weight and gradient is publicly disclosed, no human investigator can compress the inference path into a concise causal narrative without discarding the interactions that generate its accuracy.',
+        passageEvidence:
+          'Even when every weight, bias, and training gradient is publicly disclosed, no human investigator can compress a trillion-operation inference path into a concise causal narrative without discarding the very high-dimensional interactions that generate its accuracy.',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-1-q3',
+        type: 'multiple_choice',
+        prompt: 'What reservation do critics raise regarding post-hoc interpretability tools like saliency maps?',
+        options: [
+          'They may invent simplified explanations that do not accurately reflect how the model actually makes decisions',
+          'They require too much electricity to run on hospital computers',
+          'They are legally prohibited in radiological and seismic research',
+          'They permanently erase the weights of the underlying neural network',
+        ],
+        correctAnswer:
+          'They may invent simplified explanations that do not accurately reflect how the model actually makes decisions',
+        explanation:
+          'Paragraph 2 notes that post-hoc surrogates frequently confabulate simplified rationales that diverge from the model’s actual decision boundary.',
+        passageEvidence:
+          'Post-hoc interpretability tools—such as saliency maps and local linear approximations—offer reassuring visual summaries, yet critics warn that these surrogates frequently confabulate simplified rationales that diverge from the model’s actual decision boundary.',
+        difficulty: 'challenging',
+      },
+      {
+        id: 'diag-c2-1-q4',
+        type: 'vocabulary_in_context',
+        prompt: 'In Paragraph 1, the word "parsimonious" most nearly means:',
+        options: [
+          'Conceptually economical and concise',
+          'Financially ungenerous and underfunded',
+          'Statistically random and unpredictable',
+          'Secretive and proprietary',
+        ],
+        correctAnswer: 'Conceptually economical and concise',
+        explanation:
+          'In scientific usage, parsimonious equations express physical laws with economy and simplicity.',
+        passageEvidence:
+          'they articulated parsimonious mathematical relationships that human minds could inspect, manipulate, and trace from premise to conclusion.',
+        difficulty: 'challenging',
+      },
+      {
+        id: 'diag-c2-1-q5',
+        type: 'true_false_not_given',
+        prompt: 'Saliency maps were originally invented for seismic forecasting before being adapted for medical imaging.',
+        options: ['True', 'False', 'Not Given'],
+        correctAnswer: 'Not Given',
+        explanation:
+          'The passage mentions seismic forecasting, radiological triage, and saliency maps, but says nothing about the historical origin of saliency maps.',
+        passageEvidence:
+          'Post-hoc interpretability tools—such as saliency maps and local linear approximations—offer reassuring visual summaries',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-1-q6',
+        type: 'multiple_choice',
+        prompt: 'What trade-off is presented in the final paragraph?',
+        options: [
+          'Choosing between simpler, transparent models with lower sensitivity or opaque models governed by strict empirical testing',
+          'Replacing all human doctors with automated radiological software',
+          'Abandoning Maxwell’s equations in favour of local linear approximations',
+          'Banning deep learning in protein folding while allowing it in finance',
+        ],
+        correctAnswer:
+          'Choosing between simpler, transparent models with lower sensitivity or opaque models governed by strict empirical testing',
+        explanation:
+          'Paragraph 3 frames the dilemma between restricting deployment to transparent models that sacrifice sensitivity or institutionalizing rigorous empirical auditing.',
+        passageEvidence:
+          'Consequently, high-stakes domains face an acute normative dilemma: either restrict deployment to transparent models that sacrifice diagnostic sensitivity, or institutionalize rigorous empirical auditing protocols that validate reliability without demanding full mechanistic transparency.',
+        difficulty: 'challenging',
+      },
+    ],
+    createdAt: '2026-01-10T00:00:00.000Z',
+    updatedAt: '2026-01-10T00:00:00.000Z',
+  },
+  {
+    id: 'diag-c2-2-paleogenomics-hybridization',
+    title: 'Reticulate Evolution and the Paleogenomic Revision of Human Origins',
+    level: 'C2',
+    topic: 'Biology and animal behaviour',
+    status: 'published',
+    isDiagnostic: true,
+    diagnosticBand: 'core',
+    estimatedMinutes: 4,
+    wordCount: 304,
+    introduction:
+      'Read this C2 passage on how ancient DNA sequencing replaced the classic branching-tree model of hominin evolution with a braided network of gene flow.',
+    illustrationUrl: getEditorialIllustrationUri(
+      'diag-c2-2-paleogenomics-hybridization',
+      'Biology and animal behaviour',
+      'C2'
+    ),
+    illustrationAlt: 'Illustration of intertwined genomic strands and ancient hominin migration paths',
+    passage: [
+      'For much of the twentieth century, paleoanthropology conceptualized hominin phylogeny as a strictly bifurcating evolutionary tree: ancestral populations diverged into isolated branches that either culminated in Homo sapiens or terminated in extinction without genetic issue. The maturation of paleogenomics—recovering endogenous nuclear DNA from Pleistocene petrous bones despite pervasive post-mortem deamination and microbial contamination—has decisively dismantled this cladistic orthodoxy.',
+      'High-coverage genomes sequenced from Neanderthal and Denisovan remains reveal that late Quaternary hominin lineages functioned not as hermetically sealed biological species, but as a reticulate metapopulation connected by recurrent episodes of introgressive hybridization. While purifying selection subsequently purged many archaic alleles from functional coding regions—particularly on the human X chromosome and within testes-expressed genes—adaptive introgression simultaneously bequeathed advantageous variants to dispersing modern humans. Most famously, high-altitude Tibetan populations inherited the EPAS1 hypoxia-tolerance haplotype from Denisovan ancestors, bypassing millennia of de novo mutational waiting time.',
+      'Consequently, the metaphor of a branching phylogenetic tree has yielded to that of a braided stream, in which transient reproductive isolation was repeatedly punctuated by adaptive genetic exchange.',
+    ].join('\n\n'),
+    vocabulary: [
+      {
+        id: 'diag-c2-2-v1',
+        word: 'orthodoxy',
+        partOfSpeech: 'noun',
+        simpleDefinition: 'A long-accepted standard belief or theory within a field.',
+        contextMeaning: 'The traditional scientific view that human evolution followed a strictly branching tree.',
+        originalSentence:
+          'The maturation of paleogenomics—recovering endogenous nuclear DNA from Pleistocene petrous bones despite pervasive post-mortem deamination and microbial contamination—has decisively dismantled this cladistic orthodoxy.',
+        exampleSentence: 'New fossil evidence challenged the prevailing orthodoxy in geology.',
+      },
+      {
+        id: 'diag-c2-2-v2',
+        word: 'bequeathed',
+        partOfSpeech: 'verb',
+        simpleDefinition: 'Passed something valuable down to later generations.',
+        contextMeaning: 'Transferred helpful genetic variants from archaic hominins to modern human populations.',
+        originalSentence:
+          'While purifying selection subsequently purged many archaic alleles from functional coding regions—particularly on the human X chromosome and within testes-expressed genes—adaptive introgression simultaneously bequeathed advantageous variants to dispersing modern humans.',
+        exampleSentence: 'Ancient engineers bequeathed durable stone aqueducts to the region.',
+      },
+    ],
+    questions: [
+      {
+        id: 'diag-c2-2-q1',
+        type: 'multiple_choice',
+        prompt: 'How did twentieth-century paleoanthropology traditionally view hominin evolution?',
+        options: [
+          'As a branching tree in which separated lineages never interbred after diverging',
+          'As a braided stream with constant gene flow between all primate species',
+          'As a process driven entirely by high-altitude mutations in Tibet',
+          'As impossible to study without sequencing petrous bones',
+        ],
+        correctAnswer:
+          'As a branching tree in which separated lineages never interbred after diverging',
+        explanation:
+          'Paragraph 1 states that twentieth-century paleoanthropology conceptualized hominin phylogeny as a strictly bifurcating tree where branches either led to Homo sapiens or went extinct without genetic issue.',
+        passageEvidence:
+          'For much of the twentieth century, paleoanthropology conceptualized hominin phylogeny as a strictly bifurcating evolutionary tree: ancestral populations diverged into isolated branches that either culminated in Homo sapiens or terminated in extinction without genetic issue.',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-2-q2',
+        type: 'true_false_not_given',
+        prompt: 'Every archaic gene inherited from Neanderthals and Denisovans was beneficial and preserved equally across all parts of the human genome.',
+        options: ['True', 'False', 'Not Given'],
+        correctAnswer: 'False',
+        explanation:
+          'Paragraph 2 explains that purifying selection purged many archaic alleles from functional coding regions, especially on the X chromosome and in testes-expressed genes.',
+        passageEvidence:
+          'While purifying selection subsequently purged many archaic alleles from functional coding regions—particularly on the human X chromosome and within testes-expressed genes—adaptive introgression simultaneously bequeathed advantageous variants to dispersing modern humans.',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-2-q3',
+        type: 'multiple_choice',
+        prompt: 'What advantage did the Denisovan EPAS1 haplotype provide to Tibetan populations?',
+        options: [
+          'It supplied ready-made genetic adaptation to low-oxygen high-altitude environments without waiting for new mutations',
+          'It prevented microbial contamination in ancient bone fossils',
+          'It eliminated all Neanderthal DNA from the X chromosome',
+          'It allowed archaic hominins to cross ocean barriers during the Pleistocene',
+        ],
+        correctAnswer:
+          'It supplied ready-made genetic adaptation to low-oxygen high-altitude environments without waiting for new mutations',
+        explanation:
+          'Paragraph 2 notes that Tibetan populations inherited the EPAS1 hypoxia-tolerance haplotype from Denisovans, bypassing millennia of de novo mutational waiting time.',
+        passageEvidence:
+          'Most famously, high-altitude Tibetan populations inherited the EPAS1 hypoxia-tolerance haplotype from Denisovan ancestors, bypassing millennia of de novo mutational waiting time.',
+        difficulty: 'challenging',
+      },
+      {
+        id: 'diag-c2-2-q4',
+        type: 'vocabulary_in_context',
+        prompt: 'In Paragraph 2, what does "hermetically sealed" imply about late Quaternary hominin lineages?',
+        options: [
+          'Completely isolated from one another with no genetic exchange',
+          'Preserved inside airtight limestone caves',
+          'Protected from viral diseases by immune genes',
+          'Confined to tropical island ecosystems',
+        ],
+        correctAnswer: 'Completely isolated from one another with no genetic exchange',
+        explanation:
+          'The passage contrasts "hermetically sealed biological species" with a metapopulation connected by recurrent hybridization.',
+        passageEvidence:
+          'High-coverage genomes sequenced from Neanderthal and Denisovan remains reveal that late Quaternary hominin lineages functioned not as hermetically sealed biological species, but as a reticulate metapopulation connected by recurrent episodes of introgressive hybridization.',
+        difficulty: 'challenging',
+      },
+      {
+        id: 'diag-c2-2-q5',
+        type: 'true_false_not_given',
+        prompt: 'Denisovan fossils have been discovered in more countries than Neanderthal fossils.',
+        options: ['True', 'False', 'Not Given'],
+        correctAnswer: 'Not Given',
+        explanation:
+          'The passage mentions sequencing Neanderthal and Denisovan remains, but never compares the number of countries in which their fossils have been found.',
+        passageEvidence:
+          'High-coverage genomes sequenced from Neanderthal and Denisovan remains reveal that late Quaternary hominin lineages functioned not as hermetically sealed biological species',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-2-q6',
+        type: 'multiple_choice',
+        prompt: 'Why does the author prefer the metaphor of a "braided stream" in Paragraph 3?',
+        options: [
+          'Because hominin populations separated temporarily but repeatedly reconnected to exchange genetic material',
+          'Because Pleistocene hominins lived exclusively along glacial river valleys',
+          'Because ancient DNA can only be extracted from waterlogged sediments',
+          'Because evolution proceeds at a constant speed toward a single destination',
+        ],
+        correctAnswer:
+          'Because hominin populations separated temporarily but repeatedly reconnected to exchange genetic material',
+        explanation:
+          'Paragraph 3 explains that in a braided stream, transient reproductive isolation was repeatedly punctuated by adaptive genetic exchange.',
+        passageEvidence:
+          'Consequently, the metaphor of a branching phylogenetic tree has yielded to that of a braided stream, in which transient reproductive isolation was repeatedly punctuated by adaptive genetic exchange.',
+        difficulty: 'challenging',
+      },
+    ],
+    createdAt: '2026-01-10T00:00:00.000Z',
+    updatedAt: '2026-01-10T00:00:00.000Z',
+  },
+  {
+    id: 'diag-c2-3-sovereign-debt-architecture',
+    title: 'Collective-Action Clauses and the Architecture of Sovereign Debt Restructuring',
+    level: 'C2',
+    topic: 'Economics and society',
+    status: 'published',
+    isDiagnostic: true,
+    diagnosticBand: 'stretch',
+    estimatedMinutes: 4,
+    wordCount: 311,
+    introduction:
+      'Read this C2 passage analyzing why sovereign insolvencies lack an international bankruptcy court and how contractual innovations mitigate holdout litigation.',
+    illustrationUrl: getEditorialIllustrationUri(
+      'diag-c2-3-sovereign-debt-architecture',
+      'Economics and society',
+      'C2'
+    ),
+    illustrationAlt: 'Illustration of international financial treaties and architectural scales',
+    passage: [
+      'Unlike corporate insolvencies, which are adjudicated under statutory bankruptcy codes capable of imposing binding cramdown restructurings on dissenting creditors, sovereign debt crises unfold in a legal vacuum. Because sovereign states enjoy jurisdictional immunity and cannot be liquidated by a receiver, cross-border debt workouts have historically relied on voluntary contractual renegotiation. Following the shift from syndicated bank loans to dispersed bond markets in the 1990s, this institutional lacuna invited opportunistic "holdout" litigation: distressed-debt funds purchased defaulted bonds at steep discounts and sued for full par value, paralyzing debt relief agreed to by supermajorities of cooperative bondholders.',
+      'Having failed to secure political consensus for a treaty-based Sovereign Debt Restructuring Mechanism, international financial institutions turned instead to contractual engineering. Enhanced collective-action clauses (CACs) embedded in modern bond indentures permit a qualified supermajority—typically seventy-five percent of aggregate principal across multiple bond series—to bind minority holdouts to amended payment terms via single-limb aggregation.',
+      'Yet contractual clauses remain an incomplete panacea: they govern only newly issued bonds and leave non-bonded bilateral and collateralized commodity claims outside the voting perimeter, perpetuating inter-creditor coordination frictions during systemic defaults.',
+    ].join('\n\n'),
+    vocabulary: [
+      {
+        id: 'diag-c2-3-v1',
+        word: 'lacuna',
+        partOfSpeech: 'noun',
+        simpleDefinition: 'An unfilled gap or missing part in a system, law, or text.',
+        contextMeaning: 'The absence of an international bankruptcy court for sovereign nations.',
+        originalSentence:
+          'Following the shift from syndicated bank loans to dispersed bond markets in the 1990s, this institutional lacuna invited opportunistic "holdout" litigation: distressed-debt funds purchased defaulted bonds at steep discounts and sued for full par value, paralyzing debt relief agreed to by supermajorities of cooperative bondholders.',
+        exampleSentence: 'The court ruling exposed a serious lacuna in international maritime law.',
+      },
+      {
+        id: 'diag-c2-3-v2',
+        word: 'panacea',
+        partOfSpeech: 'noun',
+        simpleDefinition: 'A solution or remedy that completely solves every aspect of a problem.',
+        contextMeaning: 'A complete fix for all sovereign debt crises.',
+        originalSentence:
+          'Yet contractual clauses remain an incomplete panacea: they govern only newly issued bonds and leave non-bonded bilateral and collateralized commodity claims outside the voting perimeter, perpetuating inter-creditor coordination frictions during systemic defaults.',
+        exampleSentence: 'Technology alone is not a panacea for educational inequality.',
+      },
+    ],
+    questions: [
+      {
+        id: 'diag-c2-3-q1',
+        type: 'multiple_choice',
+        prompt: 'How does a sovereign debt crisis differ legally from a corporate bankruptcy?',
+        options: [
+          'There is no statutory bankruptcy court with authority to liquidate a state or force all creditors into a single court-ordered restructuring',
+          'Sovereign states are legally prohibited from issuing bonds to private investors',
+          'Corporate bankruptcies cannot be resolved without unanimous consent from every shareholder',
+          'Sovereign debt restructurings are automatically decided by the United Nations Security Council',
+        ],
+        correctAnswer:
+          'There is no statutory bankruptcy court with authority to liquidate a state or force all creditors into a single court-ordered restructuring',
+        explanation:
+          'Paragraph 1 contrasts corporate insolvencies under statutory bankruptcy codes with sovereign debt crises that unfold in a legal vacuum without liquidation.',
+        passageEvidence:
+          'Unlike corporate insolvencies, which are adjudicated under statutory bankruptcy codes capable of imposing binding cramdown restructurings on dissenting creditors, sovereign debt crises unfold in a legal vacuum.',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-3-q2',
+        type: 'true_false_not_given',
+        prompt: 'Holdout creditors typically purchase defaulted sovereign bonds at face value before initiating litigation.',
+        options: ['True', 'False', 'Not Given'],
+        correctAnswer: 'False',
+        explanation:
+          'Paragraph 1 states that distressed-debt funds purchased defaulted bonds at steep discounts and then sued for full par (face) value.',
+        passageEvidence:
+          'distressed-debt funds purchased defaulted bonds at steep discounts and sued for full par value, paralyzing debt relief agreed to by supermajorities of cooperative bondholders.',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-3-q3',
+        type: 'multiple_choice',
+        prompt: 'What is the primary function of enhanced collective-action clauses (CACs) with single-limb aggregation?',
+        options: [
+          'They allow a supermajority of bondholders across multiple bond series to make restructuring terms legally binding on dissenting minority bondholders',
+          'They establish an international bankruptcy court with power to seize state assets',
+          'They cancel all bilateral loans and commodity-backed credit lines automatically',
+          'They require 100% unanimous approval before any bond maturity can be extended',
+        ],
+        correctAnswer:
+          'They allow a supermajority of bondholders across multiple bond series to make restructuring terms legally binding on dissenting minority bondholders',
+        explanation:
+          'Paragraph 2 explains that enhanced CACs permit a qualified supermajority (typically 75% across multiple series) to bind minority holdouts via single-limb aggregation.',
+        passageEvidence:
+          'Enhanced collective-action clauses (CACs) embedded in modern bond indentures permit a qualified supermajority—typically seventy-five percent of aggregate principal across multiple bond series—to bind minority holdouts to amended payment terms via single-limb aggregation.',
+        difficulty: 'challenging',
+      },
+      {
+        id: 'diag-c2-3-q4',
+        type: 'vocabulary_in_context',
+        prompt: 'In Paragraph 1, the phrase "institutional lacuna" refers to:',
+        options: [
+          'The missing legal framework for binding international sovereign bankruptcy',
+          'A surplus of foreign currency reserves in central banks',
+          'A secret agreement among commercial syndicate banks',
+          'The rapid growth of domestic stock exchanges in the 1990s',
+        ],
+        correctAnswer:
+          'The missing legal framework for binding international sovereign bankruptcy',
+        explanation:
+          '"Lacuna" means an unfilled gap, referring back to the "legal vacuum" and absence of statutory bankruptcy codes for sovereigns.',
+        passageEvidence:
+          'Following the shift from syndicated bank loans to dispersed bond markets in the 1990s, this institutional lacuna invited opportunistic "holdout" litigation',
+        difficulty: 'challenging',
+      },
+      {
+        id: 'diag-c2-3-q5',
+        type: 'true_false_not_given',
+        prompt: 'Syndicated bank loans in the 1980s carried higher interest rates than dispersed sovereign bonds in the 1990s.',
+        options: ['True', 'False', 'Not Given'],
+        correctAnswer: 'Not Given',
+        explanation:
+          'The passage mentions the shift from syndicated bank loans to dispersed bond markets in the 1990s, but does not compare their interest rates.',
+        passageEvidence:
+          'Following the shift from syndicated bank loans to dispersed bond markets in the 1990s, this institutional lacuna invited opportunistic "holdout" litigation',
+        difficulty: 'core',
+      },
+      {
+        id: 'diag-c2-3-q6',
+        type: 'multiple_choice',
+        prompt: 'Why does the author conclude that enhanced CACs are "an incomplete panacea"?',
+        options: [
+          'Because they apply only to newer bonds and do not cover bilateral or collateralized non-bond debts',
+          'Because supermajorities of bondholders always vote against debt relief',
+          'Because courts have declared all collective-action clauses unconstitutional',
+          'Because sovereign states no longer issue bonds in international markets',
+        ],
+        correctAnswer:
+          'Because they apply only to newer bonds and do not cover bilateral or collateralized non-bond debts',
+        explanation:
+          'Paragraph 3 explains that CACs govern only newly issued bonds and leave non-bonded bilateral and collateralized commodity claims outside the voting perimeter.',
+        passageEvidence:
+          'they govern only newly issued bonds and leave non-bonded bilateral and collateralized commodity claims outside the voting perimeter, perpetuating inter-creditor coordination frictions during systemic defaults.',
+        difficulty: 'challenging',
+      },
+    ],
+    createdAt: '2026-01-10T00:00:00.000Z',
+    updatedAt: '2026-01-10T00:00:00.000Z',
+  },
 ];
+
+let diagFourOptionRotation = 0;
 
 export const DIAGNOSTIC_PASSAGES: ReadingLesson[] = RAW_DIAGNOSTIC_PASSAGES.map((passage) => ({
   ...passage,
   illustrationUrl: getEditorialIllustrationUri(passage.id, passage.topic, passage.level),
   illustrationAlt: getPassageIllustrationAlt(passage.id, passage.illustrationAlt),
+  questions: passage.questions.map((q) => {
+    if (
+      (q.type === 'multiple_choice' || q.type === 'vocabulary_in_context') &&
+      Array.isArray(q.options) &&
+      q.options.length === 4
+    ) {
+      const targetIdx = diagFourOptionRotation % 4;
+      diagFourOptionRotation += 1;
+      const curIdx = q.options.findIndex(
+        (opt) => opt.trim().toLowerCase() === q.correctAnswer.trim().toLowerCase()
+      );
+      if (curIdx !== -1 && curIdx !== targetIdx) {
+        const correctOpt = q.options[curIdx];
+        const others = q.options.filter((_, idx) => idx !== curIdx);
+        const reordered = [...others];
+        reordered.splice(targetIdx, 0, correctOpt);
+        return { ...q, options: reordered };
+      }
+    }
+    return q;
+  }),
 }));
+
 

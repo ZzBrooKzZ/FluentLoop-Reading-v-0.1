@@ -47,21 +47,21 @@
         "preferredLevel": {
           "type": "string",
           "description": "Selected CEFR reading level.",
-          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "enum": ["A1", "A2", "B1", "B2", "C1", "C2"],
           "minLength": 2,
           "maxLength": 2
         },
         "startingLevel": {
           "type": "string",
           "description": "Initial CEFR level when the learner started the course.",
-          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "enum": ["A1", "A2", "B1", "B2", "C1", "C2"],
           "minLength": 2,
           "maxLength": 2
         },
         "placementLevel": {
           "type": "string",
           "description": "Recommended CEFR level from the 3-passage adaptive placement test.",
-          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "enum": ["A1", "A2", "B1", "B2", "C1", "C2"],
           "minLength": 2,
           "maxLength": 2
         },
@@ -128,7 +128,7 @@
         "level": {
           "type": "string",
           "description": "CEFR reading level.",
-          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "enum": ["A1", "A2", "B1", "B2", "C1", "C2"],
           "minLength": 2,
           "maxLength": 2
         },
@@ -256,7 +256,7 @@
         "level": {
           "type": "string",
           "description": "CEFR level of the lesson.",
-          "enum": ["A1", "A2", "B1", "B2", "C1"],
+          "enum": ["A1", "A2", "B1", "B2", "C1", "C2"],
           "minLength": 2,
           "maxLength": 2
         },

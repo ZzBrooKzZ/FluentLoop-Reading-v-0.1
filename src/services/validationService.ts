@@ -2,7 +2,7 @@ import { AcademicTopic, CEFRLevel, ReadingLesson } from '../types/reading';
 import { getEditorialIllustrationUri } from '../utils/illustrations';
 import { CEFR_TARGET_WORD_RANGES, CEFR_VOCAB_TARGET_RANGES } from '../data/ieltsAcademicUpgrade';
 
-export const ALL_CEFR_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+export const ALL_CEFR_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 
 export const ALL_ACADEMIC_TOPICS: AcademicTopic[] = [
   'Science and technology',
@@ -59,7 +59,7 @@ export function validateLesson(lesson: Partial<ReadingLesson>): LessonValidation
     errors.push('Lesson title is required.');
   }
   if (!lesson.level || !ALL_CEFR_LEVELS.includes(lesson.level)) {
-    errors.push('Valid CEFR level (A1, A2, B1, B2, C1) is required.');
+    errors.push('Valid CEFR level (A1, A2, B1, B2, C1, C2) is required.');
   }
   if (!lesson.topic) {
     errors.push('Academic topic category is required.');
@@ -164,6 +164,30 @@ export function validateLesson(lesson: Partial<ReadingLesson>): LessonValidation
           invalidAnswerKey = true;
           errors.push(`Question #${i + 1} (Yes/No/Not Given) answer must be Yes, No, or Not Given.`);
         }
+      }
+    }
+
+    const tfngQuestions = questions.filter((q) => q.type === 'true_false_not_given');
+    if (tfngQuestions.length >= 2) {
+      const distinctTfngLabels = new Set(
+        tfngQuestions.map((q) => (q.correctAnswer || '').trim().toUpperCase())
+      );
+      if (distinctTfngLabels.size === 1) {
+        warnings.push(
+          'All True/False/Not Given questions in this passage share the same answer label. Consider including a balanced mix of True, False, and Not Given where supported by the passage.'
+        );
+      }
+    }
+
+    const ynngQuestions = questions.filter((q) => q.type === 'yes_no_not_given');
+    if (ynngQuestions.length >= 2) {
+      const distinctYnngLabels = new Set(
+        ynngQuestions.map((q) => (q.correctAnswer || '').trim().toUpperCase())
+      );
+      if (distinctYnngLabels.size === 1) {
+        warnings.push(
+          'All Yes/No/Not Given questions in this passage share the same answer label. Consider including a balanced mix of Yes, No, and Not Given where supported by the passage.'
+        );
       }
     }
   }

@@ -1,6 +1,6 @@
 import { CEFRLevel, LessonAttempt, ReadingLesson } from '../types/reading';
 
-export const ADAPTIVE_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+export const ADAPTIVE_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 
 /** Internal product scale only. These bands are not Lexile or CEFR conversions. */
 export const DIFFICULTY_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
@@ -9,6 +9,7 @@ export const DIFFICULTY_RANGES: Record<CEFRLevel, { min: number; max: number }> 
   B1: { min: 40, max: 59 },
   B2: { min: 60, max: 79 },
   C1: { min: 80, max: 100 },
+  C2: { min: 101, max: 120 },
 };
 
 export const ADAPTIVE_SETTINGS = {
