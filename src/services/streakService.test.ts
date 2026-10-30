@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { LessonAttempt } from '../types/reading';
+import { LessonAttempt, ReadingLesson } from '../types/reading';
+import { createAdaptiveProfile, selectNextLesson } from './adaptiveLearning';
 import {
   addCalendarDays,
+  buildDeterministicFirstAttemptId,
   calculateReadingStreak,
   diffCalendarDays,
+  ensureOrRestoreUnfinishedAttempt,
+  findActiveUnfinishedAttempt,
   isQualifyingStreakAttempt,
   mergeAndNormalizeAttempts,
   normalizeLessonAttempt,
   parseActivityTimestamp,
   recordCompletedAttemptWithPersistence,
   toLocalCalendarDateKey,
+  updateInProgressAttemptAnswers,
 } from './streakService';
 
 function createAttempt(overrides: Partial<LessonAttempt> = {}): LessonAttempt {
@@ -868,5 +873,364 @@ test('Scenario 17: Cross-user isolation and adaptive recommendation metrics stay
     'Adaptive recommendation completedAtCurrentLevel must also be 1 (excluding practice and in_progress)'
   );
   assert.equal(streak.currentStreak, 2, 'First completion on Oct 27 + practice completion on Oct 28 = 2-day streak');
+});
+
+function createTestLesson(id: string, level: ReadingLesson['level'] = 'B1'): ReadingLesson {
+  return {
+    id,
+    title: `Title for ${id}`,
+    level,
+    topic: 'Science and technology',
+    status: 'published',
+    estimatedMinutes: 5,
+    introduction: 'Test introduction.',
+    passage: 'Paragraph 1 of the passage. Paragraph 2 with academic details.',
+    illustrationUrl: '/images/passages/test.png',
+    illustrationAlt: 'Test illustration',
+    vocabulary: [],
+    questions: [
+      { id: 'q1', type: 'multiple_choice', prompt: 'Q1', options: ['A', 'B', 'C', 'D'], correctAnswer: 'A', acceptedAnswers: ['A'], explanation: 'E1', passageEvidence: 'Paragraph 1' },
+      { id: 'q2', type: 'multiple_choice', prompt: 'Q2', options: ['A', 'B', 'C', 'D'], correctAnswer: 'B', acceptedAnswers: ['B'], explanation: 'E2', passageEvidence: 'Paragraph 1' },
+      { id: 'q3', type: 'multiple_choice', prompt: 'Q3', options: ['A', 'B', 'C', 'D'], correctAnswer: 'C', acceptedAnswers: ['C'], explanation: 'E3', passageEvidence: 'Paragraph 1' },
+      { id: 'q4', type: 'multiple_choice', prompt: 'Q4', options: ['A', 'B', 'C', 'D'], correctAnswer: 'D', acceptedAnswers: ['D'], explanation: 'E4', passageEvidence: 'Paragraph 2' },
+      { id: 'q5', type: 'true_false_not_given', prompt: 'Q5', options: ['True', 'False', 'Not Given'], correctAnswer: 'True', acceptedAnswers: ['True'], explanation: 'E5', passageEvidence: 'Paragraph 2' },
+      { id: 'q6', type: 'short_answer', prompt: 'Q6', correctAnswer: 'academic', acceptedAnswers: ['academic'], explanation: 'E6', passageEvidence: 'Paragraph 2' },
+    ],
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+  };
+}
+
+test('Unfinished Passage Persistence (Scenarios 1-7): Logout with 4/6 answers, login again, restore exact Passage A + 4 answers, answer remaining 2, complete Passage A, then assign Passage B', async () => {
+  const userId = 'uid-learner-1';
+  const profile = createAdaptiveProfile('B1');
+  const lessons = [
+    createTestLesson('b1-passage-a', 'B1'),
+    createTestLesson('b1-passage-b', 'B1'),
+    createTestLesson('b1-passage-c', 'B1'),
+  ];
+
+  // Simulated Firestore cloud store for attempts/{attemptId}
+  const cloudFirestoreDocs = new Map<string, Record<string, unknown>>();
+  const persistInProgressToFirestore = async (attempt: LessonAttempt) => {
+    const existing = cloudFirestoreDocs.get(attempt.id);
+    cloudFirestoreDocs.set(attempt.id, {
+      id: attempt.id,
+      userId: attempt.userId,
+      lessonId: attempt.lessonId,
+      lessonTitle: attempt.lessonTitle,
+      level: attempt.level,
+      topic: attempt.topic,
+      status: attempt.status,
+      attemptType: attempt.attemptType || 'first',
+      score: attempt.score,
+      totalQuestions: attempt.totalQuestions,
+      accuracy: attempt.accuracy,
+      answersJson: JSON.stringify(attempt.answers || {}),
+      questionTypeStatsJson: JSON.stringify(attempt.questionTypeStats || {}),
+      createdAt: existing?.createdAt || attempt.createdAt,
+      updatedAt: attempt.updatedAt,
+    });
+  };
+
+  // Step 1: Learner logs in and receives Passage A
+  const initialAssign = await ensureOrRestoreUnfinishedAttempt({
+    userId,
+    profile,
+    lessons,
+    currentAttempts: [],
+    persistInProgressToCloud: persistInProgressToFirestore,
+  });
+  assert.equal(initialAssign.createdNew, true);
+  assert.equal(initialAssign.restoredExisting, false);
+  const passageAId = initialAssign.lesson!.id;
+  assert.ok(passageAId);
+  assert.equal(initialAssign.attempt?.id, buildDeterministicFirstAttemptId(userId, passageAId));
+  assert.equal(initialAssign.attempt?.status, 'in_progress');
+
+  let activeLocalAttempts = initialAssign.attempts;
+
+  // Step 2 & 3: Learner starts reading Passage A and answers 4 out of 6 questions
+  const partialAnswers = {
+    q1: 'A',
+    q2: 'B',
+    q3: 'C',
+    q4: 'D',
+  };
+  const afterFourAnswers = await updateInProgressAttemptAnswers({
+    userId,
+    attemptId: initialAssign.attempt!.id,
+    lessonId: passageAId,
+    answers: partialAnswers,
+    currentAttempts: activeLocalAttempts,
+    persistAnswersToCloud: persistInProgressToFirestore,
+  });
+  activeLocalAttempts = afterFourAnswers.attempts;
+  assert.deepEqual(afterFourAnswers.attempt?.answers, partialAnswers);
+
+  // Step 4: Learner signs out -> local browser cache is completely wiped, cloud Firestore retains in_progress doc
+  activeLocalAttempts = [];
+  assert.equal(cloudFirestoreDocs.size, 1);
+
+  // Step 5: Learner signs in again -> Firestore snapshot delivers persisted attempts
+  const remoteSnapshotDocs = Array.from(cloudFirestoreDocs.values());
+  const hydratedAfterLogin = mergeAndNormalizeAttempts([], remoteSnapshotDocs, userId);
+
+  // Step 6: FluentLoop restores Passage A with the 4 previously selected answers
+  const restoredUnfinished = findActiveUnfinishedAttempt(hydratedAfterLogin, userId, profile.currentLevel);
+  assert.ok(restoredUnfinished, 'Unfinished attempt must be restored after sign-in');
+  assert.equal(restoredUnfinished.lessonId, passageAId, 'Must restore exact same Passage A');
+  assert.deepEqual(restoredUnfinished.answers, partialAnswers, 'Must restore all 4 previously selected answers');
+  assert.equal(
+    selectNextLesson(profile, lessons, hydratedAfterLogin)?.id,
+    passageAId,
+    'selectNextLesson must also return Passage A'
+  );
+
+  // Calling ensureOrRestoreUnfinishedAttempt after login must restore Passage A, NOT create a new assignment
+  const postLoginCheck = await ensureOrRestoreUnfinishedAttempt({
+    userId,
+    profile,
+    lessons,
+    currentAttempts: hydratedAfterLogin,
+    persistInProgressToCloud: persistInProgressToFirestore,
+  });
+  assert.equal(postLoginCheck.restoredExisting, true);
+  assert.equal(postLoginCheck.createdNew, false);
+  assert.equal(postLoginCheck.lesson?.id, passageAId);
+  assert.deepEqual(postLoginCheck.attempt?.answers, partialAnswers);
+
+  // Step 7: Learner continues from where they stopped, answering remaining 2 questions (q5 & q6)
+  const allSixAnswers = {
+    ...partialAnswers,
+    q5: 'True',
+    q6: 'academic',
+  };
+  const afterAllSix = await updateInProgressAttemptAnswers({
+    userId,
+    attemptId: restoredUnfinished.id,
+    lessonId: passageAId,
+    answers: allSixAnswers,
+    currentAttempts: hydratedAfterLogin,
+    persistAnswersToCloud: persistInProgressToFirestore,
+  });
+  assert.deepEqual(afterAllSix.attempt?.answers, allSixAnswers);
+
+  // Step 8: Learner completes and submits Passage A -> adaptive engine assigns Passage B
+  const completedOutcome = await recordCompletedAttemptWithPersistence({
+    currentAttempts: afterAllSix.attempts,
+    candidateAttempt: {
+      ...afterAllSix.attempt!,
+      status: 'completed',
+      score: 6,
+      totalQuestions: 6,
+      accuracy: 100,
+      answers: allSixAnswers,
+      updatedAt: '2026-10-30T16:00:00.000Z',
+    },
+    persistToCloud: persistInProgressToFirestore,
+  });
+  assert.equal(completedOutcome.persisted, true);
+  assert.equal(
+    findActiveUnfinishedAttempt(completedOutcome.attempts, userId),
+    null,
+    'No unfinished attempt should remain after completing Passage A'
+  );
+
+  const nextAssign = await ensureOrRestoreUnfinishedAttempt({
+    userId,
+    profile,
+    lessons,
+    currentAttempts: completedOutcome.attempts,
+    persistInProgressToCloud: persistInProgressToFirestore,
+  });
+  assert.equal(nextAssign.createdNew, true);
+  assert.ok(nextAssign.lesson);
+  assert.notEqual(
+    nextAssign.lesson.id,
+    passageAId,
+    'After completing Passage A, adaptive engine must assign a new passage (Passage B)'
+  );
+});
+
+test('Unfinished Passage Persistence (Scenario 8): Cross-device support restores Passage A and saved answers when signing in on a second device with empty localStorage', async () => {
+  const userId = 'uid-cross-device-user';
+  const profile = createAdaptiveProfile('A2');
+  const lessons = [createTestLesson('a2-passage-1', 'A2'), createTestLesson('a2-passage-2', 'A2')];
+
+  // Device 1: Learner starts a2-passage-1 and answers 3 questions, persisted to Firestore
+  const firestoreDocFromDevice1 = {
+    id: buildDeterministicFirstAttemptId(userId, 'a2-passage-1'),
+    userId,
+    lessonId: 'a2-passage-1',
+    lessonTitle: 'Title for a2-passage-1',
+    level: 'A2',
+    topic: 'Science and technology',
+    status: 'in_progress',
+    attemptType: 'first',
+    score: 0,
+    totalQuestions: 6,
+    accuracy: 0,
+    answersJson: JSON.stringify({ q1: 'A', q2: 'B', q3: 'C' }),
+    questionTypeStatsJson: '{}',
+    createdAt: '2026-10-30T10:00:00.000Z',
+    updatedAt: '2026-10-30T10:08:00.000Z',
+  };
+
+  // Device 2: Brand-new browser context (empty localAttempts = []) hydrates from Firestore
+  const device2Attempts = mergeAndNormalizeAttempts([], [firestoreDocFromDevice1], userId);
+  const restoredOnDevice2 = findActiveUnfinishedAttempt(device2Attempts, userId, profile.currentLevel);
+
+  assert.ok(restoredOnDevice2);
+  assert.equal(restoredOnDevice2.lessonId, 'a2-passage-1');
+  assert.deepEqual(restoredOnDevice2.answers, { q1: 'A', q2: 'B', q3: 'C' });
+  assert.equal(selectNextLesson(profile, lessons, device2Attempts)?.id, 'a2-passage-1');
+});
+
+test('Unfinished Passage Persistence (Scenarios 9, 10, 11): Multiple concurrent auth callbacks and multiple tabs coalesce without generating duplicate or conflicting assignments', async () => {
+  const userId = 'uid-concurrent-tabs';
+  const profile = createAdaptiveProfile('B1');
+  const lessons = [
+    createTestLesson('b1-lesson-1', 'B1'),
+    createTestLesson('b1-lesson-2', 'B1'),
+    createTestLesson('b1-lesson-3', 'B1'),
+  ];
+
+  let cloudWriteCount = 0;
+  let sharedAttempts: LessonAttempt[] = [];
+
+  const persistToCloud = async (attempt: LessonAttempt) => {
+    cloudWriteCount += 1;
+    await new Promise((r) => setTimeout(r, 20));
+    sharedAttempts = mergeAndNormalizeAttempts([attempt, ...sharedAttempts], [], userId);
+  };
+
+  // Simulate 3 concurrent calls (e.g. 2 auth state callbacks + 2 browser tabs requesting assignment simultaneously)
+  const [call1, call2, call3] = await Promise.all([
+    ensureOrRestoreUnfinishedAttempt({
+      userId,
+      profile,
+      lessons,
+      currentAttempts: sharedAttempts,
+      getCurrentAttempts: () => sharedAttempts,
+      persistInProgressToCloud: persistToCloud,
+    }),
+    ensureOrRestoreUnfinishedAttempt({
+      userId,
+      profile,
+      lessons,
+      currentAttempts: sharedAttempts,
+      getCurrentAttempts: () => sharedAttempts,
+      persistInProgressToCloud: persistToCloud,
+    }),
+    ensureOrRestoreUnfinishedAttempt({
+      userId,
+      profile,
+      lessons,
+      currentAttempts: sharedAttempts,
+      getCurrentAttempts: () => sharedAttempts,
+      persistInProgressToCloud: persistToCloud,
+    }),
+  ]);
+
+  assert.equal(cloudWriteCount, 1, 'Must only persist a single assignment across concurrent callbacks/tabs');
+  assert.equal(call1.lesson?.id, call2.lesson?.id);
+  assert.equal(call2.lesson?.id, call3.lesson?.id);
+  assert.equal(call1.attempt?.id, call2.attempt?.id);
+  assert.equal(call2.attempt?.id, call3.attempt?.id);
+
+  // Scenario 11: Subsequent assignment request while an unfinished assignment exists must NOT generate a new assignment
+  const subsequentCall = await ensureOrRestoreUnfinishedAttempt({
+    userId,
+    profile,
+    lessons,
+    currentAttempts: sharedAttempts,
+    getCurrentAttempts: () => sharedAttempts,
+    persistInProgressToCloud: persistToCloud,
+  });
+  assert.equal(subsequentCall.restoredExisting, true);
+  assert.equal(subsequentCall.createdNew, false);
+  assert.equal(subsequentCall.lesson?.id, call1.lesson?.id);
+  assert.equal(cloudWriteCount, 1);
+});
+
+test('Unfinished Passage Persistence (Scenarios 12, 13, 14): Strict cross-user isolation, completed passages never restored as unfinished, and placement assessment unaffected', async () => {
+  const profile = createAdaptiveProfile('B1');
+  const lessons = [createTestLesson('b1-shared-1', 'B1'), createTestLesson('b1-shared-2', 'B1')];
+
+  // Scenario 12: User A's unfinished assignment must NEVER be restored for User B
+  const userAUnfinished = createAttempt({
+    id: buildDeterministicFirstAttemptId('uid-user-a', 'b1-shared-1'),
+    userId: 'uid-user-a',
+    lessonId: 'b1-shared-1',
+    level: 'B1',
+    status: 'in_progress',
+    attemptType: 'first',
+    answers: { q1: 'A', q2: 'B' },
+  });
+
+  assert.equal(
+    findActiveUnfinishedAttempt([userAUnfinished], 'uid-user-b', 'B1'),
+    null,
+    'User B must never see or restore User A unfinished attempt'
+  );
+  const mergedForUserB = mergeAndNormalizeAttempts([userAUnfinished], [], 'uid-user-b');
+  assert.equal(mergedForUserB.length, 0);
+
+  // Scenario 13: Completed passages are never restored as unfinished or downgraded by stale in_progress records
+  const completedAttempt = createAttempt({
+    id: buildDeterministicFirstAttemptId('uid-user-a', 'b1-shared-1'),
+    userId: 'uid-user-a',
+    lessonId: 'b1-shared-1',
+    level: 'B1',
+    status: 'completed',
+    attemptType: 'first',
+    score: 6,
+    totalQuestions: 6,
+    accuracy: 100,
+    answers: { q1: 'A', q2: 'B', q3: 'C', q4: 'D', q5: 'True', q6: 'academic' },
+    updatedAt: '2026-10-30T15:00:00.000Z',
+  });
+  const staleInProgress = createAttempt({
+    id: 'att-legacy-stale',
+    userId: 'uid-user-a',
+    lessonId: 'b1-shared-1',
+    level: 'B1',
+    status: 'in_progress',
+    attemptType: 'first',
+    answers: { q1: 'A' },
+    updatedAt: '2026-10-30T14:00:00.000Z',
+  });
+
+  const mergedCompleted = mergeAndNormalizeAttempts([staleInProgress], [completedAttempt], 'uid-user-a');
+  assert.equal(mergedCompleted.length, 1);
+  assert.equal(mergedCompleted[0].status, 'completed');
+  assert.equal(findActiveUnfinishedAttempt(mergedCompleted, 'uid-user-a', 'B1'), null);
+
+  // Attempting to update in-progress answers on an already-completed lesson is a no-op
+  const updateCompletedNoOp = await updateInProgressAttemptAnswers({
+    userId: 'uid-user-a',
+    lessonId: 'b1-shared-1',
+    answers: { q1: 'C' },
+    currentAttempts: mergedCompleted,
+  });
+  assert.equal(updateCompletedNoOp.attempt, null);
+  assert.equal(updateCompletedNoOp.attempts[0].status, 'completed');
+
+  // Scenario 14: Diagnostic placement passages (`diag-*`) and placement timer/abandonment remain completely isolated
+  const diagAttempt = createAttempt({
+    id: 'att-diag-b1-1',
+    userId: 'uid-user-a',
+    lessonId: 'diag-b1-1',
+    level: 'B1',
+    status: 'in_progress',
+    attemptType: 'first',
+  });
+  assert.equal(
+    findActiveUnfinishedAttempt([diagAttempt], 'uid-user-a', 'B1'),
+    null,
+    'Diagnostic placement passages must never be treated as regular reading assignments'
+  );
+  assert.notEqual(selectNextLesson(profile, lessons, [diagAttempt])?.id, 'diag-b1-1');
 });
 

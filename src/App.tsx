@@ -95,13 +95,18 @@ import {
   selectNextLesson,
 } from './services/adaptiveLearning';
 import {
+  buildDeterministicFirstAttemptId,
   calculateReadingStreak,
+  findActiveUnfinishedAttempt,
   isQualifyingStreakAttempt,
   mergeAndNormalizeAttempts,
   parseActivityTimestamp,
   recordCompletedAttemptWithPersistence,
 } from './services/streakService';
-import { clearAllPlacementInProgressAnswers } from './services/optionRandomizer';
+import {
+  clearAllPlacementInProgressAnswers,
+  saveInProgressAttemptAnswers,
+} from './services/optionRandomizer';
 import { stopPlacementSessionTimer } from './services/placementTimerService';
 import { getPassagePhotoMetadata } from './utils/illustrations';
 
@@ -280,7 +285,76 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const [attempts, setAttempts] = useState<LessonAttempt[]>([]);
   const attemptsRef = useRef<LessonAttempt[]>([]);
+  const persistedRemoteAttemptIdsRef = useRef<Set<string>>(new Set());
+  const pendingInProgressSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingInProgressAttemptRef = useRef<LessonAttempt | null>(null);
   const [savedVocab, setSavedVocab] = useState<SavedVocabularyItem[]>([]);
+
+  const persistAttemptToFirestore = async (
+    attemptToSave: LessonAttempt,
+    uidOverride?: string
+  ): Promise<void> => {
+    const uid =
+      uidOverride ||
+      (auth.currentUser && !auth.currentUser.isAnonymous ? auth.currentUser.uid : null);
+    if (!uid || attemptToSave.lessonId.startsWith('diag-')) return;
+
+    const attemptRef = doc(db, 'attempts', attemptToSave.id);
+    const totalQuestions = Math.max(1, attemptToSave.totalQuestions || 1);
+    const answersJson = JSON.stringify(attemptToSave.answers || {});
+    const questionTypeStatsJson = JSON.stringify(attemptToSave.questionTypeStats || {});
+
+    let existsRemotely = persistedRemoteAttemptIdsRef.current.has(attemptToSave.id);
+    if (!existsRemotely) {
+      try {
+        const snap = await getDoc(attemptRef);
+        if (snap.exists()) {
+          existsRemotely = true;
+          persistedRemoteAttemptIdsRef.current.add(attemptToSave.id);
+          if (snap.data()?.status === 'completed') {
+            return;
+          }
+        }
+      } catch {
+        // Proceed with create if getDoc fails
+      }
+    }
+
+    if (existsRemotely) {
+      await setDoc(
+        attemptRef,
+        {
+          status: attemptToSave.status,
+          score: Math.round(attemptToSave.score || 0),
+          totalQuestions,
+          accuracy: attemptToSave.accuracy || 0,
+          answersJson,
+          questionTypeStatsJson,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } else {
+      await setDoc(attemptRef, {
+        id: attemptToSave.id,
+        userId: uid,
+        lessonId: attemptToSave.lessonId,
+        lessonTitle: attemptToSave.lessonTitle,
+        level: attemptToSave.level,
+        topic: attemptToSave.topic,
+        status: attemptToSave.status,
+        attemptType: attemptToSave.attemptType || 'first',
+        score: Math.round(attemptToSave.score || 0),
+        totalQuestions,
+        accuracy: attemptToSave.accuracy || 0,
+        answersJson,
+        questionTypeStatsJson,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      persistedRemoteAttemptIdsRef.current.add(attemptToSave.id);
+    }
+  };
 
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
   const [activeAttemptId, setActiveAttemptId] = useState<string | undefined>(undefined);
@@ -521,6 +595,33 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         try {
           setPlacementActivePassage(JSON.parse(e.newValue) as ReadingLesson);
         } catch {}
+      } else if (e.key === STORAGE_KEYS.ATTEMPTS && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            const activeUid =
+              auth.currentUser && !auth.currentUser.isAnonymous ? auth.currentUser.uid : 'guest';
+            const merged = mergeAndNormalizeAttempts(attemptsRef.current, parsed, activeUid);
+            attemptsRef.current = merged;
+            setAttempts(merged);
+            const activeUnfinished = findActiveUnfinishedAttempt(merged, activeUid);
+            if (activeUnfinished) {
+              saveInProgressAttemptAnswers(activeUnfinished.id, activeUnfinished.answers || {});
+              saveInProgressAttemptAnswers(
+                `inprog-${activeUnfinished.lessonId}`,
+                activeUnfinished.answers || {}
+              );
+              setActiveLessonId((curr) => curr || activeUnfinished.lessonId);
+              setActiveAttemptId(activeUnfinished.id);
+              if (
+                activeUnfinished.answers &&
+                Object.keys(activeUnfinished.answers).length > 0
+              ) {
+                setReviewInitialAnswers(activeUnfinished.answers);
+              }
+            }
+          }
+        } catch {}
       }
     };
     window.addEventListener('storage', handleStorageSync);
@@ -589,35 +690,30 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           }
           localStorage.setItem(STORAGE_KEYS.LAST_AUTH_UID, user.uid);
 
-          // If the learner completed any passages as an anonymous/guest user in this session before
-          // signing in with Google, claim those attempts under `user.uid` and persist them to Firestore.
+          // If the learner completed or started any passages as an anonymous/guest user in this session before
+          // signing in with Google, claim those attempts under `user.uid` if the account has no conflicting attempts.
           if (!previousAuthUid && attemptsRef.current.some((a) => a.userId === 'guest')) {
-            const claimedAttempts = attemptsRef.current.map((a) =>
-              a.userId === 'guest' ? { ...a, userId: user.uid } : a
-            );
+            const claimedAttempts = attemptsRef.current.map((a) => {
+              if (a.userId !== 'guest') return a;
+              const nextId =
+                a.status === 'in_progress' && (a.attemptType || 'first') === 'first'
+                  ? buildDeterministicFirstAttemptId(user.uid, a.lessonId)
+                  : a.id;
+              return { ...a, id: nextId, userId: user.uid };
+            });
             const normalizedClaimed = mergeAndNormalizeAttempts(claimedAttempts, [], user.uid);
             attemptsRef.current = normalizedClaimed;
             setAttempts(normalizedClaimed);
             localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(normalizedClaimed));
 
             for (const claimed of normalizedClaimed) {
-              if (claimed.status === 'completed' && !claimed.lessonId.startsWith('diag-')) {
-                setDoc(doc(db, 'attempts', claimed.id), {
-                  id: claimed.id,
-                  userId: user.uid,
-                  lessonId: claimed.lessonId,
-                  lessonTitle: claimed.lessonTitle,
-                  level: claimed.level,
-                  topic: claimed.topic,
-                  status: claimed.status,
-                  score: Math.round(claimed.score),
-                  totalQuestions: claimed.totalQuestions,
-                  accuracy: claimed.accuracy,
-                  answersJson: JSON.stringify(claimed.answers || {}),
-                  questionTypeStatsJson: JSON.stringify(claimed.questionTypeStats || {}),
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                }).catch((err) => console.warn('Guest attempt promotion note:', err));
+              if (
+                (claimed.status === 'completed' || claimed.status === 'in_progress') &&
+                !claimed.lessonId.startsWith('diag-')
+              ) {
+                persistAttemptToFirestore(claimed, user.uid).catch((err) =>
+                  console.warn('Guest attempt promotion note:', err)
+                );
               }
             }
           }
@@ -633,7 +729,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             existingProfile?.placementLevel ||
             existingProfile?.startingLevel ||
             existingProfile?.preferredLevel ||
-            attemptsRef.current.some((a) => a.userId === user.uid && isQualifyingStreakAttempt(a))
+            attemptsRef.current.some(
+              (a) =>
+                a.userId === user.uid &&
+                (isQualifyingStreakAttempt(a) || a.status === 'in_progress')
+            )
           ) {
             localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
           }
@@ -645,12 +745,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             STORAGE_KEYS.PLACEMENT_LEVEL
           ) as CEFRLevel | null;
 
-          const latestCompletedAttemptLevel = attemptsRef.current.find(
-            (a) => a.userId === user.uid && isQualifyingStreakAttempt(a)
-          )?.level;
+          const latestPersistedAttemptLevel =
+            attemptsRef.current.find(
+              (a) => a.userId === user.uid && isQualifyingStreakAttempt(a)
+            )?.level ||
+            findActiveUnfinishedAttempt(attemptsRef.current, user.uid)?.level;
 
           // Only restore a level if the user has genuinely completed the placement assessment,
-          // has a persisted profile level, or has historical completed attempts in Firestore.
+          // has a persisted profile level, or has historical/active attempts in Firestore.
           const verifiedPlacementLevel: CEFRLevel | null =
             localPlacementLevel && CEFR_LEVELS.includes(localPlacementLevel)
               ? localPlacementLevel
@@ -667,9 +769,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 CEFR_LEVELS.includes(existingProfile.preferredLevel)
               ? (existingProfile.preferredLevel as CEFRLevel)
               : !effectiveFreshMode &&
-                latestCompletedAttemptLevel &&
-                CEFR_LEVELS.includes(latestCompletedAttemptLevel)
-              ? latestCompletedAttemptLevel
+                latestPersistedAttemptLevel &&
+                CEFR_LEVELS.includes(latestPersistedAttemptLevel)
+              ? latestPersistedAttemptLevel
               : null;
 
           if (verifiedPlacementLevel) {
@@ -818,9 +920,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         const remoteRawDocs: unknown[] = [];
         snap.forEach((d) => {
           const data = d.data();
+          const resolvedId =
+            typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : d.id;
+          persistedRemoteAttemptIdsRef.current.add(resolvedId);
+          persistedRemoteAttemptIdsRef.current.add(d.id);
           remoteRawDocs.push({
             ...data,
-            id: typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : d.id,
+            id: resolvedId,
             docId: d.id,
           });
         });
@@ -839,20 +945,39 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             attemptsRef.current = combined;
             localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(combined));
 
+            const activeUnfinished = findActiveUnfinishedAttempt(combined, currentUser.uid);
+
             // If Firestore attempts arrive when PLACEMENT_LEVEL is not yet in localStorage,
-            // restore workspace level from the user's completed attempts so remote history is immediately visible
-            const firstQualifying = combined.find(isQualifyingStreakAttempt);
+            // restore workspace level from the user's completed or active unfinished attempts
+            const inferredLevel =
+              combined.find(isQualifyingStreakAttempt)?.level || activeUnfinished?.level;
             if (
-              firstQualifying &&
+              inferredLevel &&
               !localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL) &&
-              CEFR_LEVELS.includes(firstQualifying.level)
+              CEFR_LEVELS.includes(inferredLevel)
             ) {
-              localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, firstQualifying.level);
-              localStorage.setItem('fluentloop_starting_level_v1', firstQualifying.level);
-              localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, firstQualifying.level);
-              setPlacementLevel((curr) => curr || firstQualifying.level);
-              setStartingLevel((curr) => curr || firstQualifying.level);
-              setCurrentLevel((curr) => curr || firstQualifying.level);
+              localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, inferredLevel);
+              localStorage.setItem('fluentloop_starting_level_v1', inferredLevel);
+              localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, inferredLevel);
+              setPlacementLevel((curr) => curr || inferredLevel);
+              setStartingLevel((curr) => curr || inferredLevel);
+              setCurrentLevel((curr) => curr || inferredLevel);
+            }
+
+            if (activeUnfinished) {
+              const savedAnswers = activeUnfinished.answers || {};
+              saveInProgressAttemptAnswers(activeUnfinished.id, savedAnswers);
+              saveInProgressAttemptAnswers(
+                `inprog-${activeUnfinished.lessonId}`,
+                savedAnswers
+              );
+              localStorage.setItem(STORAGE_KEYS.LAST_LESSON_ID, activeUnfinished.lessonId);
+              setActiveLessonId((curr) => curr || activeUnfinished.lessonId);
+              setActiveAttemptId(activeUnfinished.id);
+              setActiveAttemptMode('first');
+              if (Object.keys(savedAnswers).length > 0) {
+                setReviewInitialAnswers(savedAnswers);
+              }
             }
 
             return combined;
@@ -1143,6 +1268,33 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   };
 
   const handleSignOut = async () => {
+    if (pendingInProgressSyncTimeoutRef.current) {
+      clearTimeout(pendingInProgressSyncTimeoutRef.current);
+      pendingInProgressSyncTimeoutRef.current = null;
+    }
+
+    const activeUid =
+      auth.currentUser && !auth.currentUser.isAnonymous
+        ? auth.currentUser.uid
+        : currentUser && !currentUser.isAnonymous
+        ? currentUser.uid
+        : null;
+
+    if (activeUid) {
+      const pendingAttempt =
+        pendingInProgressAttemptRef.current ||
+        findActiveUnfinishedAttempt(attemptsRef.current, activeUid);
+      if (pendingAttempt && pendingAttempt.status === 'in_progress') {
+        try {
+          await persistAttemptToFirestore(pendingAttempt, activeUid);
+        } catch (err) {
+          console.warn('Pre-signout unfinished attempt flush note:', err);
+        }
+      }
+    }
+
+    pendingInProgressAttemptRef.current = null;
+    persistedRemoteAttemptIdsRef.current.clear();
     purgeLocalLearnerCache();
     localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
     sessionStorage.setItem('fluentloop_initial_signout_done_v1', 'true');
@@ -1157,6 +1309,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setAttempts([]);
     setSavedVocab([]);
     setActiveLessonId(null);
+    setActiveAttemptId(undefined);
+    setReviewInitialAnswers(undefined);
+    setReviewInitialResult(null);
     setCompletionNotice(null);
     setActiveTab('library');
     setMobileNavOpen(false);
@@ -1275,7 +1430,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         setReviewInitialAnswers(undefined);
         setReviewInitialResult(null);
       } else {
-        const inProgAttempt =
+        const effectiveUid =
+          currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest';
+        let inProgAttempt =
           (existingAttempt && existingAttempt.status === 'in_progress'
             ? existingAttempt
             : undefined) ||
@@ -1285,6 +1442,47 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               a.status === 'in_progress' &&
               (a.attemptType || 'first') === 'first'
           );
+
+        if (!inProgAttempt && !lesson.isDiagnostic && !lesson.id.startsWith('diag-')) {
+          const nowIso = new Date().toISOString();
+          inProgAttempt = {
+            id: buildDeterministicFirstAttemptId(effectiveUid, lesson.id),
+            userId: effectiveUid,
+            lessonId: lesson.id,
+            lessonTitle: lesson.title,
+            level: lesson.level,
+            topic: lesson.topic,
+            status: 'in_progress',
+            attemptType: 'first',
+            score: 0,
+            totalQuestions: Math.max(1, lesson.questions.length),
+            accuracy: 0,
+            answers: {},
+            questionTypeStats: {},
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+          const updatedList = mergeAndNormalizeAttempts(
+            [inProgAttempt, ...attemptsRef.current],
+            [],
+            effectiveUid
+          );
+          attemptsRef.current = updatedList;
+          setAttempts(updatedList);
+          localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(updatedList));
+        }
+
+        if (inProgAttempt && effectiveUid !== 'guest') {
+          persistAttemptToFirestore(inProgAttempt, effectiveUid).catch((err) =>
+            console.warn('In-progress attempt sync note:', err)
+          );
+        }
+
+        if (inProgAttempt?.answers && Object.keys(inProgAttempt.answers).length > 0) {
+          saveInProgressAttemptAnswers(inProgAttempt.id, inProgAttempt.answers);
+          saveInProgressAttemptAnswers(`inprog-${lesson.id}`, inProgAttempt.answers);
+        }
+
         setActiveAttemptMode('first');
         setActiveAttemptId(inProgAttempt ? inProgAttempt.id : `inprog-${lesson.id}`);
         setReviewInitialAnswers(
@@ -1303,6 +1501,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const handleInProgressAnswersChange = (nextAnswers: Record<string, string>) => {
     if (!activeLesson || activeAttemptMode !== 'first') return;
+    const effectiveUid =
+      currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest';
     const currentList = attemptsRef.current;
     const inProgIdx = currentList.findIndex(
       (a) =>
@@ -1310,17 +1510,58 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         a.status === 'in_progress' &&
         (a.attemptType || 'first') === 'first'
     );
-    if (inProgIdx === -1) return;
-    const updatedAttempt: LessonAttempt = {
-      ...currentList[inProgIdx],
-      answers: nextAnswers,
-      updatedAt: new Date().toISOString(),
-    };
-    const nextList = [...currentList];
-    nextList[inProgIdx] = updatedAttempt;
+    const nowIso = new Date().toISOString();
+    const updatedAttempt: LessonAttempt =
+      inProgIdx !== -1
+        ? {
+            ...currentList[inProgIdx],
+            answers: nextAnswers,
+            updatedAt: nowIso,
+          }
+        : {
+            id: buildDeterministicFirstAttemptId(effectiveUid, activeLesson.id),
+            userId: effectiveUid,
+            lessonId: activeLesson.id,
+            lessonTitle: activeLesson.title,
+            level: activeLesson.level,
+            topic: activeLesson.topic,
+            status: 'in_progress',
+            attemptType: 'first',
+            score: 0,
+            totalQuestions: Math.max(1, activeLesson.questions.length),
+            accuracy: 0,
+            answers: nextAnswers,
+            questionTypeStats: {},
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+
+    const nextList =
+      inProgIdx !== -1
+        ? currentList.map((item, idx) => (idx === inProgIdx ? updatedAttempt : item))
+        : [updatedAttempt, ...currentList];
+
     attemptsRef.current = nextList;
     setAttempts(nextList);
     localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(nextList));
+    saveInProgressAttemptAnswers(updatedAttempt.id, nextAnswers);
+    saveInProgressAttemptAnswers(`inprog-${activeLesson.id}`, nextAnswers);
+
+    if (effectiveUid !== 'guest' && !activeLesson.isDiagnostic && !activeLesson.id.startsWith('diag-')) {
+      pendingInProgressAttemptRef.current = updatedAttempt;
+      if (pendingInProgressSyncTimeoutRef.current) {
+        clearTimeout(pendingInProgressSyncTimeoutRef.current);
+      }
+      pendingInProgressSyncTimeoutRef.current = setTimeout(() => {
+        pendingInProgressSyncTimeoutRef.current = null;
+        const toSave = pendingInProgressAttemptRef.current;
+        if (toSave && toSave.status === 'in_progress') {
+          persistAttemptToFirestore(toSave, effectiveUid).catch((err) =>
+            console.warn('In-progress answers cloud sync note:', err)
+          );
+        }
+      }, 150);
+    }
   };
 
   const handleToggleSaveWord = async (vocab: VocabularyAnnotation, lessonOverride?: ReadingLesson) => {
@@ -1493,26 +1734,16 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       updatedAt: nowIso,
     };
 
+    if (pendingInProgressSyncTimeoutRef.current) {
+      clearTimeout(pendingInProgressSyncTimeoutRef.current);
+      pendingInProgressSyncTimeoutRef.current = null;
+    }
+    pendingInProgressAttemptRef.current = null;
+
     const persistToCloud =
       currentUser && !currentUser.isAnonymous
         ? async (attemptToSave: LessonAttempt) => {
-            const firestoreAttemptPayload = {
-              id: attemptToSave.id,
-              userId: currentUser.uid,
-              lessonId: attemptToSave.lessonId,
-              lessonTitle: attemptToSave.lessonTitle,
-              level: attemptToSave.level,
-              topic: attemptToSave.topic,
-              status: attemptToSave.status,
-              score: Math.round(attemptToSave.score),
-              totalQuestions: attemptToSave.totalQuestions,
-              accuracy: attemptToSave.accuracy,
-              answersJson: JSON.stringify(attemptToSave.answers),
-              questionTypeStatsJson: JSON.stringify(attemptToSave.questionTypeStats),
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            };
-            await setDoc(doc(db, 'attempts', attemptToSave.id), firestoreAttemptPayload);
+            await persistAttemptToFirestore(attemptToSave, currentUser.uid);
           }
         : undefined;
 
@@ -1614,6 +1845,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const handleStartNextPassage = (selectedLesson?: ReadingLesson, levelOverride?: CEFRLevel) => {
     const effectiveLevel = levelOverride || currentLevel;
+    const effectiveUid =
+      currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest';
     const initialProfile = createAdaptiveProfile(startingLevel || effectiveLevel);
     const profile = {
       ...initialProfile,
@@ -1624,6 +1857,32 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       consecutivePasses: Number(localStorage.getItem('fluentloop_pass_streak_v1')) || 0,
       consecutiveFailures: Number(localStorage.getItem('fluentloop_fail_streak_v1')) || 0,
     };
+
+    // Always restore any existing active unfinished regular reading assignment first
+    // unless the caller explicitly passed an already-completed lesson to preview.
+    const existingActiveUnfinished = findActiveUnfinishedAttempt(
+      attemptsRef.current,
+      effectiveUid,
+      effectiveLevel
+    );
+    if (
+      existingActiveUnfinished &&
+      (!selectedLesson || selectedLesson.id === existingActiveUnfinished.lessonId)
+    ) {
+      const resumedLesson = publishedLessons.find(
+        (l) => l.id === existingActiveUnfinished.lessonId
+      );
+      if (resumedLesson) {
+        if (effectiveUid !== 'guest') {
+          persistAttemptToFirestore(existingActiveUnfinished, effectiveUid).catch((err) =>
+            console.warn('Unfinished assignment cloud sync note:', err)
+          );
+        }
+        handleOpenLesson(resumedLesson, 'first', existingActiveUnfinished);
+        return;
+      }
+    }
+
     const next = selectedLesson || selectNextLesson(profile, publishedLessons, attemptsRef.current);
     if (!next) {
       setCompletionNotice(
@@ -1638,6 +1897,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         (a.attemptType || 'first') === 'first'
     );
     if (existing) {
+      if (effectiveUid !== 'guest') {
+        persistAttemptToFirestore(existing, effectiveUid).catch((err) =>
+          console.warn('Unfinished assignment cloud sync note:', err)
+        );
+      }
       handleOpenLesson(next, 'first', existing);
       return;
     }
@@ -1650,8 +1914,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     }
     const now = new Date().toISOString();
     const assignment: LessonAttempt = {
-      id: `att-${Date.now()}`,
-      userId: currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest',
+      id: buildDeterministicFirstAttemptId(effectiveUid, next.id),
+      userId: effectiveUid,
       lessonId: next.id,
       lessonTitle: next.title,
       level: next.level,
@@ -1659,17 +1923,26 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       status: 'in_progress',
       attemptType: 'first',
       score: 0,
-      totalQuestions: next.questions.length,
+      totalQuestions: Math.max(1, next.questions.length),
       accuracy: 0,
       answers: {},
       questionTypeStats: {},
       createdAt: now,
       updatedAt: now,
     };
-    const updated = [assignment, ...attemptsRef.current];
+    const updated = mergeAndNormalizeAttempts(
+      [assignment, ...attemptsRef.current],
+      [],
+      effectiveUid
+    );
     attemptsRef.current = updated;
     setAttempts(updated);
     localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(updated));
+    if (effectiveUid !== 'guest') {
+      persistAttemptToFirestore(assignment, effectiveUid).catch((err) =>
+        console.warn('New assignment cloud persistence note:', err)
+      );
+    }
     handlePreviewLesson(next);
   };
 

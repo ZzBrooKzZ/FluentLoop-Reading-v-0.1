@@ -66,18 +66,61 @@ export function getLessonDifficulty(lesson: ReadingLesson, overrides: Record<str
   return estimateLessonDifficulty(lesson);
 }
 
+export function createSeededPassageRng(seedKey: string): () => number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seedKey.length; i++) {
+    h ^= seedKey.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  let state = h >>> 0 || 1;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export function selectNextLesson(
   profile: AdaptiveProfile,
   lessons: ReadingLesson[],
   attempts: LessonAttempt[],
   difficultyOverrides: Record<string, number> = {},
-  random: () => number = Math.random
+  random?: () => number
 ): ReadingLesson | null {
-  const unfinished = attempts
-    .filter((attempt) => attempt.status === 'in_progress' && (attempt.attemptType || 'first') === 'first' && attempt.level === profile.currentLevel)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-  if (unfinished) {
-    const resumed = lessons.find((lesson) => lesson.id === unfinished.lessonId && lesson.status === 'published');
+  const completedLessonIds = new Set(
+    attempts
+      .filter((attempt) => attempt.status === 'completed')
+      .map((attempt) => attempt.lessonId)
+  );
+
+  const countAnswers = (ans: Record<string, string> | undefined): number => {
+    if (!ans || typeof ans !== 'object') return 0;
+    return Object.values(ans).filter((v) => typeof v === 'string' && v.trim().length > 0).length;
+  };
+
+  const unfinishedCandidates = attempts
+    .filter(
+      (attempt) =>
+        attempt.status === 'in_progress' &&
+        (attempt.attemptType || 'first') === 'first' &&
+        !attempt.id.startsWith('att-prac-') &&
+        !attempt.lessonId.trim().toLowerCase().startsWith('diag-') &&
+        !completedLessonIds.has(attempt.lessonId)
+    )
+    .sort((a, b) => {
+      const levelMatchDiff =
+        (b.level === profile.currentLevel ? 1 : 0) - (a.level === profile.currentLevel ? 1 : 0);
+      if (levelMatchDiff !== 0) return levelMatchDiff;
+      const answerDiff = countAnswers(b.answers) - countAnswers(a.answers);
+      if (answerDiff !== 0) return answerDiff;
+      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    });
+
+  for (const unfinished of unfinishedCandidates) {
+    const resumed = lessons.find(
+      (lesson) => lesson.id === unfinished.lessonId && lesson.status === 'published' && !lesson.isDiagnostic
+    );
     if (resumed) return resumed;
   }
 
@@ -94,10 +137,17 @@ export function selectNextLesson(
 
   const scored = eligible
     .map((lesson) => ({ lesson, distance: Math.abs(getLessonDifficulty(lesson, difficultyOverrides) - profile.currentDifficultyScore) }))
-    .sort((a, b) => a.distance - b.distance);
+    .sort((a, b) => a.distance - b.distance || a.lesson.id.localeCompare(b.lesson.id));
   const nearestDistance = scored[0].distance;
   const closeCandidates = scored.filter((item) => item.distance <= nearestDistance + ADAPTIVE_SETTINGS.candidateTolerance);
-  const pick = Math.min(closeCandidates.length - 1, Math.max(0, Math.floor(random() * closeCandidates.length)));
+
+  const effectiveRandom =
+    random ||
+    createSeededPassageRng(
+      `${attempts[0]?.userId || 'learner'}:${profile.currentLevel}:${profile.currentDifficultyScore}:${Array.from(attemptedFirstTime).sort().join(',')}`
+    );
+
+  const pick = Math.min(closeCandidates.length - 1, Math.max(0, Math.floor(effectiveRandom() * closeCandidates.length)));
   return closeCandidates[pick].lesson;
 }
 

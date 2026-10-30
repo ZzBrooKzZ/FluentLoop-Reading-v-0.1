@@ -1,4 +1,48 @@
-import { CEFRLevel, LessonAttempt } from '../types/reading';
+import { CEFRLevel, LessonAttempt, ReadingLesson } from '../types/reading';
+import { AdaptiveProfile, selectNextLesson } from './adaptiveLearning';
+
+export function buildDeterministicFirstAttemptId(userId: string, lessonId: string): string {
+  const cleanUser = (userId || 'guest').trim() || 'guest';
+  const cleanLesson = lessonId.trim();
+  return `att-first-${cleanUser}-${cleanLesson}`;
+}
+
+export function countNonEmptyAnswers(answers: Record<string, string> | undefined | null): number {
+  if (!answers || typeof answers !== 'object') return 0;
+  return Object.values(answers).filter((v) => typeof v === 'string' && v.trim().length > 0).length;
+}
+
+export function mergeInProgressAnswers(
+  firstAnswers: Record<string, string> | undefined,
+  secondAnswers: Record<string, string> | undefined,
+  firstUpdatedAt?: unknown,
+  secondUpdatedAt?: unknown
+): Record<string, string> {
+  const cleanFirst: Record<string, string> = {};
+  if (firstAnswers && typeof firstAnswers === 'object') {
+    for (const [k, v] of Object.entries(firstAnswers)) {
+      if (typeof v === 'string' && v.trim().length > 0) {
+        cleanFirst[k] = v;
+      }
+    }
+  }
+  const cleanSecond: Record<string, string> = {};
+  if (secondAnswers && typeof secondAnswers === 'object') {
+    for (const [k, v] of Object.entries(secondAnswers)) {
+      if (typeof v === 'string' && v.trim().length > 0) {
+        cleanSecond[k] = v;
+      }
+    }
+  }
+
+  const t1 = parseActivityTimestamp(firstUpdatedAt)?.getTime() ?? 0;
+  const t2 = parseActivityTimestamp(secondUpdatedAt)?.getTime() ?? 0;
+
+  if (t1 > t2) {
+    return { ...cleanSecond, ...cleanFirst };
+  }
+  return { ...cleanFirst, ...cleanSecond };
+}
 
 export interface StreakCalculationOptions {
   /** Reference time for "today". Defaults to `new Date()`. */
@@ -212,21 +256,38 @@ export function normalizeLessonAttempt(
     typeof data.lessonId === 'string' && data.lessonId.trim() ? data.lessonId.trim() : '';
   if (!id || !lessonId) return null;
 
-  let answers: Record<string, string> = {};
+  let parsedIncomingAnswers: Record<string, string> = {};
   if (data.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)) {
-    answers = data.answers as Record<string, string>;
+    parsedIncomingAnswers = data.answers as Record<string, string>;
   } else if (typeof data.answersJson === 'string' && data.answersJson.trim()) {
     try {
       const parsed = JSON.parse(data.answersJson);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        answers = parsed as Record<string, string>;
+        parsedIncomingAnswers = parsed as Record<string, string>;
       }
     } catch {
-      answers = existingLocal?.answers || {};
+      parsedIncomingAnswers = {};
     }
-  } else if (existingLocal?.answers) {
-    answers = existingLocal.answers;
   }
+
+  const incomingStatus =
+    data.status === 'completed' ||
+    data.status === 'in_progress' ||
+    data.status === 'pending_review'
+      ? data.status
+      : existingLocal?.status || 'completed';
+
+  const answers: Record<string, string> =
+    incomingStatus === 'in_progress' && existingLocal?.status === 'in_progress'
+      ? mergeInProgressAnswers(
+          existingLocal.answers,
+          parsedIncomingAnswers,
+          existingLocal.updatedAt,
+          data.updatedAt ?? data.createdAt
+        )
+      : Object.keys(parsedIncomingAnswers).length > 0
+      ? parsedIncomingAnswers
+      : existingLocal?.answers || {};
 
   let questionTypeStats: Record<string, { correct: number; total: number }> = {};
   if (
@@ -369,6 +430,9 @@ export function mergeAndNormalizeAttempts(
     ) {
       continue;
     }
+    if (existingLocal && existingLocal.status === 'completed' && norm.status === 'in_progress') {
+      continue;
+    }
     byId.set(norm.id, norm);
   }
 
@@ -380,12 +444,60 @@ export function mergeAndNormalizeAttempts(
     allMerged.filter((a) => a.status === 'completed').map((a) => a.lessonId)
   );
 
-  const filtered = allMerged.filter((a) => {
+  // Coalesce multiple `in_progress` first-time attempts for the same lesson (e.g., if a local
+  // random ID `att-...` and a remote canonical ID `att-first-...` both exist for the same lesson)
+  const inProgressByLesson = new Map<string, LessonAttempt>();
+  const filtered: LessonAttempt[] = [];
+
+  for (const a of allMerged) {
     if (a.status === 'in_progress' && completedLessonIds.has(a.lessonId)) {
-      return false;
+      continue;
     }
-    return true;
-  });
+    if (
+      a.status === 'in_progress' &&
+      (a.attemptType || 'first') === 'first' &&
+      !a.id.startsWith('att-prac-')
+    ) {
+      const prior = inProgressByLesson.get(a.lessonId);
+      if (!prior) {
+        inProgressByLesson.set(a.lessonId, a);
+      } else {
+        const mergedAnswers = mergeInProgressAnswers(
+          prior.answers,
+          a.answers,
+          prior.updatedAt,
+          a.updatedAt
+        );
+        const priorTime = parseActivityTimestamp(prior.updatedAt)?.getTime() ?? 0;
+        const nextTime = parseActivityTimestamp(a.updatedAt)?.getTime() ?? 0;
+        const canonicalId = a.id.startsWith('att-first-')
+          ? a.id
+          : prior.id.startsWith('att-first-')
+          ? prior.id
+          : nextTime >= priorTime
+          ? a.id
+          : prior.id;
+        const base = nextTime >= priorTime ? a : prior;
+        inProgressByLesson.set(a.lessonId, {
+          ...base,
+          id: canonicalId,
+          answers: mergedAnswers,
+          createdAt:
+            (parseActivityTimestamp(prior.createdAt)?.getTime() ?? Infinity) <=
+            (parseActivityTimestamp(a.createdAt)?.getTime() ?? Infinity)
+              ? prior.createdAt
+              : a.createdAt,
+          updatedAt: nextTime >= priorTime ? a.updatedAt : prior.updatedAt,
+        });
+      }
+      continue;
+    }
+    filtered.push(a);
+  }
+
+  for (const coalescedInProg of inProgressByLesson.values()) {
+    filtered.push(coalescedInProg);
+  }
 
   return filtered.sort((a, b) => {
     const timeB = parseActivityTimestamp(b.updatedAt)?.getTime() ?? 0;
@@ -393,6 +505,61 @@ export function mergeAndNormalizeAttempts(
     return timeB - timeA;
   });
 }
+
+/**
+ * Finds the active unfinished regular reading assignment (`status === 'in_progress'`, `attemptType === 'first'`)
+ * for the specified user, strictly isolating by `activeUserId` and ignoring completed or diagnostic lessons.
+ */
+export function findActiveUnfinishedAttempt(
+  attempts: readonly LessonAttempt[],
+  activeUserId?: string,
+  preferredLevel?: CEFRLevel
+): LessonAttempt | null {
+  if (!Array.isArray(attempts) || attempts.length === 0) return null;
+
+  const userScoped = attempts.filter((a) => {
+    if (!a || typeof a !== 'object') return false;
+    if (activeUserId && activeUserId !== 'guest') {
+      return a.userId === activeUserId;
+    }
+    if (activeUserId === 'guest') {
+      return !a.userId || a.userId === 'guest';
+    }
+    return true;
+  });
+
+  const completedLessonIds = new Set(
+    userScoped.filter((a) => a.status === 'completed').map((a) => a.lessonId)
+  );
+
+  const candidates = userScoped
+    .filter(
+      (a) =>
+        a.status === 'in_progress' &&
+        (a.attemptType || 'first') === 'first' &&
+        !a.id.startsWith('att-prac-') &&
+        typeof a.lessonId === 'string' &&
+        a.lessonId.trim().length > 0 &&
+        !a.lessonId.trim().toLowerCase().startsWith('diag-') &&
+        !completedLessonIds.has(a.lessonId)
+    )
+    .sort((a, b) => {
+      const answerDiff = countNonEmptyAnswers(b.answers) - countNonEmptyAnswers(a.answers);
+      if (answerDiff !== 0) return answerDiff;
+      if (preferredLevel) {
+        const levelDiff =
+          (b.level === preferredLevel ? 1 : 0) - (a.level === preferredLevel ? 1 : 0);
+        if (levelDiff !== 0) return levelDiff;
+      }
+      const timeB = parseActivityTimestamp(b.updatedAt)?.getTime() ?? 0;
+      const timeA = parseActivityTimestamp(a.updatedAt)?.getTime() ?? 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return a.lessonId.localeCompare(b.lessonId);
+    });
+
+  return candidates[0] || null;
+}
+
 
 /**
  * Defines the exact qualifying activity rule for the Daily Learning Streak:
@@ -773,3 +940,235 @@ export async function recordCompletedAttemptWithPersistence(
     }
   }
 }
+
+export interface EnsureUnfinishedAttemptInput {
+  userId: string;
+  profile: AdaptiveProfile;
+  lessons: ReadingLesson[];
+  currentAttempts: LessonAttempt[];
+  getCurrentAttempts?: () => LessonAttempt[];
+  requestedLessonId?: string;
+  difficultyOverrides?: Record<string, number>;
+  persistInProgressToCloud?: (attempt: LessonAttempt, isNewDoc: boolean) => Promise<void>;
+}
+
+export interface EnsureUnfinishedAttemptOutcome {
+  attempt: LessonAttempt | null;
+  lesson: ReadingLesson | null;
+  restoredExisting: boolean;
+  createdNew: boolean;
+  attempts: LessonAttempt[];
+}
+
+const inFlightAssignmentLocks = new Map<string, Promise<EnsureUnfinishedAttemptOutcome>>();
+const latestUserAssignmentState = new Map<string, LessonAttempt[]>();
+
+/**
+ * Resolves the learner's active unfinished regular reading assignment (`in_progress`, `first`),
+ * restoring any existing unfinished passage and its saved answers before allowing a new adaptive
+ * assignment to be generated.
+ *
+ * Concurrency guarantees:
+ * - Multiple authentication callbacks or multiple tabs calling `ensureOrRestoreUnfinishedAttempt`
+ *   concurrently for the same `userId` coalesce onto a single in-flight promise and receive the
+ *   exact same passage and attempt ID.
+ * - A new assignment is NEVER generated while a valid unfinished assignment exists for the user.
+ */
+export async function ensureOrRestoreUnfinishedAttempt(
+  input: EnsureUnfinishedAttemptInput
+): Promise<EnsureUnfinishedAttemptOutcome> {
+  const userKey = (input.userId || 'guest').trim() || 'guest';
+
+  const existingInFlight = inFlightAssignmentLocks.get(userKey);
+  if (existingInFlight) {
+    const prior = await existingInFlight;
+    return {
+      ...prior,
+      restoredExisting: true,
+      createdNew: false,
+    };
+  }
+
+  const hadActiveLock = inFlightAssignmentLocks.has(userKey);
+
+  const taskPromise = (async (): Promise<EnsureUnfinishedAttemptOutcome> => {
+    const rawCurrent = input.getCurrentAttempts
+      ? input.getCurrentAttempts()
+      : input.currentAttempts;
+    const committed = hadActiveLock ? latestUserAssignmentState.get(userKey) ?? [] : [];
+    const workingAttempts = mergeAndNormalizeAttempts(
+      Array.isArray(rawCurrent) ? rawCurrent : [],
+      committed,
+      userKey
+    );
+
+    const publishedLessons = (input.lessons || []).filter(
+      (l) => l.status === 'published' && !l.isDiagnostic && !l.id.startsWith('diag-')
+    );
+
+    // 1. Check if the user ALREADY has an unfinished regular reading assignment
+    const existingUnfinished = findActiveUnfinishedAttempt(
+      workingAttempts,
+      userKey,
+      input.profile.currentLevel
+    );
+
+    if (existingUnfinished) {
+      const resumedLesson =
+        publishedLessons.find((l) => l.id === existingUnfinished.lessonId) || null;
+      if (resumedLesson) {
+        latestUserAssignmentState.set(userKey, workingAttempts);
+        return {
+          attempt: existingUnfinished,
+          lesson: resumedLesson,
+          restoredExisting: true,
+          createdNew: false,
+          attempts: workingAttempts,
+        };
+      }
+    }
+
+    // 2. No valid unfinished assignment exists -> select next adaptive passage deterministically
+    const completedIds = new Set(
+      workingAttempts.filter((a) => a.status === 'completed').map((a) => a.lessonId)
+    );
+    const requestedCandidate = input.requestedLessonId
+      ? publishedLessons.find(
+          (l) => l.id === input.requestedLessonId && !completedIds.has(l.id)
+        )
+      : undefined;
+
+    const nextLesson =
+      requestedCandidate ||
+      selectNextLesson(
+        input.profile,
+        publishedLessons,
+        workingAttempts,
+        input.difficultyOverrides
+      );
+
+    if (!nextLesson) {
+      return {
+        attempt: null,
+        lesson: null,
+        restoredExisting: false,
+        createdNew: false,
+        attempts: workingAttempts,
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const newAttempt: LessonAttempt = {
+      id: buildDeterministicFirstAttemptId(userKey, nextLesson.id),
+      userId: userKey,
+      lessonId: nextLesson.id,
+      lessonTitle: nextLesson.title,
+      level: nextLesson.level,
+      topic: nextLesson.topic,
+      status: 'in_progress',
+      attemptType: 'first',
+      score: 0,
+      totalQuestions: Math.max(1, nextLesson.questions.length),
+      accuracy: 0,
+      answers: {},
+      questionTypeStats: {},
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    if (input.persistInProgressToCloud) {
+      await input.persistInProgressToCloud(newAttempt, true);
+    }
+
+    const updatedAttempts = mergeAndNormalizeAttempts(
+      [newAttempt, ...workingAttempts],
+      [],
+      userKey
+    );
+    latestUserAssignmentState.set(userKey, updatedAttempts);
+
+    return {
+      attempt: newAttempt,
+      lesson: nextLesson,
+      restoredExisting: false,
+      createdNew: true,
+      attempts: updatedAttempts,
+    };
+  })();
+
+  inFlightAssignmentLocks.set(userKey, taskPromise);
+  try {
+    return await taskPromise;
+  } finally {
+    if (inFlightAssignmentLocks.get(userKey) === taskPromise) {
+      inFlightAssignmentLocks.delete(userKey);
+      latestUserAssignmentState.delete(userKey);
+    }
+  }
+}
+
+export interface UpdateInProgressAnswersInput {
+  userId: string;
+  attemptId?: string;
+  lessonId: string;
+  answers: Record<string, string>;
+  currentAttempts: LessonAttempt[];
+  getCurrentAttempts?: () => LessonAttempt[];
+  persistAnswersToCloud?: (attempt: LessonAttempt) => Promise<void>;
+}
+
+/**
+ * Updates and persists the learner's selected answers for an active `in_progress` regular reading
+ * assignment without ever re-opening or mutating an already-completed passage.
+ */
+export async function updateInProgressAttemptAnswers(
+  input: UpdateInProgressAnswersInput
+): Promise<{ attempt: LessonAttempt | null; attempts: LessonAttempt[] }> {
+  const userKey = (input.userId || 'guest').trim() || 'guest';
+  const baseAttempts = mergeAndNormalizeAttempts(
+    input.getCurrentAttempts ? input.getCurrentAttempts() : input.currentAttempts,
+    [],
+    userKey
+  );
+
+  // Never modify or re-open a lesson that already has a completed first-time attempt
+  const alreadyCompleted = baseAttempts.some(
+    (a) => a.lessonId === input.lessonId && a.status === 'completed'
+  );
+  if (alreadyCompleted) {
+    return { attempt: null, attempts: baseAttempts };
+  }
+
+  const targetIdx = baseAttempts.findIndex(
+    (a) =>
+      a.status === 'in_progress' &&
+      (a.attemptType || 'first') === 'first' &&
+      ((input.attemptId && a.id === input.attemptId) || a.lessonId === input.lessonId)
+  );
+
+  if (targetIdx === -1) {
+    return { attempt: null, attempts: baseAttempts };
+  }
+
+  const nowIso = new Date().toISOString();
+  const existing = baseAttempts[targetIdx];
+  const updatedAttempt: LessonAttempt = {
+    ...existing,
+    answers: { ...input.answers },
+    updatedAt: nowIso,
+  };
+
+  if (input.persistAnswersToCloud) {
+    await input.persistAnswersToCloud(updatedAttempt);
+  }
+
+  const nextList = [...baseAttempts];
+  nextList[targetIdx] = updatedAttempt;
+  const normalized = mergeAndNormalizeAttempts(nextList, [], userKey);
+
+  return {
+    attempt: normalized.find((a) => a.id === updatedAttempt.id) || updatedAttempt,
+    attempts: normalized,
+  };
+}
+

@@ -92,18 +92,25 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   }, [lessonId, attemptId, activeMode, practiceRevision]);
 
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    if (attemptMode !== 'review' && !initialResult) {
+      const savedByKey = loadInProgressAttemptAnswers(
+        attemptId && attemptId.trim() ? attemptId.trim() : `inprog-${lessonId}`
+      );
+      const savedByLesson =
+        attemptMode === 'first' ? loadInProgressAttemptAnswers(`inprog-${lessonId}`) : null;
+      const combined = {
+        ...(savedByLesson || {}),
+        ...(savedByKey || {}),
+        ...(initialAnswers || {}),
+      };
+      if (Object.keys(combined).length > 0) {
+        return combined;
+      }
+    }
     if (initialAnswers && Object.keys(initialAnswers).length > 0) {
       return initialAnswers;
     }
-    if (attemptMode !== 'review' && !initialResult) {
-      const savedDraft = loadInProgressAttemptAnswers(
-        attemptId && attemptId.trim() ? attemptId.trim() : `inprog-${lessonId}`
-      );
-      if (savedDraft && Object.keys(savedDraft).length > 0) {
-        return savedDraft;
-      }
-    }
-    return initialAnswers || {};
+    return {};
   });
   const [submittedResult, setSubmittedResult] = useState<GradedAttemptSummary | null>(
     initialResult || null
@@ -123,11 +130,18 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
         ? `prac-${lessonId}-initial`
         : `inprog-${lessonId}`;
 
-    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+    if (attemptMode !== 'review' && !initialResult) {
+      const savedByKey = loadInProgressAttemptAnswers(baseKey);
+      const savedByLesson =
+        attemptMode === 'first' ? loadInProgressAttemptAnswers(`inprog-${lessonId}`) : null;
+      const combined = {
+        ...(savedByLesson || {}),
+        ...(savedByKey || {}),
+        ...(initialAnswers || {}),
+      };
+      setAnswers(combined);
+    } else if (initialAnswers && Object.keys(initialAnswers).length > 0) {
       setAnswers(initialAnswers);
-    } else if (attemptMode !== 'review' && !initialResult) {
-      const savedDraft = loadInProgressAttemptAnswers(baseKey);
-      setAnswers(savedDraft && Object.keys(savedDraft).length > 0 ? savedDraft : {});
     } else {
       setAnswers({});
     }
@@ -141,8 +155,7 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   // Re-rendering while the user selects answers never re-shuffles the options.
   const randomizedOptionsByQuestionId = React.useMemo(() => {
     const map: Record<string, RandomizedOptionItem[]> = {};
-    const rng =
-      activeMode === 'review' ? createSeededRng(effectiveAttemptKey) : Math.random;
+    const rng = createSeededRng(effectiveAttemptKey);
     for (const q of questions) {
       map[q.id] = getRandomizedOptionsForQuestion(q, effectiveAttemptKey, rng);
     }
@@ -158,6 +171,9 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
         [questionId]: value,
       };
       saveInProgressAttemptAnswers(effectiveAttemptKey, next);
+      if (activeMode === 'first') {
+        saveInProgressAttemptAnswers(`inprog-${lessonId}`, next);
+      }
       if (onAnswersChange) {
         onAnswersChange(next);
       }
