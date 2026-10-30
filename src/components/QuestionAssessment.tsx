@@ -29,6 +29,7 @@ import {
   RandomizedOptionItem,
   saveInProgressAttemptAnswers,
 } from '../services/optionRandomizer';
+import { StreakBadge } from './StreakBadge';
 
 interface QuestionAssessmentProps {
   lessonId: string;
@@ -37,6 +38,10 @@ interface QuestionAssessmentProps {
   attemptMode?: 'first' | 'practice' | 'review';
   initialAnswers?: Record<string, string>;
   initialResult?: GradedAttemptSummary | null;
+  streakDays?: number;
+  longestStreak?: number;
+  studiedToday?: boolean;
+  streakCelebrationKey?: number;
   onAnswersChange?: (answers: Record<string, string>) => void;
   onSubmitAttempt: (
     answers: Record<string, string>,
@@ -54,6 +59,10 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   attemptMode = 'first',
   initialAnswers,
   initialResult,
+  streakDays = 0,
+  longestStreak = 0,
+  studiedToday = false,
+  streakCelebrationKey = 0,
   onAnswersChange,
   onSubmitAttempt,
   onHighlightEvidence,
@@ -362,6 +371,18 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
               )}
             </div>
           </div>
+
+          {activeMode !== 'review' && (
+            <div className="border-t border-[#E3D7C3] pt-3 flex flex-wrap items-center justify-between gap-2">
+              <StreakBadge
+                streakDays={streakDays}
+                longestStreak={longestStreak}
+                studiedToday={studiedToday}
+                celebrationKey={streakCelebrationKey}
+                testId="assessment-completion-streak-badge"
+              />
+            </div>
+          )}
         </div>
       )}
 

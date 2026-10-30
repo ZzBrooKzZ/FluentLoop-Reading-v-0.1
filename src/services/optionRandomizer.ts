@@ -458,6 +458,56 @@ export function clearAttemptOptionOrders(attemptKey?: string): void {
 }
 
 /**
+ * Purges all cached in-progress placement answers and placement option orders
+ * (or those matching a specific placement `sessionId`) from memory and `localStorage`
+ * while leaving regular reading lesson attempts (`att-*`, `inprog-*`) untouched.
+ */
+export function clearAllPlacementInProgressAnswers(sessionId?: string): void {
+  const targetSession = sessionId?.trim();
+  const matchesPlacementKey = (key: string) => {
+    if (!key.startsWith('placement-')) return false;
+    if (!targetSession) return true;
+    return key.includes(targetSession);
+  };
+
+  for (const key of Array.from(memoryInProgressAnswersStore.keys())) {
+    if (matchesPlacementKey(key)) {
+      memoryInProgressAnswersStore.delete(key);
+    }
+  }
+
+  for (const key of Array.from(memoryOptionOrderStore.keys())) {
+    if (matchesPlacementKey(key)) {
+      memoryOptionOrderStore.delete(key);
+    }
+  }
+
+  if (typeof window === 'undefined') return;
+  try {
+    const rawAnswers = window.localStorage.getItem(IN_PROGRESS_ANSWERS_STORAGE_KEY);
+    if (rawAnswers) {
+      const parsed = JSON.parse(rawAnswers);
+      if (parsed && typeof parsed === 'object') {
+        let changed = false;
+        for (const k of Object.keys(parsed)) {
+          if (matchesPlacementKey(k)) {
+            delete parsed[k];
+            changed = true;
+          }
+        }
+        if (changed) {
+          window.localStorage.setItem(IN_PROGRESS_ANSWERS_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+
+  persistOptionOrdersToLocalStorage();
+}
+
+/**
  * Exports a snapshot of all saved option orders (and restores from a snapshot) so
  * tests can simulate a browser refresh even in environments without `window.localStorage`.
  */

@@ -415,15 +415,7 @@ test('server placement repository strips diagnostic answer keys, prevents duplic
   });
   assert.equal(sub1Dup.session.steps.length, 1);
 
-  // 4. Refresh recovery: resume session with same sessionId returns exact step 2 without repeating step 1
-  const resumed = startOrResumePlacementSessionOnServer({
-    sessionId: started.session.id,
-    userId: 'anon-123',
-  });
-  assert.equal(resumed.session.steps.length, 1);
-  assert.equal(resumed.activePassage?.id, sub1.nextPassage?.id);
-
-  // 5. Submit Passage 2 (B2) and Passage 3 (C1) to complete placement in 3 passages
+  // 4. Submit Passage 2 (B2) and Passage 3 (C1) to complete placement in 3 passages
   const authP2 = getDiagnosticPassageById(sub1.nextPassage!.id)!;
   const p2Answers = Object.fromEntries(authP2.questions.map((q) => [q.id, q.correctAnswer]));
   const sub2 = submitPlacementPassageOnServer({
@@ -445,6 +437,15 @@ test('server placement repository strips diagnostic answer keys, prevents duplic
   assert.equal(sub3.session.status, 'completed');
   assert.equal(sub3.session.recommendedLevel, 'C1');
   assert.equal(sub3.nextPassage, null);
+
+  // 5. Completed session is preserved when queried without forceNew
+  const completedFetched = startOrResumePlacementSessionOnServer({
+    sessionId: started.session.id,
+    userId: 'anon-123',
+  });
+  assert.equal(completedFetched.session.id, started.session.id);
+  assert.equal(completedFetched.session.status, 'completed');
+  assert.equal(completedFetched.session.recommendedLevel, 'C1');
 
   // 6. Link completed session to Google user UID
   const linked = linkPlacementSessionToUserOnServer({

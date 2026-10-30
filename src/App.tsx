@@ -59,6 +59,7 @@ import {
   CEFRLevel,
   ComprehensionQuestion,
   LessonAttempt,
+  PlacementAbandonReason,
   PlacementSession,
   ReadingLesson,
   SavedVocabularyItem,
@@ -72,6 +73,7 @@ import { PublicFooter } from './components/PublicFooter';
 import { BrandLogo } from './components/BrandLogo';
 import { AnimatedBookHero } from './components/AnimatedBookHero';
 import { AnimatedBookLoader } from './components/AnimatedBookLoader';
+import { StreakBadge } from './components/StreakBadge';
 import {
   AutumnBranchIllustration,
   BooksAndTeaIllustration,
@@ -99,6 +101,8 @@ import {
   parseActivityTimestamp,
   recordCompletedAttemptWithPersistence,
 } from './services/streakService';
+import { clearAllPlacementInProgressAnswers } from './services/optionRandomizer';
+import { stopPlacementSessionTimer } from './services/placementTimerService';
 import { getPassagePhotoMetadata } from './utils/illustrations';
 
 // Lazy-load heavy administrator and documentation views so ordinary learners don't download them
@@ -151,6 +155,8 @@ const STORAGE_KEYS = {
   PLACEMENT_SESSION: 'fluentloop_placement_session_v1',
   PLACEMENT_PASSAGE: 'fluentloop_placement_passage_v1',
   PLACEMENT_LEVEL: 'fluentloop_placement_level_v1',
+  PLACEMENT_ABANDONED_EVENT: 'fluentloop_placement_abandoned_event_v1',
+  ABANDONED_PLACEMENT_SESSIONS: 'fluentloop_abandoned_placement_sessions_v1',
   FRESH_START_EPOCH: 'fluentloop_fresh_start_epoch_v1',
   FRESH_NEW_USER_MODE: 'fluentloop_fresh_new_user_mode_v1',
   LAST_AUTH_UID: 'fluentloop_last_auth_uid_v1',
@@ -158,6 +164,35 @@ const STORAGE_KEYS = {
 
 const CURRENT_FRESH_START_EPOCH = '2026-10-28-unknown-until-assessed-v2';
 const PASSAGE_LOADING_DURATION_MS = 1500;
+
+function recordAbandonedPlacementSessionLocally(
+  sessionId: string,
+  reason: PlacementAbandonReason
+) {
+  if (typeof window === 'undefined' || !sessionId) return;
+  try {
+    const rawList = localStorage.getItem(STORAGE_KEYS.ABANDONED_PLACEMENT_SESSIONS);
+    const parsedList = rawList ? JSON.parse(rawList) : [];
+    const list = Array.isArray(parsedList)
+      ? parsedList.filter((item): item is string => typeof item === 'string')
+      : [];
+    if (!list.includes(sessionId)) {
+      list.push(sessionId);
+    }
+    localStorage.setItem(
+      STORAGE_KEYS.ABANDONED_PLACEMENT_SESSIONS,
+      JSON.stringify(list.slice(-50))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.PLACEMENT_ABANDONED_EVENT,
+      JSON.stringify({
+        sessionId,
+        reason,
+        timestamp: Date.now(),
+      })
+    );
+  } catch {}
+}
 
 function purgeLocalLearnerCache() {
   if (typeof window === 'undefined') return;
@@ -169,6 +204,8 @@ function purgeLocalLearnerCache() {
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_LEVEL);
+  localStorage.removeItem(STORAGE_KEYS.PLACEMENT_ABANDONED_EVENT);
+  localStorage.removeItem(STORAGE_KEYS.ABANDONED_PLACEMENT_SESSIONS);
   localStorage.removeItem(STORAGE_KEYS.LAST_AUTH_UID);
   localStorage.removeItem('fluentloop_difficulty_target_v1');
   localStorage.removeItem('fluentloop_pass_streak_v1');
@@ -211,8 +248,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const passageLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showLandingHome, setShowLandingHome] = useState<boolean>(false);
   const [placementSession, setPlacementSession] = useState<PlacementSession | null>(null);
+  const placementSessionRef = useRef<PlacementSession | null>(null);
+  placementSessionRef.current = placementSession;
   const [placementActivePassage, setPlacementActivePassage] = useState<ReadingLesson | null>(null);
   const [isPlacementSubmitting, setIsPlacementSubmitting] = useState<boolean>(false);
+  const [placementServerClockOffsetMs, setPlacementServerClockOffsetMs] = useState<number>(0);
+  const [placementSubmissionError, setPlacementSubmissionError] = useState<string | null>(null);
   const [pendingStepFeedback, setPendingStepFeedback] = useState<{
     passageTitle: string;
     level: CEFRLevel;
@@ -251,6 +292,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   >(undefined);
   const [reviewInitialResult, setReviewInitialResult] = useState<GradedAttemptSummary | null>(null);
   const [completionNotice, setCompletionNotice] = useState<string | null>(null);
+  const [streakCelebrationKey, setStreakCelebrationKey] = useState<number>(0);
+  const [pendingDashboardStreakCelebration, setPendingDashboardStreakCelebration] =
+    useState<boolean>(false);
 
   const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg' | 'xl'>('md');
   // Arabic translations are strictly OFF by default per English-to-English primary requirement
@@ -301,27 +345,56 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setStartingLevel(null);
     }
 
-    // Restore any active or completed placement session so page refresh does not repeat passages
+    // Placement assessment refresh rule:
+    // - Unfinished (`in_progress`) placement assessments are disposable and MUST reset on browser refresh:
+    //   clear the unfinished session, purge draft answers, notify the server to mark it abandoned,
+    //   and redirect the learner to the main FluentLoop page.
+    // - Completed (`completed`) placement assessments are strictly preserved.
+    let wasUnfinishedPlacementInterruptedByRefresh = false;
     try {
       const rawPlacementSession = localStorage.getItem(STORAGE_KEYS.PLACEMENT_SESSION);
-      const rawPlacementPassage = localStorage.getItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
       if (rawPlacementSession) {
         const parsedSession = JSON.parse(rawPlacementSession) as PlacementSession;
         if (parsedSession && parsedSession.id) {
-          setPlacementSession(parsedSession);
-          if (rawPlacementPassage) {
-            setPlacementActivePassage(JSON.parse(rawPlacementPassage) as ReadingLesson);
-          }
-          // If visitor was mid-placement or viewing their recommendation before unlocking the course, resume seamlessly
-          if (
-            !savedPlacementLvl &&
-            (parsedSession.status === 'in_progress' || parsedSession.status === 'completed')
-          ) {
-            setShowPlacementAssessment(true);
+          if (parsedSession.status === 'completed') {
+            setPlacementSession(parsedSession);
+            localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+            setPlacementActivePassage(null);
+            if (!savedPlacementLvl) {
+              setShowPlacementAssessment(true);
+            }
+          } else {
+            wasUnfinishedPlacementInterruptedByRefresh = true;
+            stopPlacementSessionTimer(parsedSession.id);
+            clearAllPlacementInProgressAnswers(parsedSession.id);
+            localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+            localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+            recordAbandonedPlacementSessionLocally(parsedSession.id, 'refresh');
+            setPlacementSession(null);
+            setPlacementActivePassage(null);
+            setPendingStepFeedback(null);
+            setPlacementSubmissionError(null);
+            setShowPlacementAssessment(false);
+            setActiveTab('library');
+
+            fetch('/api/placement/abandon', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: parsedSession.id,
+                userId: auth.currentUser?.uid || parsedSession.userId || 'guest',
+                reason: 'refresh',
+              }),
+            }).catch(() => {});
           }
         }
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
       }
-    } catch {}
+    } catch {
+      localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+      localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+    }
 
     try {
       const rawCustom = localStorage.getItem(STORAGE_KEYS.CUSTOM_LESSONS);
@@ -346,8 +419,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       if (rawVocab) setSavedVocab(JSON.parse(rawVocab));
     } catch {}
 
+    // Restore regular reading lesson progress only when the refresh did not interrupt an active placement assessment
     const lastLesson = localStorage.getItem(STORAGE_KEYS.LAST_LESSON_ID);
-    if (lastLesson) {
+    if (lastLesson && !wasUnfinishedPlacementInterruptedByRefresh) {
       setActiveLessonId(lastLesson);
       const inProg = attemptsRef.current.find(
         (a) =>
@@ -369,6 +443,88 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     }
 
     setShowArabicTranslation(localStorage.getItem(STORAGE_KEYS.SHOW_ARABIC) === 'true');
+  }, []);
+
+  // Synchronize placement session state and multi-tab abandonment across browser tabs
+  useEffect(() => {
+    const handleStorageSync = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEYS.PLACEMENT_ABANDONED_EVENT && e.newValue) {
+        try {
+          const payload = JSON.parse(e.newValue) as {
+            sessionId?: string;
+            reason?: PlacementAbandonReason;
+          };
+          const current = placementSessionRef.current;
+          if (
+            current &&
+            current.status === 'in_progress' &&
+            (!payload.sessionId || payload.sessionId === current.id)
+          ) {
+            stopPlacementSessionTimer(current.id);
+            clearAllPlacementInProgressAnswers(current.id);
+            setPlacementSession(null);
+            setPlacementActivePassage(null);
+            setPendingStepFeedback(null);
+            setPlacementSubmissionError(null);
+            setShowPlacementAssessment(false);
+            setActiveTab('library');
+            setCompletionNotice(
+              'Your unfinished placement assessment was reset because it was refreshed or exited in another tab. Start a new 20-minute assessment whenever you are ready.'
+            );
+          }
+        } catch {}
+        return;
+      }
+
+      if (e.key === STORAGE_KEYS.PLACEMENT_SESSION) {
+        if (!e.newValue) {
+          const current = placementSessionRef.current;
+          if (current && current.status === 'in_progress') {
+            stopPlacementSessionTimer(current.id);
+            clearAllPlacementInProgressAnswers(current.id);
+            setPlacementSession(null);
+            setPlacementActivePassage(null);
+            setPendingStepFeedback(null);
+            setPlacementSubmissionError(null);
+            setShowPlacementAssessment(false);
+            setActiveTab('library');
+          } else {
+            setPlacementSession(null);
+          }
+          return;
+        }
+        try {
+          const syncedSession = JSON.parse(e.newValue) as PlacementSession;
+          if (syncedSession && syncedSession.id) {
+            if (syncedSession.status === 'abandoned') {
+              stopPlacementSessionTimer(syncedSession.id);
+              clearAllPlacementInProgressAnswers(syncedSession.id);
+              setPlacementSession(null);
+              setPlacementActivePassage(null);
+              setPendingStepFeedback(null);
+              setShowPlacementAssessment(false);
+              setActiveTab('library');
+              return;
+            }
+            setPlacementSession(syncedSession);
+            if (syncedSession.status === 'completed') {
+              setPendingStepFeedback(null);
+              setPlacementActivePassage(null);
+            }
+          }
+        } catch {}
+      } else if (e.key === STORAGE_KEYS.PLACEMENT_PASSAGE) {
+        if (!e.newValue) {
+          setPlacementActivePassage(null);
+          return;
+        }
+        try {
+          setPlacementActivePassage(JSON.parse(e.newValue) as ReadingLesson);
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageSync);
+    return () => window.removeEventListener('storage', handleStorageSync);
   }, []);
 
   useEffect(() => {
@@ -425,6 +581,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             setPlacementLevel(null);
             setStartingLevel(null);
             setCurrentLevel('B1');
+            setPlacementSession(null);
+            setPlacementActivePassage(null);
+            setShowPlacementAssessment(false);
+            setPendingStepFeedback(null);
+            setPlacementSubmissionError(null);
           }
           localStorage.setItem(STORAGE_KEYS.LAST_AUTH_UID, user.uid);
 
@@ -787,6 +948,16 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     }
   }, [showPlacementAssessment, activeTab, isOpeningPassage]);
 
+  useEffect(() => {
+    if (
+      pendingDashboardStreakCelebration &&
+      (activeTab === 'library' || activeTab === 'preview' || activeTab === 'analytics')
+    ) {
+      setStreakCelebrationKey((prev) => prev + 1);
+      setPendingDashboardStreakCelebration(false);
+    }
+  }, [activeTab, pendingDashboardStreakCelebration]);
+
   const baseSourceLessons = useMemo(() => {
     if (isAdminVerified && adminAuthoritativeLessons && adminAuthoritativeLessons.length > 0) {
       return adminAuthoritativeLessons;
@@ -997,7 +1168,41 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const abandonActivePlacementAssessment = (
+    reason: PlacementAbandonReason = 'navigation_exit'
+  ) => {
+    const activePlacement = placementSessionRef.current;
+    if (activePlacement && activePlacement.status === 'in_progress') {
+      const abandonedId = activePlacement.id;
+      const ownerId = auth.currentUser?.uid || activePlacement.userId || 'guest';
+      stopPlacementSessionTimer(abandonedId);
+      clearAllPlacementInProgressAnswers(abandonedId);
+      localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+      localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+      recordAbandonedPlacementSessionLocally(abandonedId, reason);
+      placementSessionRef.current = null;
+      setPlacementSession(null);
+      setPlacementActivePassage(null);
+      setPendingStepFeedback(null);
+      setPlacementSubmissionError(null);
+      setShowPlacementAssessment(false);
+      fetch('/api/placement/abandon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: abandonedId,
+          userId: ownerId,
+          reason,
+        }),
+      }).catch(() => {});
+      return;
+    }
+    setShowPlacementAssessment(false);
+    setPendingStepFeedback(null);
+  };
+
   const handlePreviewLesson = (lesson: ReadingLesson) => {
+    abandonActivePlacementAssessment('navigation_exit');
     setShowLandingHome(false);
     setShowPlacementAssessment(false);
     setActiveLessonId(lesson.id);
@@ -1013,6 +1218,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     mode: 'first' | 'practice' | 'review' = 'first',
     existingAttempt?: LessonAttempt
   ) => {
+    abandonActivePlacementAssessment('navigation_exit');
     setShowLandingHome(false);
     setShowPlacementAssessment(false);
     setActiveLessonId(lesson.id);
@@ -1330,6 +1536,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setAttempts(recordOutcome.attempts);
       localStorage.setItem(STORAGE_KEYS.ATTEMPTS, JSON.stringify(recordOutcome.attempts));
 
+      if (recordOutcome.streak.studiedToday) {
+        setStreakCelebrationKey((prev) => prev + 1);
+        setPendingDashboardStreakCelebration(true);
+      }
+
       // Only apply progression on valid first-time attempts
       if (
         (recordOutcome.persistedAttempt?.attemptType || effectiveAttemptType) === 'first' &&
@@ -1464,6 +1675,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
   const handleStartPlacementAssessment = async (forceNew = false) => {
     setCompletionNotice(null);
+    setPlacementSubmissionError(null);
     setPendingStepFeedback(null);
     setIsStartingPlacement(true);
     const startedAt = Date.now();
@@ -1471,27 +1683,64 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const activeUid = auth.currentUser?.uid;
 
     try {
-      const existingSession = !forceNew ? placementSession : null;
-      const recoverySteps = existingSession?.steps?.map((s) => ({
-        passageId: s.passageId,
-        answers: s.answers || {},
-      }));
+      const currentPlacement = placementSessionRef.current;
+      const isExistingCompletedAndOwned =
+        !forceNew &&
+        currentPlacement &&
+        currentPlacement.status === 'completed' &&
+        (!activeUid ||
+          currentPlacement.userId === activeUid ||
+          currentPlacement.linkedToUserId === activeUid);
+
+      if (!isExistingCompletedAndOwned) {
+        // Unfinished or retaken assessments always start completely fresh from the beginning
+        // with a new session ID, a new 20-minute deadline, the first diagnostic passage, and zero prior answers.
+        if (currentPlacement && currentPlacement.status === 'in_progress') {
+          stopPlacementSessionTimer(currentPlacement.id);
+          recordAbandonedPlacementSessionLocally(currentPlacement.id, 'superseded');
+        }
+        clearAllPlacementInProgressAnswers(currentPlacement?.id);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+      }
+
+      let localAbandonedIds: string[] = [];
+      try {
+        const rawAbandoned = localStorage.getItem(STORAGE_KEYS.ABANDONED_PLACEMENT_SESSIONS);
+        const parsedAbandoned = rawAbandoned ? JSON.parse(rawAbandoned) : [];
+        if (Array.isArray(parsedAbandoned)) {
+          localAbandonedIds = parsedAbandoned.filter(
+            (item): item is string => typeof item === 'string' && item.trim().length > 0
+          );
+        }
+      } catch {}
+
       const resp = await fetch('/api/placement/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: existingSession?.id,
+          sessionId: isExistingCompletedAndOwned ? currentPlacement.id : undefined,
+          abandonSessionId:
+            !isExistingCompletedAndOwned && currentPlacement?.status === 'in_progress'
+              ? currentPlacement.id
+              : localAbandonedIds[localAbandonedIds.length - 1],
+          abandonSessionIds: !isExistingCompletedAndOwned ? localAbandonedIds : undefined,
+          abandonReason: 'superseded',
           userId: activeUid || 'guest',
           isAnonymous: !auth.currentUser || auth.currentUser.isAnonymous,
-          forceNew,
-          recoverySteps,
+          forceNew: !isExistingCompletedAndOwned,
         }),
       });
       if (!resp.ok) {
         throw new Error(`HTTP ${resp.status}`);
       }
       const data = await resp.json();
+      if (typeof data.serverNowMs === 'number') {
+        setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
+      }
       if (data.session) {
+        clearAllPlacementInProgressAnswers(data.session.id);
+        placementSessionRef.current = data.session;
         setPlacementSession(data.session);
         localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(data.session));
       }
@@ -1519,12 +1768,161 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     }
   };
 
+  const handleSavePlacementDraftAnswers = (
+    passageId: string,
+    draftAnswers: Record<string, string>
+  ) => {
+    setPlacementSession((prev) => {
+      if (!prev || prev.status !== 'in_progress') return prev;
+      const updated: PlacementSession = {
+        ...prev,
+        draftAnswersByPassage: {
+          ...(prev.draftAnswersByPassage || {}),
+          [passageId]: { ...draftAnswers },
+        },
+        // Authoritative timer fields are strictly preserved and never extended
+        startedAtMs: prev.startedAtMs,
+        deadlineAtMs: prev.deadlineAtMs,
+        durationSeconds: prev.durationSeconds,
+      };
+      localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(updated));
+      return updated;
+    });
+
+    if (!placementSession || placementSession.status !== 'in_progress') return;
+    fetch('/api/placement/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: placementSession.id,
+        userId: auth.currentUser?.uid || placementSession.userId,
+        passageId,
+        answers: draftAnswers,
+      }),
+    })
+      .then(async (resp) => {
+        const data = await resp.json().catch(() => null);
+        if (!data) return;
+        if (typeof data.serverNowMs === 'number') {
+          setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
+        }
+        if (resp.status === 409 && data.abandoned) {
+          stopPlacementSessionTimer(placementSession.id);
+          clearAllPlacementInProgressAnswers(placementSession.id);
+          localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+          localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+          placementSessionRef.current = null;
+          setPlacementSession(null);
+          setPlacementActivePassage(null);
+          setPendingStepFeedback(null);
+          setShowPlacementAssessment(false);
+          setActiveTab('library');
+          setCompletionNotice(
+            'Your unfinished placement assessment was reset because it was refreshed or exited. Start a new 20-minute assessment whenever you are ready.'
+          );
+          return;
+        }
+        if (resp.status === 409 && data.session) {
+          setPlacementSession(data.session);
+          localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(data.session));
+          setPlacementActivePassage(null);
+          localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+          setPendingStepFeedback(null);
+        }
+      })
+      .catch(() => {
+        // Local storage already holds the draft answers if offline
+      });
+  };
+
+  const handleExpirePlacementAssessment = async (
+    passageId: string,
+    preDeadlineAnswers: Record<string, string>
+  ) => {
+    if (!placementSession) return;
+    setIsPlacementSubmitting(true);
+    setPlacementSubmissionError(null);
+    try {
+      const priorStepsForRecovery = placementSession.steps.map((s) => ({
+        passageId: s.passageId,
+        answers: s.answers || {},
+      }));
+      const resp = await fetch('/api/placement/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: placementSession.id,
+          userId: auth.currentUser?.uid || placementSession.userId,
+          passageId:
+            passageId ||
+            placementActivePassage?.id ||
+            placementSession.activePassageId ||
+            placementSession.steps[placementSession.steps.length - 1]?.passageId ||
+            'diag-b1-1',
+          answers: preDeadlineAnswers || {},
+          autoSubmitOnTimeout: true,
+          recoveryStartedAtMs: placementSession.startedAtMs,
+          priorStepsForRecovery,
+        }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (resp.status === 409 && data?.abandoned) {
+        stopPlacementSessionTimer(placementSession.id);
+        clearAllPlacementInProgressAnswers(placementSession.id);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+        placementSessionRef.current = null;
+        setPlacementSession(null);
+        setPlacementActivePassage(null);
+        setPendingStepFeedback(null);
+        setShowPlacementAssessment(false);
+        setActiveTab('library');
+        return;
+      }
+      if (!resp.ok && resp.status !== 409) {
+        throw new Error(data?.error || `HTTP ${resp.status}`);
+      }
+      if (typeof data?.serverNowMs === 'number') {
+        setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
+      }
+      if (data?.session) {
+        const updatedSession = data.session as PlacementSession;
+        setPlacementSession(updatedSession);
+        localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(updatedSession));
+        setPlacementActivePassage(null);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+        setPendingStepFeedback(null);
+
+        if (
+          updatedSession.status === 'completed' &&
+          updatedSession.recommendedLevel &&
+          auth.currentUser &&
+          !auth.currentUser.isAnonymous
+        ) {
+          const recLevel = updatedSession.recommendedLevel;
+          localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
+          localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, recLevel);
+          setPlacementLevel(recLevel);
+          setCurrentLevel(recLevel);
+        }
+      }
+    } catch (err) {
+      console.error('Placement timeout auto-submission error:', err);
+      setPlacementSubmissionError(
+        'Time is up! Your answers before the deadline are safely saved locally, but we could not reach the server to finalize your placement result. Please check your connection and click Retry Final Confirmation.'
+      );
+    } finally {
+      setIsPlacementSubmitting(false);
+    }
+  };
+
   const handleSubmitPlacementPassage = async (
     passageId: string,
     answers: Record<string, string>
   ) => {
     if (!placementSession || !placementActivePassage) return null;
     setIsPlacementSubmitting(true);
+    setPlacementSubmissionError(null);
     try {
       const currentQuestions = placementActivePassage.questions;
       const currentTitle = placementActivePassage.title;
@@ -1540,13 +1938,38 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           userId: auth.currentUser?.uid || placementSession.userId,
           passageId,
           answers,
+          recoveryStartedAtMs: placementSession.startedAtMs,
           priorStepsForRecovery,
         }),
       });
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json().catch(() => null);
+      if (resp.status === 409 && data?.abandoned) {
+        stopPlacementSessionTimer(placementSession.id);
+        clearAllPlacementInProgressAnswers(placementSession.id);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+        placementSessionRef.current = null;
+        setPlacementSession(null);
+        setPlacementActivePassage(null);
+        setPendingStepFeedback(null);
+        setShowPlacementAssessment(false);
+        setActiveTab('library');
+        setCompletionNotice(
+          'Your unfinished placement assessment was reset because it was refreshed or exited. Please start a new placement check from the beginning.'
+        );
+        return null;
       }
-      const data = await resp.json();
+      if (!resp.ok && resp.status !== 409) {
+        throw new Error(data?.error || `HTTP ${resp.status}`);
+      }
+      if (!data?.session) {
+        throw new Error('Missing placement session in response.');
+      }
+
+      if (typeof data.serverNowMs === 'number') {
+        setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
+      }
+
       const updatedSession = data.session as PlacementSession;
       const nextPassage = (data.nextPassage || null) as ReadingLesson | null;
 
@@ -1575,7 +1998,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
       }
 
-      if (data.stepResult) {
+      // If the submission was auto-finalized due to timeout or late submission, skip intermediate step summary
+      // and transition directly to the final recommendation screen with the timeout message.
+      if (data.timedOut || data.lateRejected || updatedSession.timedOut) {
+        setPendingStepFeedback(null);
+      } else if (data.stepResult) {
         setPendingStepFeedback({
           passageTitle: currentTitle,
           level: data.stepResult.level,
@@ -1591,6 +2018,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       return data;
     } catch (err) {
       console.error('Placement submission error:', err);
+      setPlacementSubmissionError(
+        'Could not submit your passage due to a network error. Your selected answers and remaining time have been preserved — please try submitting again.'
+      );
       return null;
     } finally {
       setIsPlacementSubmitting(false);
@@ -1893,6 +2323,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           <button
             type="button"
             onClick={() => {
+              abandonActivePlacementAssessment('navigation_exit');
               setShowPlacementAssessment(false);
               setPendingStepFeedback(null);
               setShowLandingHome(true);
@@ -1916,6 +2347,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <button
                 type="button"
                 onClick={() => {
+                  abandonActivePlacementAssessment('navigation_exit');
                   setShowLandingHome(false);
                   setShowPlacementAssessment(false);
                   setActiveTab('library');
@@ -1935,6 +2367,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <button
                 type="button"
                 onClick={() => {
+                  abandonActivePlacementAssessment('navigation_exit');
                   setShowLandingHome(false);
                   setShowPlacementAssessment(false);
                   setActiveTab('history');
@@ -1952,6 +2385,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <button
                 type="button"
                 onClick={() => {
+                  abandonActivePlacementAssessment('navigation_exit');
                   setShowLandingHome(false);
                   setShowPlacementAssessment(false);
                   setActiveTab('vocabulary');
@@ -1969,6 +2403,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <button
                 type="button"
                 onClick={() => {
+                  abandonActivePlacementAssessment('navigation_exit');
                   setShowLandingHome(false);
                   setShowPlacementAssessment(false);
                   setActiveTab('analytics');
@@ -1988,6 +2423,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      abandonActivePlacementAssessment('navigation_exit');
                       setShowLandingHome(false);
                       setShowPlacementAssessment(false);
                       setActiveTab('admin');
@@ -2005,6 +2441,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      abandonActivePlacementAssessment('navigation_exit');
                       setShowLandingHome(false);
                       setShowPlacementAssessment(false);
                       setActiveTab('docs');
@@ -2028,24 +2465,28 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             >
               <Link
                 href="/guides/ielts-academic-reading"
+                onClick={() => abandonActivePlacementAssessment('navigation_exit')}
                 className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 IELTS Reading Guide
               </Link>
               <Link
                 href="/guides/cefr-reading-levels"
+                onClick={() => abandonActivePlacementAssessment('navigation_exit')}
                 className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 CEFR A1–C1 Levels
               </Link>
               <Link
                 href="/guides/vocabulary-in-context"
+                onClick={() => abandonActivePlacementAssessment('navigation_exit')}
                 className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 Contextual Vocabulary
               </Link>
               <Link
                 href="/sample-lessons"
+                onClick={() => abandonActivePlacementAssessment('navigation_exit')}
                 className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
                 Sample Passages
@@ -2055,6 +2496,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      abandonActivePlacementAssessment('navigation_exit');
                       setShowLandingHome(false);
                       setShowPlacementAssessment(false);
                       setActiveTab('admin');
@@ -2071,6 +2513,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   <button
                     type="button"
                     onClick={() => {
+                      abandonActivePlacementAssessment('navigation_exit');
                       setShowLandingHome(false);
                       setShowPlacementAssessment(false);
                       setActiveTab('docs');
@@ -2199,6 +2642,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     key={tabKey}
                     type="button"
                     onClick={() => {
+                      abandonActivePlacementAssessment('navigation_exit');
                       setShowLandingHome(false);
                       setShowPlacementAssessment(false);
                       setActiveTab(tabKey);
@@ -2219,7 +2663,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               <>
                 <Link
                   href="/guides/ielts-academic-reading"
-                  onClick={() => setMobileNavOpen(false)}
+                  onClick={() => {
+                    abandonActivePlacementAssessment('navigation_exit');
+                    setMobileNavOpen(false);
+                  }}
                   className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <BookOpen className="h-4 w-4 text-[#A63816]" />
@@ -2227,7 +2674,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 </Link>
                 <Link
                   href="/guides/cefr-reading-levels"
-                  onClick={() => setMobileNavOpen(false)}
+                  onClick={() => {
+                    abandonActivePlacementAssessment('navigation_exit');
+                    setMobileNavOpen(false);
+                  }}
                   className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Compass className="h-4 w-4 text-[#A63816]" />
@@ -2235,7 +2685,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 </Link>
                 <Link
                   href="/guides/vocabulary-in-context"
-                  onClick={() => setMobileNavOpen(false)}
+                  onClick={() => {
+                    abandonActivePlacementAssessment('navigation_exit');
+                    setMobileNavOpen(false);
+                  }}
                   className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <FileText className="h-4 w-4 text-[#A63816]" />
@@ -2243,7 +2696,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 </Link>
                 <Link
                   href="/sample-lessons"
-                  onClick={() => setMobileNavOpen(false)}
+                  onClick={() => {
+                    abandonActivePlacementAssessment('navigation_exit');
+                    setMobileNavOpen(false);
+                  }}
                   className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Sparkles className="h-4 w-4 text-[#A63816]" />
@@ -2254,6 +2710,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     <button
                       type="button"
                       onClick={() => {
+                        abandonActivePlacementAssessment('navigation_exit');
                         setShowLandingHome(false);
                         setShowPlacementAssessment(false);
                         setActiveTab('admin');
@@ -2271,6 +2728,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     <button
                       type="button"
                       onClick={() => {
+                        abandonActivePlacementAssessment('navigation_exit');
                         setShowLandingHome(false);
                         setShowPlacementAssessment(false);
                         setActiveTab('docs');
@@ -2330,12 +2788,17 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             activePassage={placementActivePassage}
             isSubmitting={isPlacementSubmitting}
             isSignedInWithGoogle={Boolean(currentUser && !currentUser.isAnonymous)}
+            serverClockOffsetMs={placementServerClockOffsetMs}
+            submissionErrorMessage={placementSubmissionError}
+            onDismissSubmissionError={() => setPlacementSubmissionError(null)}
             fontSize={fontSize}
             onChangeFontSize={setFontSize}
             showArabicTranslation={showArabicTranslation}
             onChangeShowArabic={setShowArabicTranslation}
             savedVocab={savedVocab}
             onToggleSaveWord={(vocab, lesson) => handleToggleSaveWord(vocab, lesson)}
+            onSaveDraftAnswers={handleSavePlacementDraftAnswers}
+            onExpirePlacement={handleExpirePlacementAssessment}
             onSubmitPassage={handleSubmitPlacementPassage}
             onAdvanceAfterStepSummary={() => {
               const hasNextPassage = Boolean(
@@ -2360,8 +2823,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 void handleContinueWithGoogleFromPlacement();
                 return;
               }
-              setShowPlacementAssessment(false);
-              setPendingStepFeedback(null);
+              abandonActivePlacementAssessment('navigation_exit');
             }}
           />
         ) : (showLandingHome || startingLevel === null) &&
@@ -2416,8 +2878,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     >
                       {startingLevel !== null
                         ? 'Continue to My Reading'
-                        : placementSession && placementSession.steps.length > 0
-                        ? 'Resume Your Placement Check'
+                        : placementSession && placementSession.status === 'completed'
+                        ? 'View Your Placement Result'
                         : currentUser && !currentUser.isAnonymous
                         ? 'Take Placement Check to Get Your Level'
                         : 'Start Your Reading Journey'}{' '}
@@ -2798,27 +3260,13 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                             Placement Calibrated ({placementLevel})
                           </span>
                         )}
-                        <span
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#E3D7C3] bg-[#FFFDFA] px-3 py-1.5 text-xs font-semibold text-[#171615]"
-                          data-testid="dashboard-streak-badge"
-                        >
-                          <Flame className="h-4 w-4 text-[#A63816]" aria-hidden="true" />
-                          <span>
-                            Streak:{' '}
-                            <strong className="font-mono-code text-[#A63816] tabular-nums">
-                              {readingProgress.streakDays}{' '}
-                              {readingProgress.streakDays === 1 ? 'day' : 'days'}
-                            </strong>
-                          </span>
-                          <span className="text-[#76675B] font-mono-code text-[11px] tabular-nums">
-                            (Best: {readingProgress.longestStreak}d)
-                          </span>
-                          {readingProgress.studiedToday && (
-                            <span className="ml-1 rounded bg-[#E6F2EC] px-1.5 py-0.5 font-mono-code text-[10px] font-bold text-[#287A52]">
-                              Studied today
-                            </span>
-                          )}
-                        </span>
+                        <StreakBadge
+                          streakDays={readingProgress.streakDays}
+                          longestStreak={readingProgress.longestStreak}
+                          studiedToday={readingProgress.studiedToday}
+                          celebrationKey={streakCelebrationKey}
+                          testId="dashboard-streak-badge"
+                        />
                       </div>
                     </div>
 
@@ -3086,6 +3534,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 streakDays={readingProgress.streakDays}
                 longestStreak={readingProgress.longestStreak}
                 studiedToday={readingProgress.studiedToday}
+                streakCelebrationKey={streakCelebrationKey}
                 completedCount={readingProgress.completedCount}
                 progressPoints={readingProgress.points}
                 onBack={() => setActiveTab('library')}
@@ -3119,6 +3568,14 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   </button>
 
                   <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                    <StreakBadge
+                      variant="compact"
+                      streakDays={readingProgress.streakDays}
+                      longestStreak={readingProgress.longestStreak}
+                      studiedToday={readingProgress.studiedToday}
+                      celebrationKey={streakCelebrationKey}
+                      testId="reader-streak-badge"
+                    />
                     <span className="text-xs text-[#76675B]">
                       Hover, double-click, or tap any word for an English definition
                     </span>
@@ -3215,6 +3672,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       attemptMode={activeAttemptMode}
                       initialAnswers={reviewInitialAnswers}
                       initialResult={reviewInitialResult}
+                      streakDays={readingProgress.streakDays}
+                      longestStreak={readingProgress.longestStreak}
+                      studiedToday={readingProgress.studiedToday}
+                      streakCelebrationKey={streakCelebrationKey}
                       onAnswersChange={handleInProgressAnswersChange}
                       onSubmitAttempt={handleSubmitAttempt}
                       onHighlightEvidence={(quote) => setHighlightedEvidenceQuote(quote)}

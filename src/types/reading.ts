@@ -123,14 +123,36 @@ export interface PlacementStepResult {
   submittedAt: string;
 }
 
+export type PlacementAbandonReason =
+  | 'refresh'
+  | 'navigation_exit'
+  | 'superseded'
+  | 'user_cancelled';
+
 export interface PlacementSession {
   id: string;
   userId: string;
   isAnonymous: boolean;
-  status: 'in_progress' | 'completed';
+  status: 'in_progress' | 'completed' | 'abandoned';
   currentLevel: CEFRLevel;
   activePassageId: string | null;
   steps: PlacementStepResult[];
+  /** Authoritative server timestamp (epoch ms) when the placement assessment started. */
+  startedAtMs: number;
+  /** Authoritative server deadline timestamp (startedAtMs + 1,200,000 ms). */
+  deadlineAtMs: number;
+  /** Strict placement assessment duration in seconds (1,200 seconds = 20 minutes). */
+  durationSeconds: number;
+  /** Pre-deadline in-progress answers indexed by diagnostic passageId. */
+  draftAnswersByPassage?: Record<string, Record<string, string>>;
+  /** True if the session was finalized automatically when the 20-minute timer expired. */
+  timedOut?: boolean;
+  /** ISO timestamp when the session was finalized. */
+  finalizedAt?: string;
+  /** ISO timestamp when an unfinished placement session was abandoned. */
+  abandonedAt?: string;
+  /** Reason the unfinished placement session was abandoned. */
+  abandonReason?: PlacementAbandonReason;
   recommendedLevel?: CEFRLevel;
   recommendedDifficultyScore?: number;
   confidence?: 'high' | 'moderate' | 'conservative';

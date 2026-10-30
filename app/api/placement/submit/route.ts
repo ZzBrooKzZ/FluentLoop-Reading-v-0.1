@@ -4,6 +4,7 @@ import {
   sanitizeUntrustedInput,
 } from '@/src/server/gradingEngine';
 import { submitPlacementPassageOnServer } from '@/src/server/placementRepository';
+import { PLACEMENT_TIMEOUT_MESSAGE } from '@/src/services/placementEngine';
 
 export const runtime = 'nodejs';
 
@@ -33,6 +34,12 @@ export async function POST(req: NextRequest) {
     typeof body?.userId === 'string'
       ? sanitizeUntrustedInput(body.userId, 128)
       : 'guest';
+  const autoSubmitOnTimeout = Boolean(body?.autoSubmitOnTimeout);
+  const clientRecoveryStartedAtMs =
+    typeof body?.recoveryStartedAtMs === 'number' &&
+    Number.isFinite(body.recoveryStartedAtMs)
+      ? body.recoveryStartedAtMs
+      : undefined;
 
   if (!sessionId || !passageId) {
     return NextResponse.json(
@@ -63,8 +70,33 @@ export async function POST(req: NextRequest) {
       userId,
       passageId,
       answers: sanitizedAnswers,
+      autoSubmitOnTimeout,
+      clientRecoveryStartedAtMs,
       priorStepsForRecovery,
     });
+
+    if (result.lateRejected) {
+      return NextResponse.json(
+        {
+          error: PLACEMENT_TIMEOUT_MESSAGE,
+          lateRejected: true,
+          timedOut: true,
+          session: result.session,
+          stepResult: result.stepResult,
+          nextPassage: null,
+          wasDuplicate: result.wasDuplicate,
+          serverNowMs: result.serverNowMs,
+          maxPassages: 3,
+        },
+        {
+          status: 409,
+          headers: {
+            'X-Robots-Tag': 'noindex, nofollow, noarchive',
+            'Cache-Control': 'no-store',
+          },
+        }
+      );
+    }
 
     return NextResponse.json(
       {
@@ -72,6 +104,9 @@ export async function POST(req: NextRequest) {
         stepResult: result.stepResult,
         nextPassage: result.nextPassage,
         wasDuplicate: result.wasDuplicate,
+        lateRejected: false,
+        timedOut: result.timedOut,
+        serverNowMs: result.serverNowMs,
         maxPassages: 3,
       },
       {
@@ -82,9 +117,14 @@ export async function POST(req: NextRequest) {
       }
     );
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || 'Failed to grade diagnostic passage.' },
-      { status: 404 }
-    );
+    const message = err?.message || 'Failed to grade diagnostic passage.';
+    if (message.includes('abandoned')) {
+      return NextResponse.json(
+        { error: message, abandoned: true },
+        { status: 409 }
+      );
+    }
+    const status = message.includes('different learner account') ? 403 : 404;
+    return NextResponse.json({ error: message }, { status });
   }
 }

@@ -1,5 +1,6 @@
 import {
   CEFRLevel,
+  PlacementAbandonReason,
   PlacementSession,
   PlacementStepResult,
   ReadingLesson,
@@ -22,7 +23,46 @@ export interface PlacementSettings {
   confirmedCompetenceThreshold: number;
 }
 
-export const MAX_PLACEMENT_PASSAGES = 3;
+import {
+  clearAllPlacementTimersForTests,
+  computeRemainingPlacementMs,
+  computeRemainingPlacementSeconds,
+  formatPlacementCountdown,
+  getActivePlacementTimerCount,
+  getPlacementDraftStorageKey,
+  getPlacementTimerVisualState,
+  isPlacementAssessmentLocked,
+  isPlacementSessionExpired,
+  MAX_PLACEMENT_PASSAGES,
+  PLACEMENT_DURATION_MS,
+  PLACEMENT_DURATION_SECONDS,
+  PLACEMENT_TIMEOUT_MESSAGE,
+  PlacementTimerVisualState,
+  PlacementTimerVisualTier,
+  SERVER_NETWORK_LATENCY_TOLERANCE_MS,
+  stopPlacementSessionTimer,
+  subscribePlacementSessionTimer,
+} from './placementTimerService';
+
+export {
+  clearAllPlacementTimersForTests,
+  computeRemainingPlacementMs,
+  computeRemainingPlacementSeconds,
+  formatPlacementCountdown,
+  getActivePlacementTimerCount,
+  getPlacementDraftStorageKey,
+  getPlacementTimerVisualState,
+  isPlacementAssessmentLocked,
+  isPlacementSessionExpired,
+  MAX_PLACEMENT_PASSAGES,
+  PLACEMENT_DURATION_MS,
+  PLACEMENT_DURATION_SECONDS,
+  PLACEMENT_TIMEOUT_MESSAGE,
+  SERVER_NETWORK_LATENCY_TOLERANCE_MS,
+  stopPlacementSessionTimer,
+  subscribePlacementSessionTimer,
+};
+export type { PlacementTimerVisualState, PlacementTimerVisualTier };
 
 export const DEFAULT_PLACEMENT_SETTINGS: PlacementSettings = {
   initialLevel: 'B1',
@@ -459,20 +499,39 @@ export function calculateConservativeRecommendation(
 }
 
 /**
+ * Ensures the placement grading engine always receives a complete and properly formatted
+ * answer set for every question in a diagnostic passage. Unanswered questions are
+ * populated with `""` so they are deterministically marked incorrect.
+ */
+export function buildCompleteDiagnosticAnswerSet(
+  passage: ReadingLesson,
+  partialAnswers?: Record<string, string>
+): Record<string, string> {
+  const complete: Record<string, string> = {};
+  const source = partialAnswers && typeof partialAnswers === 'object' ? partialAnswers : {};
+  for (const question of passage.questions) {
+    const raw = source[question.id];
+    complete[question.id] = typeof raw === 'string' ? raw.trim() : '';
+  }
+  return complete;
+}
+
+/**
  * Deterministically grades a diagnostic passage submission against the authoritative diagnostic bank.
+ * Unanswered questions are treated as incorrect (`isCorrect: false`, `verdict: 'incorrect'`, `awardedPoints: 0`).
  */
 export function gradeDiagnosticPassage(
   passage: ReadingLesson,
-  answers: Record<string, string>
+  answers: Record<string, string>,
+  submittedAtIso?: string
 ): PlacementStepResult {
   let correctCount = 0;
   const totalQuestions = passage.questions.length;
-  const normalizedAnswers: Record<string, string> = {};
+  const normalizedAnswers = buildCompleteDiagnosticAnswerSet(passage, answers);
   const results: NonNullable<PlacementStepResult['results']> = [];
 
   for (const question of passage.questions) {
-    const rawUserAnswer = typeof answers[question.id] === 'string' ? answers[question.id].trim() : '';
-    normalizedAnswers[question.id] = rawUserAnswer;
+    const rawUserAnswer = normalizedAnswers[question.id] || '';
     const evaluation = evaluateQuestionLocally(question, rawUserAnswer);
     if (evaluation.isCorrect && evaluation.verdict === 'correct') {
       correctCount += 1;
@@ -496,52 +555,277 @@ export function gradeDiagnosticPassage(
     accuracy,
     answers: normalizedAnswers,
     results,
-    submittedAt: new Date().toISOString(),
+    submittedAt: submittedAtIso || new Date().toISOString(),
   };
 }
 
 /**
- * Creates a fresh placement session starting at B1.
+ * Creates a fresh placement session starting at B1 with a strict 20-minute (1,200s) authoritative deadline.
  */
 export function createPlacementSession(
   userId: string = 'guest',
   isAnonymous: boolean = true,
   passageBank: ReadingLesson[] = DIAGNOSTIC_PASSAGES,
-  customSettings?: Partial<PlacementSettings>
+  customSettings?: Partial<PlacementSettings>,
+  startedAtMs: number = Date.now()
 ): PlacementSession {
   const settings = resolvePlacementSettings(customSettings);
   const decision = decideNextDiagnosticPassage([], passageBank, settings);
-  const nowIso = new Date().toISOString();
+  const effectiveStartMs =
+    typeof startedAtMs === 'number' && Number.isFinite(startedAtMs) ? startedAtMs : Date.now();
+  const nowIso = new Date(effectiveStartMs).toISOString();
 
   return {
-    id: `pl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `pl-${effectiveStartMs}-${Math.random().toString(36).slice(2, 8)}`,
     userId,
     isAnonymous,
     status: 'in_progress',
     currentLevel: decision.nextLevel || settings.initialLevel,
     activePassageId: decision.nextPassage?.id || null,
     steps: [],
+    startedAtMs: effectiveStartMs,
+    deadlineAtMs: effectiveStartMs + PLACEMENT_DURATION_MS,
+    durationSeconds: PLACEMENT_DURATION_SECONDS,
+    draftAnswersByPassage: {},
+    timedOut: false,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
 }
 
 /**
+ * Marks an unfinished placement session as abandoned when the learner refreshes the page
+ * or navigates away before completing the assessment.
+ * - Never resets or alters a `completed` placement session.
+ * - Idempotent when called repeatedly on an already `abandoned` session.
+ * - Discards unfinished draft answers and activePassageId so the session cannot be resumed.
+ */
+export function abandonPlacementSession(
+  session: PlacementSession,
+  reason: PlacementAbandonReason = 'navigation_exit',
+  nowMs: number = Date.now()
+): {
+  session: PlacementSession;
+  wasAbandoned: boolean;
+  alreadyCompleted: boolean;
+  alreadyAbandoned: boolean;
+} {
+  stopPlacementSessionTimer(session.id);
+
+  if (session.status === 'completed') {
+    return {
+      session,
+      wasAbandoned: false,
+      alreadyCompleted: true,
+      alreadyAbandoned: false,
+    };
+  }
+
+  if (session.status === 'abandoned') {
+    return {
+      session,
+      wasAbandoned: true,
+      alreadyCompleted: false,
+      alreadyAbandoned: true,
+    };
+  }
+
+  const nowIso = new Date(nowMs).toISOString();
+  const abandonedSession: PlacementSession = {
+    ...session,
+    status: 'abandoned',
+    activePassageId: null,
+    draftAnswersByPassage: {},
+    abandonedAt: nowIso,
+    abandonReason: reason,
+    updatedAt: nowIso,
+  };
+
+  return {
+    session: abandonedSession,
+    wasAbandoned: true,
+    alreadyCompleted: false,
+    alreadyAbandoned: false,
+  };
+}
+
+/**
+ * Updates draft answers for an active placement session without ever modifying or
+ * extending `startedAtMs` or `deadlineAtMs`.
+ * If the session is already completed, abandoned, or expired at `nowMs`, the update is rejected.
+ */
+export function saveDraftAnswersInPlacementSession(
+  session: PlacementSession,
+  passageId: string,
+  answers: Record<string, string>,
+  nowMs: number = Date.now()
+): {
+  session: PlacementSession;
+  accepted: boolean;
+  lateRejected: boolean;
+  abandonedRejected?: boolean;
+} {
+  if (session.status === 'abandoned') {
+    return {
+      session,
+      accepted: false,
+      lateRejected: false,
+      abandonedRejected: true,
+    };
+  }
+
+  if (session.status === 'completed' || isPlacementSessionExpired(session, nowMs)) {
+    return {
+      session,
+      accepted: false,
+      lateRejected: true,
+      abandonedRejected: false,
+    };
+  }
+
+  const sanitized: Record<string, string> = {};
+  if (answers && typeof answers === 'object') {
+    for (const [k, v] of Object.entries(answers)) {
+      if (typeof v === 'string') {
+        sanitized[k] = v;
+      }
+    }
+  }
+
+  const nextDrafts: Record<string, Record<string, string>> = {
+    ...(session.draftAnswersByPassage || {}),
+    [passageId]: sanitized,
+  };
+
+  return {
+    session: {
+      ...session,
+      draftAnswersByPassage: nextDrafts,
+      // Explicitly preserve original start and deadline timestamps
+      startedAtMs: session.startedAtMs,
+      deadlineAtMs: session.deadlineAtMs,
+      durationSeconds: session.durationSeconds || PLACEMENT_DURATION_SECONDS,
+    },
+    accepted: true,
+    lateRejected: false,
+    abandonedRejected: false,
+  };
+}
+
+/**
+ * Automatically finalizes a placement session when the 20-minute timer reaches zero.
+ * - Preserves all previously completed steps (`session.steps`).
+ * - Grades the currently active passage (if any) using only answers selected before the deadline,
+ *   marking all unanswered questions as incorrect.
+ * - Computes the final CEFR level using the unchanged `calculateConservativeRecommendation` algorithm.
+ * - Idempotent: calling multiple times on an already completed session returns the same result.
+ * - Rejects abandoned sessions so an abandoned session can never be finalized.
+ */
+export function finalizePlacementSessionOnTimeout(
+  session: PlacementSession,
+  passageBank: ReadingLesson[] = DIAGNOSTIC_PASSAGES,
+  preDeadlineActiveAnswers?: Record<string, string>,
+  customSettings?: Partial<PlacementSettings>,
+  nowMs: number = Date.now()
+): {
+  session: PlacementSession;
+  finalStepResult: PlacementStepResult | null;
+  wasAlreadyCompleted: boolean;
+} {
+  if (session.status === 'abandoned') {
+    throw new Error('Placement session has been abandoned and cannot be finalized.');
+  }
+  const settings = resolvePlacementSettings(customSettings);
+
+  if (session.status === 'completed') {
+    return {
+      session,
+      finalStepResult: session.steps[session.steps.length - 1] || null,
+      wasAlreadyCompleted: true,
+    };
+  }
+
+  const nowIso = new Date(nowMs).toISOString();
+  let updatedSteps = [...session.steps];
+  let finalStepResult: PlacementStepResult | null =
+    updatedSteps[updatedSteps.length - 1] || null;
+
+  if (session.activePassageId && updatedSteps.length < settings.maxPassages) {
+    const alreadyGraded = updatedSteps.some((s) => s.passageId === session.activePassageId);
+    if (!alreadyGraded) {
+      const activePassage = passageBank.find((p) => p.id === session.activePassageId);
+      if (activePassage) {
+        const storedDrafts = session.draftAnswersByPassage?.[activePassage.id] || {};
+        const effectivePreDeadlineAnswers =
+          preDeadlineActiveAnswers && Object.keys(preDeadlineActiveAnswers).length > 0
+            ? { ...storedDrafts, ...preDeadlineActiveAnswers }
+            : storedDrafts;
+
+        // If this is Passage 1 (no steps completed yet), or if the learner is on an active passage,
+        // grade the active passage with all unanswered questions marked incorrect.
+        const gradedActive = gradeDiagnosticPassage(
+          activePassage,
+          effectivePreDeadlineAnswers,
+          nowIso
+        );
+        updatedSteps = [...updatedSteps, gradedActive].slice(0, settings.maxPassages);
+        finalStepResult = gradedActive;
+      }
+    }
+  }
+
+  const recommendation = calculateConservativeRecommendation(updatedSteps, settings);
+  const timeoutExplanation = recommendation.explanationSummary.startsWith(PLACEMENT_TIMEOUT_MESSAGE)
+    ? recommendation.explanationSummary
+    : `${PLACEMENT_TIMEOUT_MESSAGE} ${recommendation.explanationSummary}`;
+
+  const finalizedSession: PlacementSession = {
+    ...session,
+    status: 'completed',
+    currentLevel: recommendation.recommendedLevel,
+    activePassageId: null,
+    steps: updatedSteps,
+    timedOut: true,
+    finalizedAt: nowIso,
+    recommendedLevel: recommendation.recommendedLevel,
+    recommendedDifficultyScore: recommendation.recommendedDifficultyScore,
+    confidence: recommendation.confidence,
+    explanationSummary: timeoutExplanation,
+    startedAtMs: session.startedAtMs,
+    deadlineAtMs: session.deadlineAtMs,
+    durationSeconds: session.durationSeconds || PLACEMENT_DURATION_SECONDS,
+    updatedAt: nowIso,
+  };
+
+  return {
+    session: finalizedSession,
+    finalStepResult,
+    wasAlreadyCompleted: false,
+  };
+}
+
+/**
  * Applies a submitted diagnostic passage to an active PlacementSession idempotently.
- * Enforces the strict 3-passage cap and prevents duplicate submission of the same passageId.
+ * Enforces the strict 3-passage cap, preserves the original 20-minute deadline across passages,
+ * and prevents duplicate submission of the same passageId.
  */
 export function applyDiagnosticSubmissionToSession(
   session: PlacementSession,
   passage: ReadingLesson,
   answers: Record<string, string>,
   passageBank: ReadingLesson[] = DIAGNOSTIC_PASSAGES,
-  customSettings?: Partial<PlacementSettings>
+  customSettings?: Partial<PlacementSettings>,
+  nowMs: number = Date.now()
 ): {
   session: PlacementSession;
   stepResult: PlacementStepResult;
   nextPassage: ReadingLesson | null;
   wasDuplicate: boolean;
 } {
+  if (session.status === 'abandoned') {
+    throw new Error('Placement session has been abandoned and cannot accept submissions.');
+  }
+
   const settings = resolvePlacementSettings(customSettings);
 
   // Idempotency guard: if this passageId was already graded in this session, return existing state
@@ -570,7 +854,10 @@ export function applyDiagnosticSubmissionToSession(
         session.recommendedDifficultyScore ?? rec.recommendedDifficultyScore,
       confidence: session.confidence || rec.confidence,
       explanationSummary: session.explanationSummary || rec.explanationSummary,
-      updatedAt: new Date().toISOString(),
+      startedAtMs: session.startedAtMs,
+      deadlineAtMs: session.deadlineAtMs,
+      durationSeconds: session.durationSeconds || PLACEMENT_DURATION_SECONDS,
+      updatedAt: new Date(nowMs).toISOString(),
     };
     return {
       session: finalized,
@@ -580,10 +867,13 @@ export function applyDiagnosticSubmissionToSession(
     };
   }
 
-  const stepResult = gradeDiagnosticPassage(passage, answers);
+  const nowIso = new Date(nowMs).toISOString();
+  const stepResult = gradeDiagnosticPassage(passage, answers, nowIso);
   const updatedSteps = [...session.steps, stepResult].slice(0, settings.maxPassages);
   const decision = decideNextDiagnosticPassage(updatedSteps, passageBank, settings);
-  const nowIso = new Date().toISOString();
+
+  const remainingDrafts = { ...(session.draftAnswersByPassage || {}) };
+  delete remainingDrafts[passage.id];
 
   if (decision.shouldComplete || !decision.nextPassage) {
     const recommendation = calculateConservativeRecommendation(updatedSteps, settings);
@@ -593,10 +883,15 @@ export function applyDiagnosticSubmissionToSession(
       currentLevel: recommendation.recommendedLevel,
       activePassageId: null,
       steps: updatedSteps,
+      draftAnswersByPassage: remainingDrafts,
+      finalizedAt: nowIso,
       recommendedLevel: recommendation.recommendedLevel,
       recommendedDifficultyScore: recommendation.recommendedDifficultyScore,
       confidence: recommendation.confidence,
       explanationSummary: recommendation.explanationSummary,
+      startedAtMs: session.startedAtMs,
+      deadlineAtMs: session.deadlineAtMs,
+      durationSeconds: session.durationSeconds || PLACEMENT_DURATION_SECONDS,
       updatedAt: nowIso,
     };
     return {
@@ -613,6 +908,11 @@ export function applyDiagnosticSubmissionToSession(
     currentLevel: decision.nextPassage.level,
     activePassageId: decision.nextPassage.id,
     steps: updatedSteps,
+    draftAnswersByPassage: remainingDrafts,
+    // Strictly preserve original start time and 20-minute deadline when advancing passages
+    startedAtMs: session.startedAtMs,
+    deadlineAtMs: session.deadlineAtMs,
+    durationSeconds: session.durationSeconds || PLACEMENT_DURATION_SECONDS,
     updatedAt: nowIso,
   };
 
@@ -623,3 +923,4 @@ export function applyDiagnosticSubmissionToSession(
     wasDuplicate: false,
   };
 }
+

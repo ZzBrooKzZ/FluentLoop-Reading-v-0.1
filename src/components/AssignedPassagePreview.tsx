@@ -1,7 +1,8 @@
 import React from 'react';
-import { ArrowLeft, BookOpen, Flame, TrendingUp } from 'lucide-react';
+import { ArrowLeft, BookOpen, TrendingUp } from 'lucide-react';
 import { ReadingLesson } from '../types/reading';
 import { CornerBotanicalSprig } from './BotanicalIllustrations';
+import { StreakBadge } from './StreakBadge';
 
 interface ProgressPoint {
   id: string;
@@ -14,6 +15,7 @@ interface AssignedPassagePreviewProps {
   streakDays: number;
   longestStreak?: number;
   studiedToday?: boolean;
+  streakCelebrationKey?: number;
   completedCount: number;
   progressPoints: ProgressPoint[];
   onBack: () => void;
@@ -25,6 +27,7 @@ export const AssignedPassagePreview: React.FC<AssignedPassagePreviewProps> = ({
   streakDays,
   longestStreak = 0,
   studiedToday = false,
+  streakCelebrationKey = 0,
   completedCount,
   progressPoints,
   onBack,
@@ -87,31 +90,14 @@ export const AssignedPassagePreview: React.FC<AssignedPassagePreviewProps> = ({
       </section>
 
       <section className="grid gap-4 md:grid-cols-[0.72fr_1.28fr]" aria-label="Your reading progress">
-        <article className="flex items-center gap-4 rounded-2xl border border-[#E3D7C3] bg-[#F2EDE3] p-5">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#F7E9DC] text-[#A63816]">
-            <Flame className="h-6 w-6" aria-hidden="true" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-bold uppercase tracking-wider text-[#76675B]">
-                Reading streak
-              </p>
-              <span className="font-mono-code text-[11px] font-semibold text-[#76675B] tabular-nums">
-                Best: {effectiveLongestStreak} {effectiveLongestStreak === 1 ? 'day' : 'days'}
-              </span>
-            </div>
-            <p className="mt-0.5 font-display text-2xl font-bold text-[#171615] tabular-nums">
-              {streakDays} {streakDays === 1 ? 'day' : 'days'}
-            </p>
-            <p className="mt-1 text-xs text-[#76675B]">
-              {studiedToday
-                ? 'Studied today — keep your reading rhythm going.'
-                : streakDays > 0
-                ? 'Finish a passage today to extend your streak.'
-                : 'Finish a passage today to begin your streak.'}
-            </p>
-          </div>
-        </article>
+        <StreakBadge
+          variant="card"
+          streakDays={streakDays}
+          longestStreak={effectiveLongestStreak}
+          studiedToday={studiedToday}
+          celebrationKey={streakCelebrationKey}
+          testId="preview-streak-badge"
+        />
 
         <article className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-5">
           <div className="flex items-center justify-between gap-3">
