@@ -250,10 +250,20 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
     }
 
     setIsEvaluating(true);
+    setValidationMessage(null);
     try {
       const graded = await onSubmitAttempt(answers, activeMode);
       clearInProgressAttemptAnswers(effectiveAttemptKey);
+      if (activeMode === 'first') {
+        clearInProgressAttemptAnswers(`inprog-${lessonId}`);
+      }
       setSubmittedResult(graded);
+    } catch (err: any) {
+      setValidationMessage(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not reach the grading server. Your answers and in-progress attempt are safely saved — please check your connection and try submitting again.'
+      );
     } finally {
       setIsEvaluating(false);
     }
@@ -262,9 +272,16 @@ export const QuestionAssessment: React.FC<QuestionAssessmentProps> = ({
   const handleRetryNeedsReview = async () => {
     if (isEvaluating) return;
     setIsEvaluating(true);
+    setValidationMessage(null);
     try {
       const graded = await onSubmitAttempt(answers, activeMode);
       setSubmittedResult(graded);
+    } catch (err: any) {
+      setValidationMessage(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not reach the grading server. Your answers are safely saved — please check your connection and try submitting again.'
+      );
     } finally {
       setIsEvaluating(false);
     }

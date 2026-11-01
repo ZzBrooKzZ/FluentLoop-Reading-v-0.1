@@ -1,25 +1,15 @@
-import { CEFRLevel, ComprehensionQuestion, ReadingLesson } from '../types/reading';
+import {
+  CEFRLevel,
+  CEFR_TARGET_WORD_RANGES,
+  CEFR_VOCAB_TARGET_RANGES,
+  ComprehensionQuestion,
+  ReadingLesson,
+} from '../types/reading';
 import { LEGACY_A2_B1_EXTENSIONS } from './batches/legacyA2B1Extensions';
 import { LEGACY_B2_EXTENSIONS } from './batches/legacyB2Extensions';
 import { LEGACY_C1_EXTENSIONS } from './batches/legacyC1Extensions';
 
-export const CEFR_VOCAB_TARGET_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
-  A1: { min: 8, max: 12 },
-  A2: { min: 12, max: 16 },
-  B1: { min: 16, max: 22 },
-  B2: { min: 20, max: 28 },
-  C1: { min: 25, max: 35 },
-  C2: { min: 28, max: 40 },
-};
-
-export const CEFR_TARGET_WORD_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
-  A1: { min: 150, max: 220 },
-  A2: { min: 250, max: 350 },
-  B1: { min: 400, max: 600 },
-  B2: { min: 650, max: 860 },
-  C1: { min: 850, max: 1050 },
-  C2: { min: 1050, max: 1250 },
-};
+export { CEFR_VOCAB_TARGET_RANGES, CEFR_TARGET_WORD_RANGES };
 
 interface LessonExtensionSpec {
   extraParagraphs: string[];

@@ -1,7 +1,7 @@
 # Firebase App Hosting configuration for FluentLoop Reading (Next.js App Router)
 runConfig:
   minInstances: 0
-  maxInstances: 10
+  maxInstances: 3
   concurrency: 80
   cpu: 1
   memoryMiB: 1024
@@ -11,13 +11,17 @@ env:
     secret: GEMINI_API_KEY
     availability:
       - RUNTIME
+  - variable: PLACEMENT_GUEST_SECRET
+    secret: PLACEMENT_GUEST_SECRET
+    availability:
+      - RUNTIME
   - variable: GEMINI_GRADING_MODEL
     value: gemini-3-flash-preview
     availability:
       - BUILD
       - RUNTIME
   - variable: NEXT_PUBLIC_SITE_URL
-    value: https://ais-pre-m5smnqvfyxyrlvrkl76egf-965456113659.europe-west2.run.app
+    value: https://fluentloop.space
     availability:
       - BUILD
       - RUNTIME

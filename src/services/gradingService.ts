@@ -621,9 +621,19 @@ export async function gradeLessonAttemptLayered(
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 25000);
         try {
+          let idToken: string | undefined;
+          try {
+            const { auth } = await import('../lib/firebase');
+            if (auth.currentUser && !auth.currentUser.isAnonymous) {
+              idToken = await auth.currentUser.getIdToken();
+            }
+          } catch {}
           const response = await fetch('/api/grade-answers', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+            },
             body: JSON.stringify({
               lessonId: lesson.id,
               items: uncachedBatchItems,

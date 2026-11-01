@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for generating package-lock.json, auditing production dependencies, configuring NEXT_PUBLIC_SITE_URL to the Shared App URL in apphosting.yaml, creating a preconfigured Cloud Secret Manager & Firebase App Hosting secret provisioning script for GEMINI_API_KEY, and deploying firestore.rules to the live Firestore database.",
-  "updatedAt":  "2026-10-26T23:46:52.640424269Z",
+  "summary":  "Complete revised Phase 1 Security Hardening Specification addressing client bundle isolation (severing the validationService -> ieltsAcademicUpgrade -> legacyExtensions import chain and adding production chunk verification), the firestore.rules attemptType fix, strict 5-step guest HMAC verification order before Firestore reads, and retry-safe pure Firestore placement transactions.",
+  "updatedAt":  "2026-10-31T19:20:29.465277339Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -1,22 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyBearerToken } from '@/src/server/firebaseAdmin';
+import { requireVerifiedAdminAuth } from '@/src/server/firebaseAdmin';
+import { readJsonBodyWithLimit } from '@/src/server/placementToken';
 
 export const runtime = 'nodejs';
+
+// Maximum request payload size (5 MB) enforced before JSON parsing
+const MAX_UPLOAD_REQUEST_BYTES = 5 * 1024 * 1024;
 
 // Maximum raw file size for inline data-URL storage (700 KB raw -> ~933 KB base64, safely under Firestore's 1 MiB document limit)
 const MAX_INLINE_IMAGE_BYTES = 700 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
-    const verified = await verifyBearerToken(req.headers.get('authorization'));
-    if (!verified || !verified.isAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: Verified administrator token required.' },
-        { status: 403 }
-      );
+    const authCheck = await requireVerifiedAdminAuth(req.headers.get('authorization'));
+    if (!authCheck.ok) {
+      return NextResponse.json({ error: authCheck.error }, { status: authCheck.status });
     }
 
-    const body = await req.json();
+    const parsed = await readJsonBodyWithLimit<any>(req, MAX_UPLOAD_REQUEST_BYTES);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: parsed.status });
+    }
+
+    const body = parsed.data;
     const { dataUrl, mimeType, sizeBytes } = body || {};
     const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
     if (!mimeType || !allowedTypes.includes(mimeType)) {

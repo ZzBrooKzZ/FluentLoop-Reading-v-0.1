@@ -3,7 +3,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Default-Deny Safety Net
+    // Global Default-Deny Safety Net (blocks all unmatched collections including
+    // server-only authoritative_lessons, placement_sessions, and placement_user_index)
     match /{document=**} {
       allow read, write: if false;
     }
@@ -26,7 +27,9 @@ service cloud.firestore {
     }
 
     function isVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.firebase.sign_in_provider == 'google.com';
     }
 
     function isAdmin() {
@@ -52,8 +55,7 @@ service cloud.firestore {
         'uid', 'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
         'fontSize', 'completedCount', 'averageAccuracy', 'createdAt', 'updatedAt'
       ]) &&
-      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
-      data.uid == request.auth.uid &&
+      isValidId(data.uid) &&
       data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
       isValidLevel(data.preferredLevel) &&
       (!data.keys().hasAny(['startingLevel']) || isValidLevel(data.startingLevel)) &&
@@ -93,7 +95,7 @@ service cloud.firestore {
       data.illustrationAlt is string && data.illustrationAlt.size() >= 1 && data.illustrationAlt.size() <= 500 &&
       data.vocabularyJson is string && data.vocabularyJson.size() >= 2 && data.vocabularyJson.size() <= 150000 &&
       data.questionsJson is string && data.questionsJson.size() >= 2 && data.questionsJson.size() <= 150000 &&
-      isValidId(data.authorId) && data.authorId == request.auth.uid &&
+      isValidId(data.authorId) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -106,11 +108,11 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'id', 'userId', 'lessonId', 'lessonTitle', 'level', 'topic',
-        'status', 'score', 'totalQuestions', 'accuracy',
+        'status', 'attemptType', 'score', 'totalQuestions', 'accuracy',
         'answersJson', 'questionTypeStatsJson', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.id) &&
-      isValidId(data.userId) && data.userId == request.auth.uid &&
+      isValidId(data.userId) &&
       isValidId(data.lessonId) &&
       data.lessonTitle is string && data.lessonTitle.size() >= 1 && data.lessonTitle.size() <= 300 &&
       isValidLevel(data.level) &&
@@ -118,6 +120,11 @@ service cloud.firestore {
       data.status is string && data.status.size() >= 9 && data.status.size() <= 12 && (
         data.status == 'in_progress' || data.status == 'completed'
       ) &&
+      (!data.keys().hasAny(['attemptType']) || (
+        data.attemptType is string && (
+          data.attemptType == 'first' || data.attemptType == 'practice' || data.attemptType == 'review'
+        )
+      )) &&
       data.score is int && data.score >= 0 && data.score <= 200 &&
       data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 200 &&
       data.accuracy is number && data.accuracy >= 0 && data.accuracy <= 100 &&
@@ -141,7 +148,7 @@ service cloud.firestore {
         'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.id) &&
-      isValidId(data.userId) && data.userId == request.auth.uid &&
+      isValidId(data.userId) &&
       isValidId(data.lessonId) &&
       data.lessonTitle is string && data.lessonTitle.size() >= 1 && data.lessonTitle.size() <= 300 &&
       data.word is string && data.word.size() >= 1 && data.word.size() <= 150 &&
@@ -158,50 +165,49 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
-    // 1. Admins Collection (Read-only for self/admin; managed via console/bootstrap)
+    // 1. Admins Collection (Read-only for verified Google self/admin; managed via console/bootstrap)
     match /admins/{adminId} {
-      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow get: if isVerified() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
       allow list: if false;
       allow create, update, delete: if false;
     }
 
-    // 2. Users Collection (Strict Owner / Admin Isolation)
+    // 2. Users Collection (Strict Verified Google Owner / Admin Isolation & Immutable Identity)
     match /users/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow get: if isVerified() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
       allow list: if false;
       allow create: if isVerified() && isValidId(userId) && request.auth.uid == userId &&
         isValidUserProfile(incoming()) &&
+        incoming().uid == userId &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(userId) && isValidUserProfile(incoming()) && (
-        (
-          request.auth.uid == userId &&
-          incoming().uid == existing().uid &&
-          incoming().createdAt == existing().createdAt &&
-          incoming().updatedAt == request.time &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
-            'fontSize', 'completedCount', 'averageAccuracy', 'updatedAt'
-          ]) &&
-          (!existing().keys().hasAny(['startingLevel']) || incoming().startingLevel == existing().startingLevel)
-        ) || isAdmin()
-      );
+      allow update: if isVerified() && isValidId(userId) && isValidUserProfile(incoming()) &&
+        incoming().uid == userId &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
+          'fontSize', 'completedCount', 'averageAccuracy', 'updatedAt'
+        ]) &&
+        (!existing().keys().hasAny(['startingLevel']) || incoming().startingLevel == existing().startingLevel) &&
+        (request.auth.uid == userId || isAdmin());
       allow delete: if false;
     }
 
-    // 3. Lessons Collection (Public read for published lessons; Admin-only write)
+    // 3. Lessons Collection (Admin-only direct client access; learners fetch sanitized lessons via /api/lessons)
     match /lessons/{lessonId} {
-      allow get: if isValidId(lessonId) && (existing().status == 'published' || isAdmin());
-      allow list: if existing().status == 'published' || (
-        isVerified() && request.auth.token.email == 'megritarek19@gmail.com'
-      );
+      allow get: if isValidId(lessonId) && isAdmin();
+      allow list: if isAdmin();
       allow create: if isValidId(lessonId) && isValidLesson(incoming()) &&
         incoming().id == lessonId &&
+        incoming().authorId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         isAdmin();
       allow update: if isValidId(lessonId) && isValidLesson(incoming()) &&
         incoming().id == existing().id &&
+        (incoming().authorId == existing().authorId || incoming().authorId == request.auth.uid) &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         isAdmin() &&
@@ -213,62 +219,51 @@ service cloud.firestore {
       allow delete: if isValidId(lessonId) && isAdmin();
     }
 
-    // 4. Attempts Collection (Owner-scoped queries and terminal state lock)
+    // 4. Attempts Collection (Verified Google Owner-scoped queries, immutable identity & terminal state lock)
     match /attempts/{attemptId} {
-      allow get: if isSignedIn() && isValidId(attemptId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (
-        existing().userId == request.auth.uid ||
-        (isVerified() && request.auth.token.email == 'megritarek19@gmail.com')
-      );
+      allow get: if isVerified() && isValidId(attemptId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isVerified() && (existing().userId == request.auth.uid || isAdmin());
       allow create: if isVerified() && isValidId(attemptId) && isValidAttempt(incoming()) &&
         incoming().id == attemptId &&
+        incoming().userId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(attemptId) && isValidAttempt(incoming()) && (
-        (
-          existing().userId == request.auth.uid &&
-          existing().status == 'in_progress' &&
-          incoming().id == existing().id &&
-          incoming().userId == existing().userId &&
-          incoming().lessonId == existing().lessonId &&
-          incoming().createdAt == existing().createdAt &&
-          incoming().updatedAt == request.time &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'status', 'score', 'totalQuestions', 'accuracy',
-            'answersJson', 'questionTypeStatsJson', 'updatedAt'
-          ])
-        ) || isAdmin()
-      );
+      allow update: if isVerified() && isValidId(attemptId) && isValidAttempt(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().lessonId == existing().lessonId &&
+        (!existing().keys().hasAny(['attemptType']) || incoming().attemptType == existing().attemptType) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'attemptType', 'score', 'totalQuestions', 'accuracy',
+          'answersJson', 'questionTypeStatsJson', 'updatedAt'
+        ]) &&
+        ((existing().userId == request.auth.uid && existing().status == 'in_progress') || isAdmin());
       allow delete: if isVerified() && isValidId(attemptId) && (existing().userId == request.auth.uid || isAdmin());
     }
 
-    // 5. Vocabulary Collection (Owner-scoped personal vocabulary bank)
+    // 5. Vocabulary Collection (Verified Google Owner-scoped personal vocabulary bank & immutable identity)
     match /vocabulary/{vocabId} {
-      allow get: if isSignedIn() && isValidId(vocabId) && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (
-        existing().userId == request.auth.uid ||
-        (isVerified() && request.auth.token.email == 'megritarek19@gmail.com')
-      );
+      allow get: if isVerified() && isValidId(vocabId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isVerified() && (existing().userId == request.auth.uid || isAdmin());
       allow create: if isVerified() && isValidId(vocabId) && isValidVocab(incoming()) &&
         incoming().id == vocabId &&
+        incoming().userId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(vocabId) && isValidVocab(incoming()) && (
-        (
-          existing().userId == request.auth.uid &&
-          incoming().id == existing().id &&
-          incoming().userId == existing().userId &&
-          incoming().lessonId == existing().lessonId &&
-          incoming().word == existing().word &&
-          incoming().createdAt == existing().createdAt &&
-          incoming().updatedAt == request.time &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'masteryLevel', 'nextReviewAt', 'updatedAt'
-          ])
-        ) || isAdmin()
-      );
+      allow update: if isVerified() && isValidId(vocabId) && isValidVocab(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().lessonId == existing().lessonId &&
+        incoming().word == existing().word &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'masteryLevel', 'nextReviewAt', 'updatedAt'
+        ]) &&
+        (existing().userId == request.auth.uid || isAdmin());
       allow delete: if isVerified() && isValidId(vocabId) && (existing().userId == request.auth.uid || isAdmin());
     }
   }
 }
-

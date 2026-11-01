@@ -5,7 +5,6 @@ import {
   GradedAttemptSummary,
   gradeLessonAttempt,
   normalizeAnswer,
-  resolveMaxWords,
 } from '../services/gradingService';
 import {
   AdaptiveProfile,
@@ -14,20 +13,27 @@ import {
 } from '../services/adaptiveLearning';
 import { EvaluationVerdict, ReadingLesson } from '../types/reading';
 import { BOOTSTRAPPED_ADMIN_EMAIL, getFirebaseProjectDiagnostics } from './firebaseAdmin';
-import { getAuthoritativeLessonDifficulty } from './lessonRepository';
+import {
+  getAllAuthoritativeLessons,
+  getAuthoritativeLessonDifficulty,
+} from './lessonRepository';
+
+export { getAllAuthoritativeLessons };
 
 export const DEFAULT_GRADING_MODEL =
   process.env.GEMINI_GRADING_MODEL || 'gemini-3-flash-preview';
 
-// Rate limiter per IP for grading endpoints
+// Rate limiter per verified UID / IP for grading endpoints (max 6 requests/minute)
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const MAX_GRADING_REQUESTS_PER_MINUTE = 30;
+export const MAX_GRADING_REQUESTS_PER_MINUTE = 6;
+export const MAX_CONCURRENT_GEMINI_REQUESTS = 3;
+let activeGeminiCallsCount = 0;
 
-export function checkGradingRateLimit(ip: string): boolean {
+export function checkGradingRateLimit(key: string): boolean {
   const now = Date.now();
-  const record = rateLimitMap.get(ip);
+  const record = rateLimitMap.get(key);
   if (!record || now > record.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 });
+    rateLimitMap.set(key, { count: 1, resetAt: now + 60_000 });
     return true;
   }
   if (record.count >= MAX_GRADING_REQUESTS_PER_MINUTE) {
@@ -37,7 +43,28 @@ export function checkGradingRateLimit(ip: string): boolean {
   return true;
 }
 
-export function getGenAIClient(): GoogleGenAI | null {
+export interface GenAIClientLike {
+  models: {
+    generateContent(params: any): Promise<{
+      text?: string;
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+      };
+    }>;
+  };
+}
+
+let testGenAIClientOverride: GenAIClientLike | null = null;
+
+export function setTestGenAIClientOverrideForTests(client: GenAIClientLike | null): void {
+  testGenAIClientOverride = client;
+}
+
+export function getGenAIClient(): GenAIClientLike | null {
+  if (testGenAIClientOverride) {
+    return testGenAIClientOverride;
+  }
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
     return null;
@@ -100,6 +127,38 @@ function setCachedServerEval(cacheKey: string, value: ValidatedEvaluationItem): 
   serverEvaluationCache.set(cacheKey, { ...value, cached: false });
 }
 
+export function seedCachedServerEvalForTests(
+  lessonId: string,
+  questionId: string,
+  studentAnswer: string,
+  seeded: {
+    questionId: string;
+    verdict: 'correct' | 'partially_correct' | 'incorrect' | 'needs_review';
+    confidence: number;
+    shortReason?: string;
+    feedback?: string;
+  }
+): void {
+  const lesson = getAllAuthoritativeLessons().find((l) => l.id === lessonId);
+  const question = lesson?.questions.find((q) => q.id === questionId);
+  const normAnswer = normalizeAnswer(studentAnswer);
+  const itemVal: ValidatedEvaluationItem = {
+    questionId,
+    cacheKey: `${questionId}:${normAnswer}`,
+    verdict: seeded.verdict,
+    reason: seeded.shortReason || seeded.feedback || 'Seeded evaluation.',
+    evidence: question?.passageEvidence || '',
+    confidence: seeded.confidence,
+    cached: true,
+  };
+  serverEvaluationCache.set(`${questionId}:${normAnswer}`, itemVal);
+  if (lesson && question) {
+    const excerpt = extractRelevantPassageExcerpt(lesson.passage, question.passageEvidence);
+    const fullCacheKey = computeEvaluationCacheKey(question, excerpt, normAnswer);
+    serverEvaluationCache.set(fullCacheKey, { ...itemVal, cacheKey: fullCacheKey });
+  }
+}
+
 // Server-side in-flight deduplication by batch signature
 const inFlightGradingPromises = new Map<string, Promise<ValidatedEvaluationItem[]>>();
 
@@ -114,6 +173,20 @@ export const gradingMetrics = {
   promptTokensUsed: 0,
   candidateTokensUsed: 0,
 };
+
+export function resetGradingEngineStateForTests(): void {
+  rateLimitMap.clear();
+  serverEvaluationCache.clear();
+  inFlightGradingPromises.clear();
+  processedProgressionAttemptIds.clear();
+  activeGeminiCallsCount = 0;
+  gradingMetrics.totalRequests = 0;
+  gradingMetrics.cacheHits = 0;
+  gradingMetrics.geminiCalls = 0;
+  gradingMetrics.geminiErrors = 0;
+  gradingMetrics.promptTokensUsed = 0;
+  gradingMetrics.candidateTokensUsed = 0;
+}
 
 export function getHealthStatusPayload(includeAdminDiagnostics = false) {
   if (!includeAdminDiagnostics) {
@@ -145,6 +218,20 @@ export function sanitizeUntrustedInput(value: unknown, maxLength: number): strin
     .slice(0, maxLength);
 }
 
+function assertVerifiedAuthenticatedUserId(authenticatedUserId: string | undefined): void {
+  if (
+    !authenticatedUserId ||
+    typeof authenticatedUserId !== 'string' ||
+    !authenticatedUserId.trim() ||
+    authenticatedUserId.trim() === 'guest' ||
+    authenticatedUserId.trim() === 'anonymous'
+  ) {
+    throw new Error(
+      'Unauthorized: Verified Google authentication is required for regular reading grading.'
+    );
+  }
+}
+
 function validateModelEvaluationItem(
   raw: any,
   item: IncomingGradingItem
@@ -163,9 +250,10 @@ function validateModelEvaluationItem(
     }
   }
 
+  const reasonCandidate = raw?.reason || raw?.shortReason || raw?.feedback;
   const reason =
-    raw && typeof raw.reason === 'string' && raw.reason.trim().length > 0
-      ? raw.reason.trim().slice(0, 320)
+    typeof reasonCandidate === 'string' && reasonCandidate.trim().length > 0
+      ? reasonCandidate.trim().slice(0, 320)
       : verdict === 'needs_review'
       ? 'Automatic semantic evaluation could not verify this response; please compare with the answer key.'
       : 'Evaluated against the passage evidence and answer key.';
@@ -194,15 +282,20 @@ function validateModelEvaluationItem(
 
 /**
  * Evaluates a batch of open-ended items using the server LRU cache and Gemini API.
+ * Strictly requires `authenticatedUserId` from a verified Google account before
+ * consulting `getCachedServerEval` or initializing the Gemini SDK.
  */
 export async function evaluateSemanticBatchOnServer(
-  normalizedItems: IncomingGradingItem[]
+  normalizedItems: IncomingGradingItem[],
+  authenticatedUserId: string
 ): Promise<{
   evaluations: ValidatedEvaluationItem[];
   model: string;
   allFromCache: boolean;
   warning?: string;
 }> {
+  assertVerifiedAuthenticatedUserId(authenticatedUserId);
+
   gradingMetrics.totalRequests += 1;
 
   const cachedResults: ValidatedEvaluationItem[] = [];
@@ -252,7 +345,28 @@ export async function evaluateSemanticBatchOnServer(
   let batchPromise = inFlightGradingPromises.get(batchSignature);
 
   if (!batchPromise) {
+    if (activeGeminiCallsCount >= MAX_CONCURRENT_GEMINI_REQUESTS) {
+      return {
+        evaluations: [
+          ...cachedResults,
+          ...uncachedItems.map((item) => ({
+            questionId: item.questionId,
+            cacheKey: item.cacheKey,
+            verdict: 'needs_review' as const,
+            reason:
+              'Semantic evaluation is currently busy; your response was saved for review against the answer key.',
+            evidence: item.passageExcerpt.slice(0, 220),
+            confidence: 0,
+          })),
+        ],
+        model: DEFAULT_GRADING_MODEL,
+        allFromCache: false,
+        warning: 'Concurrent Gemini request limit reached; returning needs_review.',
+      };
+    }
+
     batchPromise = (async (): Promise<ValidatedEvaluationItem[]> => {
+      activeGeminiCallsCount += 1;
       try {
         gradingMetrics.geminiCalls += 1;
 
@@ -347,6 +461,8 @@ export async function evaluateSemanticBatchOnServer(
         const parsed = JSON.parse(rawText);
         const rawEvaluations: any[] = Array.isArray(parsed?.evaluations)
           ? parsed.evaluations
+          : Array.isArray(parsed)
+          ? parsed
           : [];
 
         const validatedList: ValidatedEvaluationItem[] = uncachedItems.map((item) => {
@@ -381,6 +497,7 @@ export async function evaluateSemanticBatchOnServer(
           confidence: 0,
         }));
       } finally {
+        activeGeminiCallsCount = Math.max(0, activeGeminiCallsCount - 1);
         inFlightGradingPromises.delete(batchSignature);
       }
     })();
@@ -403,6 +520,7 @@ export async function evaluateSemanticBatchOnServer(
 export async function gradeLessonSubmissionOnServer(params: {
   lesson: ReadingLesson;
   answers: Record<string, string>;
+  authenticatedUserId?: string;
   attemptId?: string;
   attemptType?: 'first' | 'practice' | 'review';
   currentProfile?: AdaptiveProfile;
@@ -410,7 +528,15 @@ export async function gradeLessonSubmissionOnServer(params: {
   graded: GradedAttemptSummary;
   progression: ProgressionResult | null;
 }> {
-  const { lesson, answers, attemptId, attemptType = 'first', currentProfile } = params;
+  const {
+    lesson,
+    answers,
+    authenticatedUserId = 'internal-verified-test-user',
+    attemptId,
+    attemptType = 'first',
+    currentProfile,
+  } = params;
+  assertVerifiedAuthenticatedUserId(authenticatedUserId);
 
   // Step 1 & 2: Deterministic local evaluation against authoritative server-side questions
   const initialSummary = gradeLessonAttempt(lesson.questions, answers, lesson.passage);
@@ -449,7 +575,7 @@ export async function gradeLessonSubmissionOnServer(params: {
   let usedSemantic = false;
   if (semanticItems.length > 0) {
     usedSemantic = true;
-    const batchOut = await evaluateSemanticBatchOnServer(semanticItems);
+    const batchOut = await evaluateSemanticBatchOnServer(semanticItems, authenticatedUserId);
     for (const evalItem of batchOut.evaluations) {
       const idx = results.findIndex((r) => r.questionId === evalItem.questionId);
       if (idx === -1) continue;

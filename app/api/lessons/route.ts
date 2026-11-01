@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyBearerToken } from '@/src/server/firebaseAdmin';
+import { requireVerifiedGoogleAuth } from '@/src/server/firebaseAdmin';
 import {
-  getAllAuthoritativeLessons,
+  getAllAuthoritativeLessonsPersistent,
   sanitizeLessonForLearner,
 } from '@/src/server/lessonRepository';
 
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
-  const verifiedUser = await verifyBearerToken(req.headers.get('authorization'));
-  const allLessons = getAllAuthoritativeLessons();
+  const authCheck = await requireVerifiedGoogleAuth(req.headers.get('authorization'));
+  if (!authCheck.ok) {
+    return NextResponse.json({ error: authCheck.error }, { status: authCheck.status });
+  }
 
-  if (verifiedUser?.isAdmin) {
+  const allLessons = await getAllAuthoritativeLessonsPersistent();
+
+  if (authCheck.user.isAdmin) {
     return NextResponse.json({
       lessons: allLessons,
       sanitized: false,
@@ -19,7 +23,7 @@ export async function GET(req: NextRequest) {
   }
 
   const publishedLearnerLessons = allLessons
-    .filter((l) => l.status === 'published')
+    .filter((l) => l.status === 'published' && !l.isDiagnostic)
     .map(sanitizeLessonForLearner);
 
   return NextResponse.json({

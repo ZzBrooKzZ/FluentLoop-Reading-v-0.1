@@ -1,6 +1,11 @@
-import { AcademicTopic, CEFRLevel, ReadingLesson } from '../types/reading';
+import {
+  AcademicTopic,
+  CEFRLevel,
+  CEFR_TARGET_WORD_RANGES,
+  CEFR_VOCAB_TARGET_RANGES,
+  ReadingLesson,
+} from '../types/reading';
 import { getEditorialIllustrationUri } from '../utils/illustrations';
-import { CEFR_TARGET_WORD_RANGES, CEFR_VOCAB_TARGET_RANGES } from '../data/ieltsAcademicUpgrade';
 
 export const ALL_CEFR_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 

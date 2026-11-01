@@ -666,12 +666,13 @@ test('security audit: public health payload omits sensitive internals and client
     'PlacementAssessmentView.tsx must not import placementEngine (which pulls in diagnosticPassages)'
   );
 
-  // 4. Upload image route unconditionally enforces verified admin token
+  // 4. Upload image route unconditionally enforces verified admin token and byte limits before JSON parsing
   const uploadRouteSource = fs.readFileSync(
     path.join(process.cwd(), 'app/api/admin/upload-image/route.ts'),
     'utf8'
   );
-  assert.ok(uploadRouteSource.includes('!verified || !verified.isAdmin'));
+  assert.ok(uploadRouteSource.includes('requireVerifiedAdminAuth'));
+  assert.ok(uploadRouteSource.includes('readJsonBodyWithLimit'));
   assert.equal(uploadRouteSource.includes('if (authHeader)'), false);
 });
 

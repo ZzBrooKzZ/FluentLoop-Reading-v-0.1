@@ -41,6 +41,7 @@ import {
   getDoc,
   serverTimestamp,
   setDoc,
+  updateDoc,
   deleteDoc,
   onSnapshot,
   query,
@@ -84,14 +85,11 @@ import {
 import {
   GradedAttemptSummary,
   GradedQuestionResult,
-  gradeLessonAttemptLayered,
   QUESTION_TYPE_LABELS,
 } from './services/gradingService';
 import { computeAdaptiveRecommendation } from './services/adaptiveEngine';
 import {
-  applyAttemptProgression,
   createAdaptiveProfile,
-  getLessonDifficulty,
   selectNextLesson,
 } from './services/adaptiveLearning';
 import {
@@ -159,6 +157,7 @@ const STORAGE_KEYS = {
   SHOW_ARABIC: 'fluentloop_show_arabic_v1',
   PLACEMENT_SESSION: 'fluentloop_placement_session_v1',
   PLACEMENT_PASSAGE: 'fluentloop_placement_passage_v1',
+  PLACEMENT_GUEST_TOKEN: 'fluentloop_placement_guest_token_v1',
   PLACEMENT_LEVEL: 'fluentloop_placement_level_v1',
   PLACEMENT_ABANDONED_EVENT: 'fluentloop_placement_abandoned_event_v1',
   ABANDONED_PLACEMENT_SESSIONS: 'fluentloop_abandoned_placement_sessions_v1',
@@ -208,6 +207,7 @@ function purgeLocalLearnerCache() {
   localStorage.removeItem(STORAGE_KEYS.LAST_LESSON_ID);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+  localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_LEVEL);
   localStorage.removeItem(STORAGE_KEYS.PLACEMENT_ABANDONED_EVENT);
   localStorage.removeItem(STORAGE_KEYS.ABANDONED_PLACEMENT_SESSIONS);
@@ -255,6 +255,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [placementSession, setPlacementSession] = useState<PlacementSession | null>(null);
   const placementSessionRef = useRef<PlacementSession | null>(null);
   placementSessionRef.current = placementSession;
+  const [placementGuestToken, setPlacementGuestToken] = useState<string | null>(null);
+  const placementGuestTokenRef = useRef<string | null>(null);
+  placementGuestTokenRef.current = placementGuestToken;
   const [placementActivePassage, setPlacementActivePassage] = useState<ReadingLesson | null>(null);
   const [isPlacementSubmitting, setIsPlacementSubmitting] = useState<boolean>(false);
   const [placementServerClockOffsetMs, setPlacementServerClockOffsetMs] = useState<number>(0);
@@ -276,6 +279,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [completionFilter, setCompletionFilter] = useState<'ALL' | 'UNREAD' | 'COMPLETED'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const [authenticatedLessons, setAuthenticatedLessons] = useState<ReadingLesson[]>(
+    initialSanitizedLessons || []
+  );
   const [customLessonsMap, setCustomLessonsMap] = useState<Record<string, ReadingLesson>>({});
   const [adminAuthoritativeLessons, setAdminAuthoritativeLessons] = useState<ReadingLesson[] | null>(
     null
@@ -426,6 +432,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     // - Completed (`completed`) placement assessments are strictly preserved.
     let wasUnfinishedPlacementInterruptedByRefresh = false;
     try {
+      const savedGuestToken = localStorage.getItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+      if (savedGuestToken) {
+        placementGuestTokenRef.current = savedGuestToken;
+        setPlacementGuestToken(savedGuestToken);
+      }
       const rawPlacementSession = localStorage.getItem(STORAGE_KEYS.PLACEMENT_SESSION);
       if (rawPlacementSession) {
         const parsedSession = JSON.parse(rawPlacementSession) as PlacementSession;
@@ -443,6 +454,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             clearAllPlacementInProgressAnswers(parsedSession.id);
             localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
             localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+            localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+            placementGuestTokenRef.current = null;
+            setPlacementGuestToken(null);
             recordAbandonedPlacementSessionLocally(parsedSession.id, 'refresh');
             setPlacementSession(null);
             setPlacementActivePassage(null);
@@ -453,11 +467,15 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
             fetch('/api/placement/abandon', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                ...(savedGuestToken ? { 'X-Placement-Guest-Token': savedGuestToken } : {}),
+              },
               body: JSON.stringify({
                 sessionId: parsedSession.id,
                 userId: auth.currentUser?.uid || parsedSession.userId || 'guest',
                 reason: 'refresh',
+                guestToken: savedGuestToken || undefined,
               }),
             }).catch(() => {});
           }
@@ -844,10 +862,44 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     return () => unsub();
   }, []);
 
+  const isVerifiedGoogleUser = Boolean(
+    currentUser &&
+      !currentUser.isAnonymous &&
+      currentUser.emailVerified &&
+      currentUser.providerData.some((p) => p?.providerId === 'google.com')
+  );
+
   const isAdminVerified = Boolean(
-    currentUser?.email &&
+    isVerifiedGoogleUser &&
+      currentUser?.email &&
       currentUser.email.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
   );
+
+  // Load sanitized published regular reading lessons exclusively for verified Google users
+  useEffect(() => {
+    if (!authReady) return;
+    if (!currentUser || !isVerifiedGoogleUser) {
+      setAuthenticatedLessons([]);
+      return;
+    }
+    let cancelled = false;
+    currentUser
+      .getIdToken()
+      .then(async (token) => {
+        const resp = await fetch('/api/lessons', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok || cancelled) return;
+        const data = await resp.json().catch(() => null);
+        if (!cancelled && data && Array.isArray(data.lessons)) {
+          setAuthenticatedLessons(data.lessons);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, currentUser, isVerifiedGoogleUser]);
 
   // Load authoritative lessons, diagnostic passages, and admin health status when admin is verified
   useEffect(() => {
@@ -881,34 +933,6 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       })
       .catch(() => {});
   }, [currentUser, isAdminVerified, activeTab]);
-
-  useEffect(() => {
-    if (!authReady) return;
-    const q = query(collection(db, 'lessons'), where('status', '==', 'published'));
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        const remoteMap: Record<string, ReadingLesson> = {};
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as ReadingLesson;
-          if (data && data.id) {
-            remoteMap[data.id] = data;
-          }
-        });
-        if (Object.keys(remoteMap).length > 0) {
-          setCustomLessonsMap((prev) => {
-            const merged = { ...prev, ...remoteMap };
-            localStorage.setItem(STORAGE_KEYS.CUSTOM_LESSONS, JSON.stringify(merged));
-            return merged;
-          });
-        }
-      },
-      (err) => {
-        console.warn('Lessons snapshot warning:', err);
-      }
-    );
-    return () => unsub();
-  }, [authReady]);
 
   useEffect(() => {
     if (!authReady || !currentUser || currentUser.isAnonymous) return;
@@ -993,10 +1017,22 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       (snap) => {
         const remoteVocab: SavedVocabularyItem[] = [];
         snap.forEach((d) => {
-          const data = d.data() as SavedVocabularyItem;
+          const data = d.data() as any;
           remoteVocab.push({
-            ...data,
+            ...(data as SavedVocabularyItem),
             id: typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : d.id,
+            createdAt:
+              typeof data?.createdAt?.toDate === 'function'
+                ? data.createdAt.toDate().toISOString()
+                : typeof data?.createdAt === 'string'
+                ? data.createdAt
+                : new Date().toISOString(),
+            updatedAt:
+              typeof data?.updatedAt?.toDate === 'function'
+                ? data.updatedAt.toDate().toISOString()
+                : typeof data?.updatedAt === 'string'
+                ? data.updatedAt
+                : new Date().toISOString(),
           });
         });
         setSavedVocab((prev) => {
@@ -1087,8 +1123,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     if (isAdminVerified && adminAuthoritativeLessons && adminAuthoritativeLessons.length > 0) {
       return adminAuthoritativeLessons;
     }
-    return initialSanitizedLessons || [];
-  }, [isAdminVerified, adminAuthoritativeLessons, initialSanitizedLessons]);
+    if (isVerifiedGoogleUser && authenticatedLessons.length > 0) {
+      return authenticatedLessons;
+    }
+    return isVerifiedGoogleUser ? initialSanitizedLessons || [] : [];
+  }, [isAdminVerified, isVerifiedGoogleUser, adminAuthoritativeLessons, authenticatedLessons, initialSanitizedLessons]);
 
   const allLessons: ReadingLesson[] = useMemo(() => {
     const map = new Map<string, ReadingLesson>();
@@ -1246,6 +1285,37 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     }
   };
 
+  const buildPlacementRequestHeaders = async (
+    includeGuestToken = true
+  ): Promise<Record<string, string>> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeUser = auth.currentUser;
+    if (
+      activeUser &&
+      !activeUser.isAnonymous &&
+      activeUser.emailVerified &&
+      activeUser.providerData.some((p) => p?.providerId === 'google.com')
+    ) {
+      try {
+        const idToken = await activeUser.getIdToken();
+        if (idToken) {
+          headers.Authorization = `Bearer ${idToken}`;
+        }
+      } catch {}
+    }
+    if (includeGuestToken) {
+      const guestTok =
+        placementGuestTokenRef.current ||
+        (typeof window !== 'undefined'
+          ? localStorage.getItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN)
+          : null);
+      if (guestTok) {
+        headers['X-Placement-Guest-Token'] = guestTok;
+      }
+    }
+    return headers;
+  };
+
   const handleResetAsNewUser = async () => {
     purgeLocalLearnerCache();
     localStorage.setItem(STORAGE_KEYS.FRESH_NEW_USER_MODE, 'true');
@@ -1254,6 +1324,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setPlacementLevel(null);
     setCurrentLevel('B1');
     setPlacementSession(null);
+    setPlacementGuestToken(null);
+    placementGuestTokenRef.current = null;
     setPlacementActivePassage(null);
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
@@ -1302,9 +1374,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setPlacementLevel(null);
     setCurrentLevel('B1');
     setPlacementSession(null);
+    setPlacementGuestToken(null);
+    placementGuestTokenRef.current = null;
     setPlacementActivePassage(null);
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
+    setAuthenticatedLessons([]);
     attemptsRef.current = [];
     setAttempts([]);
     setSavedVocab([]);
@@ -1330,10 +1405,18 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     if (activePlacement && activePlacement.status === 'in_progress') {
       const abandonedId = activePlacement.id;
       const ownerId = auth.currentUser?.uid || activePlacement.userId || 'guest';
+      const guestTok =
+        placementGuestTokenRef.current ||
+        (typeof window !== 'undefined'
+          ? localStorage.getItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN)
+          : null);
       stopPlacementSessionTimer(abandonedId);
       clearAllPlacementInProgressAnswers(abandonedId);
       localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
       localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+      localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+      placementGuestTokenRef.current = null;
+      setPlacementGuestToken(null);
       recordAbandonedPlacementSessionLocally(abandonedId, reason);
       placementSessionRef.current = null;
       setPlacementSession(null);
@@ -1341,14 +1424,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setPendingStepFeedback(null);
       setPlacementSubmissionError(null);
       setShowPlacementAssessment(false);
-      fetch('/api/placement/abandon', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: abandonedId,
-          userId: ownerId,
-          reason,
-        }),
+      void buildPlacementRequestHeaders(false).then((headers) => {
+        if (guestTok) {
+          headers['X-Placement-Guest-Token'] = guestTok;
+        }
+        return fetch('/api/placement/abandon', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            sessionId: abandonedId,
+            userId: ownerId,
+            reason,
+            guestToken: guestTok || undefined,
+          }),
+        });
       }).catch(() => {});
       return;
     }
@@ -1393,15 +1482,24 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         questionTypeStats: existingAttempt.questionTypeStats || {},
       });
       // Fetch authoritative review evaluation from server so answer keys and explanations are shown
-      fetch('/api/attempts/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lessonId: lesson.id,
-          answers: existingAttempt.answers || {},
-          attemptType: 'review',
-        }),
-      })
+      (auth.currentUser && !auth.currentUser.isAnonymous
+        ? auth.currentUser.getIdToken()
+        : Promise.resolve(null)
+      )
+        .then((token) =>
+          fetch('/api/attempts/submit', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              lessonId: lesson.id,
+              answers: existingAttempt.answers || {},
+              attemptType: 'review',
+            }),
+          })
+        )
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           if (data?.graded) {
@@ -1680,34 +1778,46 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     } | null = null;
 
     try {
+      const idToken =
+        auth.currentUser && !auth.currentUser.isAnonymous
+          ? await auth.currentUser.getIdToken()
+          : null;
       const resp = await fetch('/api/attempts/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({
           lessonId: activeLesson.id,
           attemptId,
           attemptType: effectiveAttemptType,
           answers,
           profile: clientProfileSnapshot,
-          customLesson: customLessonsMap[activeLesson.id] || undefined,
         }),
       });
       if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
+        const errPayload = await resp.json().catch(() => null);
+        throw new Error(
+          errPayload?.error ||
+            'Could not reach the grading server to evaluate your answers. Your draft answers and in-progress attempt are safely saved — please check your connection and try submitting again.'
+        );
       }
       const data = await resp.json();
+      if (!data?.graded) {
+        throw new Error(
+          'Received an incomplete grading response. Your draft answers and in-progress attempt are safely saved — please try submitting again.'
+        );
+      }
       graded = data.graded;
       serverProgression = data.progression || null;
-    } catch {
-      graded = await gradeLessonAttemptLayered(activeLesson, answers);
-      serverProgression = applyAttemptProgression({
-        profile: clientProfileSnapshot,
-        attemptType: effectiveAttemptType,
-        completed: true,
-        pendingReviewCount: graded.results.filter((r) => r.verdict === 'needs_review').length,
-        accuracy: graded.accuracy,
-        lessonDifficulty: getLessonDifficulty(activeLesson),
-      });
+    } catch (err: any) {
+      const retryMessage =
+        err instanceof Error && err.message && !err.message.startsWith('Failed to fetch')
+          ? err.message
+          : 'Could not reach the grading server to evaluate your answers. Your draft answers and in-progress attempt are safely saved — please check your connection and try submitting again.';
+      setCompletionNotice(retryMessage);
+      throw new Error(retryMessage);
     }
 
     // Review mode does not create a new attempt or alter progression
@@ -1755,10 +1865,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     });
 
     if (!recordOutcome.persisted && !recordOutcome.duplicateIgnored) {
-      setCompletionNotice(
-        'Could not save your reading progress to the cloud. Please check your connection and try submitting again.'
-      );
-      return graded;
+      const cloudSaveError =
+        'Could not save your reading progress to the cloud. Your answers and in-progress attempt are preserved — please check your connection and try submitting again.';
+      setCompletionNotice(cloudSaveError);
+      throw new Error(cloudSaveError);
     }
 
     if (!recordOutcome.duplicateIgnored) {
@@ -1988,9 +2098,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         }
       } catch {}
 
+      const startHeaders = await buildPlacementRequestHeaders(true);
       const resp = await fetch('/api/placement/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: startHeaders,
         body: JSON.stringify({
           sessionId: isExistingCompletedAndOwned ? currentPlacement.id : undefined,
           abandonSessionId:
@@ -2002,14 +2113,24 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           userId: activeUid || 'guest',
           isAnonymous: !auth.currentUser || auth.currentUser.isAnonymous,
           forceNew: !isExistingCompletedAndOwned,
+          guestToken: startHeaders['X-Placement-Guest-Token'] || undefined,
         }),
       });
       if (!resp.ok) {
+        const errPayload = await resp.json().catch(() => null);
+        if (resp.status === 429 && errPayload?.error) {
+          setCompletionNotice(errPayload.error);
+        }
         throw new Error(`HTTP ${resp.status}`);
       }
       const data = await resp.json();
       if (typeof data.serverNowMs === 'number') {
         setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
+      }
+      if (typeof data.guestToken === 'string' && data.guestToken.trim()) {
+        placementGuestTokenRef.current = data.guestToken;
+        setPlacementGuestToken(data.guestToken);
+        localStorage.setItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN, data.guestToken);
       }
       if (data.session) {
         clearAllPlacementInProgressAnswers(data.session.id);
@@ -2063,16 +2184,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     });
 
     if (!placementSession || placementSession.status !== 'in_progress') return;
-    fetch('/api/placement/draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: placementSession.id,
-        userId: auth.currentUser?.uid || placementSession.userId,
-        passageId,
-        answers: draftAnswers,
-      }),
-    })
+    void buildPlacementRequestHeaders(true)
+      .then((headers) =>
+        fetch('/api/placement/draft', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            sessionId: placementSession.id,
+            userId: auth.currentUser?.uid || placementSession.userId,
+            passageId,
+            answers: draftAnswers,
+            guestToken: headers['X-Placement-Guest-Token'] || undefined,
+          }),
+        })
+      )
       .then(async (resp) => {
         const data = await resp.json().catch(() => null);
         if (!data) return;
@@ -2084,6 +2209,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           clearAllPlacementInProgressAnswers(placementSession.id);
           localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
           localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+          localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+          placementGuestTokenRef.current = null;
+          setPlacementGuestToken(null);
           placementSessionRef.current = null;
           setPlacementSession(null);
           setPlacementActivePassage(null);
@@ -2120,9 +2248,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         passageId: s.passageId,
         answers: s.answers || {},
       }));
+      const submitHeaders = await buildPlacementRequestHeaders(true);
       const resp = await fetch('/api/placement/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: submitHeaders,
         body: JSON.stringify({
           sessionId: placementSession.id,
           userId: auth.currentUser?.uid || placementSession.userId,
@@ -2136,6 +2265,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           autoSubmitOnTimeout: true,
           recoveryStartedAtMs: placementSession.startedAtMs,
           priorStepsForRecovery,
+          guestToken: submitHeaders['X-Placement-Guest-Token'] || undefined,
         }),
       });
       const data = await resp.json().catch(() => null);
@@ -2144,6 +2274,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         clearAllPlacementInProgressAnswers(placementSession.id);
         localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
         localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+        placementGuestTokenRef.current = null;
+        setPlacementGuestToken(null);
         placementSessionRef.current = null;
         setPlacementSession(null);
         setPlacementActivePassage(null);
@@ -2157,6 +2290,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       }
       if (typeof data?.serverNowMs === 'number') {
         setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
+      }
+      if (typeof data?.guestToken === 'string' && data.guestToken.trim()) {
+        placementGuestTokenRef.current = data.guestToken;
+        setPlacementGuestToken(data.guestToken);
+        localStorage.setItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN, data.guestToken);
       }
       if (data?.session) {
         const updatedSession = data.session as PlacementSession;
@@ -2203,9 +2341,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         passageId: s.passageId,
         answers: s.answers || {},
       }));
+      const submitHeaders = await buildPlacementRequestHeaders(true);
       const resp = await fetch('/api/placement/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: submitHeaders,
         body: JSON.stringify({
           sessionId: placementSession.id,
           userId: auth.currentUser?.uid || placementSession.userId,
@@ -2213,6 +2352,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           answers,
           recoveryStartedAtMs: placementSession.startedAtMs,
           priorStepsForRecovery,
+          guestToken: submitHeaders['X-Placement-Guest-Token'] || undefined,
         }),
       });
       const data = await resp.json().catch(() => null);
@@ -2221,6 +2361,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         clearAllPlacementInProgressAnswers(placementSession.id);
         localStorage.removeItem(STORAGE_KEYS.PLACEMENT_SESSION);
         localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+        placementGuestTokenRef.current = null;
+        setPlacementGuestToken(null);
         placementSessionRef.current = null;
         setPlacementSession(null);
         setPlacementActivePassage(null);
@@ -2242,6 +2385,11 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       if (typeof data.serverNowMs === 'number') {
         setPlacementServerClockOffsetMs(data.serverNowMs - Date.now());
       }
+      if (typeof data.guestToken === 'string' && data.guestToken.trim()) {
+        placementGuestTokenRef.current = data.guestToken;
+        setPlacementGuestToken(data.guestToken);
+        localStorage.setItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN, data.guestToken);
+      }
 
       const updatedSession = data.session as PlacementSession;
       const nextPassage = (data.nextPassage || null) as ReadingLesson | null;
@@ -2249,8 +2397,6 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setPlacementSession(updatedSession);
       localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(updatedSession));
 
-      // If the user was already signed in before taking the test and just completed the assessment,
-      // record their recommended placement level immediately so the header updates from 'Level: Unknown'
       if (
         updatedSession.status === 'completed' &&
         updatedSession.recommendedLevel &&
@@ -2271,8 +2417,6 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         localStorage.removeItem(STORAGE_KEYS.PLACEMENT_PASSAGE);
       }
 
-      // If the submission was auto-finalized due to timeout or late submission, skip intermediate step summary
-      // and transition directly to the final recommendation screen with the timeout message.
       if (data.timedOut || data.lateRejected || updatedSession.timedOut) {
         setPendingStepFeedback(null);
       } else if (data.stepResult) {
@@ -2315,8 +2459,6 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
 
     // 2. If not signed in with a non-anonymous Google account, trigger a single direct Google Sign-In popup
-    // (Using signInWithPopup directly avoids the 2nd-popup browser blocker when an account already exists,
-    // and /api/placement/link below links the placement session to finalUid.)
     if (!linkedUser || linkedUser.isAnonymous) {
       try {
         const signInCred = await signInWithPopup(auth, googleProvider);
@@ -2339,44 +2481,67 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
           return;
         }
+        return;
       }
     }
 
-    // 2. Link placement session on server if user authenticated
-    const finalUid = linkedUser && !linkedUser.isAnonymous ? linkedUser.uid : auth.currentUser?.uid;
-    if (finalUid) {
-      try {
-        const token =
-          linkedUser && !linkedUser.isAnonymous
-            ? await linkedUser.getIdToken()
-            : await auth.currentUser?.getIdToken();
-        const recoverySteps = placementSession.steps.map((s) => ({
-          passageId: s.passageId,
-          answers: s.answers || {},
-        }));
-        const linkResp = await fetch('/api/placement/link', {
+    if (!linkedUser || linkedUser.isAnonymous) {
+      return;
+    }
+
+    // 3. Link placement session on server and fetch sanitized reading catalog for the newly signed-in Google user
+    const finalUid = linkedUser.uid;
+    let newlyLoadedLessons: ReadingLesson[] = authenticatedLessons;
+    try {
+      const token = await linkedUser.getIdToken();
+      const guestTok =
+        placementGuestTokenRef.current ||
+        localStorage.getItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+      const recoverySteps = placementSession.steps.map((s) => ({
+        passageId: s.passageId,
+        answers: s.answers || {},
+      }));
+      const [linkResp, lessonsResp] = await Promise.all([
+        fetch('/api/placement/link', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(guestTok ? { 'X-Placement-Guest-Token': guestTok } : {}),
           },
           body: JSON.stringify({
             sessionId: placementSession.id,
             targetUserId: finalUid,
             recoverySteps,
+            guestToken: guestTok || undefined,
           }),
-        });
-        if (linkResp.ok) {
-          const linkData = await linkResp.json();
-          if (linkData.session) {
-            setPlacementSession(linkData.session);
-            localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(linkData.session));
-          }
+        }),
+        newlyLoadedLessons.length === 0 && token
+          ? fetch('/api/lessons', {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+          : Promise.resolve(null),
+      ]);
+      if (linkResp.ok) {
+        const linkData = await linkResp.json();
+        if (linkData.session) {
+          setPlacementSession(linkData.session);
+          localStorage.setItem(STORAGE_KEYS.PLACEMENT_SESSION, JSON.stringify(linkData.session));
         }
-      } catch {}
-    }
+        localStorage.removeItem(STORAGE_KEYS.PLACEMENT_GUEST_TOKEN);
+        placementGuestTokenRef.current = null;
+        setPlacementGuestToken(null);
+      }
+      if (lessonsResp && lessonsResp.ok) {
+        const lessonsData = await lessonsResp.json().catch(() => null);
+        if (lessonsData && Array.isArray(lessonsData.lessons)) {
+          newlyLoadedLessons = lessonsData.lessons;
+          setAuthenticatedLessons(lessonsData.lessons);
+        }
+      }
+    } catch {}
 
-    // 3. Apply recommended placement level to learner profile and start personalized reading journey
+    // 4. Apply recommended placement level to learner profile and start personalized reading journey
     localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
     setPlacementLevel(recLevel);
     setStartingLevel(recLevel);
@@ -2392,42 +2557,48 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     localStorage.setItem('fluentloop_pass_streak_v1', '0');
     localStorage.setItem('fluentloop_fail_streak_v1', '0');
 
-    if (linkedUser && !linkedUser.isAnonymous) {
-      try {
-        const profileRef = doc(db, 'users', linkedUser.uid);
-        const snapshot = await getDoc(profileRef);
-        const now = serverTimestamp();
-        const existingData = snapshot.exists() ? snapshot.data() : null;
-        await setDoc(
-          profileRef,
-          {
-            uid: linkedUser.uid,
-            displayName: linkedUser.displayName || existingData?.displayName || 'Academic Reader',
-            preferredLevel: recLevel,
-            startingLevel: existingData?.startingLevel || recLevel,
-            placementLevel: recLevel,
-            showArabicTranslation:
-              typeof existingData?.showArabicTranslation === 'boolean'
-                ? existingData.showArabicTranslation
-                : showArabicTranslation,
-            fontSize: (existingData?.fontSize as any) || fontSize,
-            completedCount:
-              typeof existingData?.completedCount === 'number'
-                ? existingData.completedCount
-                : calculateReadingStreak(attemptsRef.current).completedCount,
-            averageAccuracy:
-              typeof existingData?.averageAccuracy === 'number' ? existingData.averageAccuracy : 0,
-            createdAt: existingData?.createdAt || now,
-            updatedAt: now,
-          },
-          { merge: true }
-        );
-      } catch (err) {
-        console.warn('Could not sync placement level to Firestore:', err);
-      }
+    try {
+      const profileRef = doc(db, 'users', linkedUser.uid);
+      const snapshot = await getDoc(profileRef);
+      const now = serverTimestamp();
+      const existingData = snapshot.exists() ? snapshot.data() : null;
+      await setDoc(
+        profileRef,
+        {
+          uid: linkedUser.uid,
+          displayName: linkedUser.displayName || existingData?.displayName || 'Academic Reader',
+          preferredLevel: recLevel,
+          startingLevel: existingData?.startingLevel || recLevel,
+          placementLevel: recLevel,
+          showArabicTranslation:
+            typeof existingData?.showArabicTranslation === 'boolean'
+              ? existingData.showArabicTranslation
+              : showArabicTranslation,
+          fontSize: (existingData?.fontSize as any) || fontSize,
+          completedCount:
+            typeof existingData?.completedCount === 'number'
+              ? existingData.completedCount
+              : calculateReadingStreak(attemptsRef.current).completedCount,
+          averageAccuracy:
+            typeof existingData?.averageAccuracy === 'number' ? existingData.averageAccuracy : 0,
+          createdAt: existingData?.createdAt || now,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('Could not sync placement level to Firestore:', err);
     }
 
-    handleStartNextPassage(undefined, recLevel);
+    const candidateFromLoaded =
+      newlyLoadedLessons.length > 0
+        ? selectNextLesson(
+            createAdaptiveProfile(recLevel),
+            newlyLoadedLessons.filter((l) => l.status === 'published'),
+            attemptsRef.current
+          ) || undefined
+        : undefined;
+    handleStartNextPassage(candidateFromLoaded, recLevel);
   };
 
   const handleSaveAdminLesson = async (lesson: ReadingLesson) => {
@@ -2503,15 +2674,55 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const handleUpdateVocabMastery = async (item: SavedVocabularyItem, delta: number) => {
     const nextLevel = Math.max(0, Math.min(5, item.masteryLevel + delta));
     const daysOut = Math.pow(2, nextLevel);
+    const nextReviewAtIso = new Date(Date.now() + daysOut * 86400_000).toISOString();
     const updatedItem: SavedVocabularyItem = {
       ...item,
       masteryLevel: nextLevel,
-      nextReviewAt: new Date(Date.now() + daysOut * 86400_000).toISOString(),
+      nextReviewAt: nextReviewAtIso,
       updatedAt: new Date().toISOString(),
     };
     const nextList = savedVocab.map((v) => (v.id === item.id ? updatedItem : v));
     setSavedVocab(nextList);
     localStorage.setItem(STORAGE_KEYS.VOCABULARY, JSON.stringify(nextList));
+
+    if (currentUser && !currentUser.isAnonymous) {
+      const vocabPath = `vocabulary/${item.id}`;
+      try {
+        await updateDoc(doc(db, 'vocabulary', item.id), {
+          masteryLevel: nextLevel,
+          nextReviewAt: nextReviewAtIso,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err: any) {
+        const code = typeof err?.code === 'string' ? err.code : '';
+        if (code === 'not-found' || String(err?.message || '').includes('No document to update')) {
+          try {
+            await setDoc(doc(db, 'vocabulary', item.id), {
+              id: item.id,
+              userId: currentUser.uid,
+              lessonId: item.lessonId,
+              lessonTitle: item.lessonTitle,
+              word: item.word,
+              partOfSpeech: item.partOfSpeech,
+              simpleDefinition: item.simpleDefinition,
+              contextMeaning: item.contextMeaning,
+              originalSentence: item.originalSentence,
+              exampleSentence: item.exampleSentence,
+              synonyms: item.synonyms || '',
+              arabicTranslation: item.arabicTranslation || '',
+              masteryLevel: nextLevel,
+              nextReviewAt: nextReviewAtIso,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } catch (createErr) {
+            handleFirestoreError(createErr, OperationType.CREATE, vocabPath);
+          }
+        } else {
+          handleFirestoreError(err, OperationType.UPDATE, vocabPath);
+        }
+      }
+    }
   };
 
   const handleRemoveSavedVocab = async (id: string) => {
@@ -2612,7 +2823,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           </button>
 
           {/* Zone 2: Primary Navigation Links (Desktop) */}
-          {startingLevel !== null ? (
+          {isVerifiedGoogleUser && startingLevel !== null ? (
             <nav
               className="hidden lg:flex items-center gap-1 xl:gap-1.5 overflow-x-auto"
               aria-label="Learner workspace navigation"
@@ -2895,7 +3106,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               </div>
             )}
 
-            {startingLevel !== null ? (
+            {isVerifiedGoogleUser && startingLevel !== null ? (
               <>
                 {(
                   [
@@ -3099,7 +3310,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               abandonActivePlacementAssessment('navigation_exit');
             }}
           />
-        ) : (showLandingHome || startingLevel === null) &&
+        ) : (showLandingHome || startingLevel === null || !isVerifiedGoogleUser) &&
           !(isAdminVerified && !showLandingHome && (activeTab === 'admin' || activeTab === 'docs')) ? (
           <section
             className="mx-auto w-full max-w-6xl py-4 sm:py-10"
@@ -3139,7 +3350,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        if (startingLevel !== null) {
+                        if (isVerifiedGoogleUser && startingLevel !== null) {
                           setShowLandingHome(false);
                           setActiveTab('library');
                           window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3149,7 +3360,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       }}
                       className="inline-flex min-h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-[#A63816] px-6 py-3.5 text-sm font-bold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#842B12] focus:outline-none focus:ring-4 focus:ring-[#A63816]/30 cursor-pointer"
                     >
-                      {startingLevel !== null
+                      {isVerifiedGoogleUser && startingLevel !== null
                         ? 'Continue to My Reading'
                         : placementSession && placementSession.status === 'completed'
                         ? 'View Your Placement Result'

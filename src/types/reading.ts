@@ -1,5 +1,23 @@
 export type CEFRLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 
+export const CEFR_VOCAB_TARGET_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
+  A1: { min: 8, max: 12 },
+  A2: { min: 12, max: 16 },
+  B1: { min: 16, max: 22 },
+  B2: { min: 20, max: 28 },
+  C1: { min: 25, max: 35 },
+  C2: { min: 28, max: 40 },
+};
+
+export const CEFR_TARGET_WORD_RANGES: Record<CEFRLevel, { min: number; max: number }> = {
+  A1: { min: 150, max: 220 },
+  A2: { min: 250, max: 350 },
+  B1: { min: 400, max: 600 },
+  B2: { min: 650, max: 860 },
+  C1: { min: 850, max: 1050 },
+  C2: { min: 1050, max: 1250 },
+};
+
 export type AcademicTopic =
   | 'Science and technology'
   | 'Environmental science'
@@ -132,6 +150,7 @@ export type PlacementAbandonReason =
 export interface PlacementSession {
   id: string;
   userId: string;
+  ownerType?: 'guest' | 'user' | 'authenticated';
   isAnonymous: boolean;
   status: 'in_progress' | 'completed' | 'abandoned';
   currentLevel: CEFRLevel;
@@ -158,6 +177,14 @@ export interface PlacementSession {
   confidence?: 'high' | 'moderate' | 'conservative';
   explanationSummary?: string;
   linkedToUserId?: string;
+  guestTokenHash?: string;
+  guestTokenIssuedAtMs?: number;
+  guestTokenExpiresAtMs?: number;
+  guestTokenRevoked?: boolean;
+  draftSaveCount?: number;
+  submitAttemptCount?: number;
+  revision?: number;
+  expiresAtMs?: number;
   createdAt: string;
   updatedAt: string;
 }

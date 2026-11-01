@@ -1,90 +1,116 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireVerifiedGoogleAuth } from '@/src/server/firebaseAdmin';
 import { sanitizeUntrustedInput } from '@/src/server/gradingEngine';
-import { savePlacementDraftAnswersOnServer } from '@/src/server/placementRepository';
-import { PLACEMENT_TIMEOUT_MESSAGE } from '@/src/services/placementEngine';
+import {
+  PlacementHttpError,
+  savePlacementDraftAnswersPersistent,
+} from '@/src/server/placementRepository';
+import {
+  checkPlacementSessionOperationLimit,
+  extractPlacementGuestToken,
+  extractTrustedClientIp,
+  PlacementSecretConfigurationError,
+  readJsonBodyWithLimit,
+  resolvePlacementGuestSecret,
+  verifyPlacementGuestToken,
+} from '@/src/server/placementToken';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
-  let body: any = {};
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
-  }
+    resolvePlacementGuestSecret();
 
-  const sessionId = sanitizeUntrustedInput(body?.sessionId, 128);
-  const passageId = sanitizeUntrustedInput(body?.passageId, 128);
-  const userId =
-    typeof body?.userId === 'string'
-      ? sanitizeUntrustedInput(body.userId, 128)
-      : 'guest';
-
-  if (!sessionId || !passageId) {
-    return NextResponse.json(
-      { error: 'Both sessionId and passageId are required.' },
-      { status: 400 }
-    );
-  }
-
-  const rawAnswers = body?.answers && typeof body.answers === 'object' ? body.answers : {};
-  const sanitizedAnswers: Record<string, string> = {};
-  for (const [qId, val] of Object.entries(rawAnswers)) {
-    if (typeof val === 'string') {
-      sanitizedAnswers[sanitizeUntrustedInput(qId, 100)] = sanitizeUntrustedInput(val, 400);
+    const parsed = await readJsonBodyWithLimit<any>(req, 16_384);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: parsed.status });
     }
-  }
+    const body = parsed.data;
 
-  try {
-    const result = savePlacementDraftAnswersOnServer({
-      sessionId,
-      userId,
-      passageId,
-      answers: sanitizedAnswers,
-    });
-
-    if (result.lateRejected) {
+    const sessionId = sanitizeUntrustedInput(body?.sessionId, 128);
+    const passageId = sanitizeUntrustedInput(body?.passageId, 128);
+    if (!sessionId || !passageId) {
       return NextResponse.json(
+        { error: 'sessionId and passageId are required.' },
+        { status: 400 }
+      );
+    }
+
+    // Authenticate caller: either verified Google user OR guest with HMAC-verified session token
+    const rawAuthHeader = req.headers.get('authorization');
+    let verifiedUid: string | null = null;
+    let verifiedGuestTokenHash: string | null = null;
+
+    if (rawAuthHeader && rawAuthHeader.trim() !== '') {
+      const authCheck = await requireVerifiedGoogleAuth(rawAuthHeader);
+      if (!authCheck.ok) {
+        return NextResponse.json({ error: authCheck.error }, { status: authCheck.status });
+      }
+      verifiedUid = authCheck.user.uid;
+      if (
+        typeof body?.userId === 'string' &&
+        body.userId.trim() !== '' &&
+        body.userId.trim() !== 'guest' &&
+        body.userId.trim() !== verifiedUid
+      ) {
+        return NextResponse.json(
+          { error: 'Forbidden: Client-supplied userId does not match authenticated user.' },
+          { status: 403 }
+        );
+      }
+    } else {
+      // Steps 1 & 2 of the 5-step guest verification order (in-memory, zero Firestore reads)
+      const rawGuestToken = extractPlacementGuestToken(req, body);
+      const guestCheck = verifyPlacementGuestToken(rawGuestToken, sessionId);
+      if (!guestCheck.ok) {
+        return NextResponse.json({ error: guestCheck.error }, { status: guestCheck.status });
+      }
+      verifiedGuestTokenHash = guestCheck.tokenHash;
+    }
+
+    // Per-session operation rate limit (max 30 drafts/min) before Firestore read
+    const trustedClientIp = extractTrustedClientIp(req);
+    const opLimit = checkPlacementSessionOperationLimit({
+      sessionId,
+      trustedClientIp,
+      verifiedUid,
+      operation: 'draft',
+    });
+    if (!opLimit.allowed) {
+      return NextResponse.json(
+        { error: opLimit.reason },
         {
-          accepted: false,
-          lateRejected: true,
-          error: PLACEMENT_TIMEOUT_MESSAGE,
-          session: result.session,
-          serverNowMs: result.serverNowMs,
-        },
-        {
-          status: 409,
-          headers: {
-            'X-Robots-Tag': 'noindex, nofollow, noarchive',
-            'Cache-Control': 'no-store',
-          },
+          status: 429,
+          headers: { 'Retry-After': String(opLimit.retryAfterSeconds) },
         }
       );
     }
 
-    return NextResponse.json(
-      {
-        accepted: true,
-        lateRejected: false,
-        session: result.session,
-        serverNowMs: result.serverNowMs,
-      },
-      {
-        headers: {
-          'X-Robots-Tag': 'noindex, nofollow, noarchive',
-          'Cache-Control': 'no-store',
-        },
-      }
-    );
+    // Steps 3, 4 & 5: Retrieve session from Firestore, verify stored hash/ownership, and persist draft
+    const result = await savePlacementDraftAnswersPersistent({
+      sessionId,
+      passageId,
+      answers: body?.answers,
+      verifiedUid,
+      verifiedGuestTokenHash,
+    });
+    return NextResponse.json(result, { status: 200 });
   } catch (err: any) {
-    const message = err?.message || 'Failed to save placement draft answers.';
-    if (message.includes('abandoned')) {
+    if (err instanceof PlacementSecretConfigurationError) {
       return NextResponse.json(
-        { error: message, abandoned: true, accepted: false },
-        { status: 409 }
+        { error: err.message, code: err.code },
+        { status: err.status }
       );
     }
-    const status = message.includes('different learner account') ? 403 : 404;
-    return NextResponse.json({ error: message }, { status });
+    if (err instanceof PlacementHttpError) {
+      return NextResponse.json(
+        { error: err.message, ...(err.extra || {}) },
+        { status: err.status }
+      );
+    }
+    return NextResponse.json(
+      { error: err?.message || 'Failed to save placement draft answers.' },
+      { status: 400 }
+    );
   }
 }

@@ -1,76 +1,90 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyBearerToken } from '@/src/server/firebaseAdmin';
+import { requireVerifiedGoogleAuth } from '@/src/server/firebaseAdmin';
 import { sanitizeUntrustedInput } from '@/src/server/gradingEngine';
-import { linkPlacementSessionToUserOnServer } from '@/src/server/placementRepository';
-import { createAdaptiveProfile } from '@/src/services/adaptiveLearning';
+import {
+  linkPlacementSessionToUserPersistent,
+  PlacementHttpError,
+} from '@/src/server/placementRepository';
+import {
+  extractPlacementGuestToken,
+  PlacementSecretConfigurationError,
+  readJsonBodyWithLimit,
+  resolvePlacementGuestSecret,
+  verifyPlacementGuestToken,
+} from '@/src/server/placementToken';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
-  let body: any = {};
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
-  }
+    resolvePlacementGuestSecret();
 
-  const sessionId = sanitizeUntrustedInput(body?.sessionId, 128);
-  if (!sessionId) {
-    return NextResponse.json({ error: 'sessionId is required.' }, { status: 400 });
-  }
-
-  // Verify token if present, or fall back to verified UID in payload when Admin SDK runs in local/unconfigured dev mode
-  const verified = await verifyBearerToken(req.headers.get('authorization'));
-  const targetUserId =
-    verified?.uid || sanitizeUntrustedInput(body?.targetUserId, 128);
-
-  if (!targetUserId) {
-    return NextResponse.json(
-      { error: 'Authenticated targetUserId is required to link placement session.' },
-      { status: 401 }
-    );
-  }
-
-  const recoverySteps = Array.isArray(body?.recoverySteps)
-    ? body.recoverySteps.slice(0, 3).map((step: any) => ({
-        passageId: sanitizeUntrustedInput(step?.passageId, 128),
-        answers:
-          step?.answers && typeof step.answers === 'object' ? step.answers : {},
-      }))
-    : undefined;
-
-  const linkedSession = linkPlacementSessionToUserOnServer({
-    sessionId,
-    targetUserId,
-    recoverySteps,
-  });
-
-  if (!linkedSession || !linkedSession.recommendedLevel) {
-    return NextResponse.json(
-      { error: 'Completed placement session not found.' },
-      { status: 404 }
-    );
-  }
-
-  const baseProfile = createAdaptiveProfile(linkedSession.recommendedLevel);
-  const initializedAdaptiveProfile = {
-    ...baseProfile,
-    startingLevel: linkedSession.recommendedLevel,
-    currentLevel: linkedSession.recommendedLevel,
-    currentDifficultyScore:
-      linkedSession.recommendedDifficultyScore ?? baseProfile.currentDifficultyScore,
-  };
-
-  return NextResponse.json(
-    {
-      session: linkedSession,
-      adaptiveProfile: initializedAdaptiveProfile,
-    },
-    {
-      headers: {
-        'X-Robots-Tag': 'noindex, nofollow, noarchive',
-        'Cache-Control': 'no-store',
-      },
+    // 1. Require strict Google-only authentication to link a placement session
+    const authCheck = await requireVerifiedGoogleAuth(req.headers.get('authorization'));
+    if (!authCheck.ok) {
+      return NextResponse.json({ error: authCheck.error }, { status: authCheck.status });
     }
-  );
+    const verifiedUser = authCheck.user;
+
+    const parsed = await readJsonBodyWithLimit<any>(req, 16_384);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: parsed.status });
+    }
+    const body = parsed.data;
+
+    const sessionId = sanitizeUntrustedInput(body?.sessionId, 128);
+    if (!sessionId) {
+      return NextResponse.json({ error: 'sessionId is required.' }, { status: 400 });
+    }
+
+    // Reject conflicting targetUserId
+    if (
+      typeof body?.targetUserId === 'string' &&
+      body.targetUserId.trim() !== '' &&
+      body.targetUserId.trim() !== verifiedUser.uid
+    ) {
+      return NextResponse.json(
+        { error: 'Forbidden: targetUserId does not match authenticated Google account.' },
+        { status: 403 }
+      );
+    }
+
+    // 2. Verify guestToken locally (Steps 1 & 2) before reading Firestore
+    const rawGuestToken = extractPlacementGuestToken(req, body);
+    if (!rawGuestToken) {
+      return NextResponse.json(
+        { error: 'Missing placement guest token required to link guest placement session.' },
+        { status: 401 }
+      );
+    }
+    const guestCheck = verifyPlacementGuestToken(rawGuestToken, sessionId);
+    if (!guestCheck.ok) {
+      return NextResponse.json({ error: guestCheck.error }, { status: guestCheck.status });
+    }
+
+    // 3. Steps 3, 4 & 5: Retrieve session, verify stored hash, link to verifiedUser.uid, and revoke guest token
+    const linked = await linkPlacementSessionToUserPersistent({
+      sessionId,
+      verifiedUid: verifiedUser.uid,
+      verifiedGuestTokenHash: guestCheck.tokenHash,
+    });
+    return NextResponse.json({ session: linked }, { status: 200 });
+  } catch (err: any) {
+    if (err instanceof PlacementSecretConfigurationError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.status }
+      );
+    }
+    if (err instanceof PlacementHttpError) {
+      return NextResponse.json(
+        { error: err.message, ...(err.extra || {}) },
+        { status: err.status }
+      );
+    }
+    return NextResponse.json(
+      { error: err?.message || 'Placement session could not be linked.' },
+      { status: 400 }
+    );
+  }
 }
