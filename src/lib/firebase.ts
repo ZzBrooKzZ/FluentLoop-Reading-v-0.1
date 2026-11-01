@@ -9,7 +9,30 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+export const CUSTOM_AUTH_DOMAIN = 'fluentloop.space';
+
+export function resolveAuthDomain(
+  hostname?: string | null,
+  defaultAuthDomain: string = firebaseConfig.authDomain
+): string {
+  return hostname === CUSTOM_AUTH_DOMAIN ? CUSTOM_AUTH_DOMAIN : defaultAuthDomain;
+}
+
+export function getFirebaseClientConfig(hostname?: string | null) {
+  const effectiveHostname =
+    hostname !== undefined
+      ? hostname
+      : typeof window !== 'undefined'
+        ? window.location.hostname
+        : undefined;
+
+  return {
+    ...firebaseConfig,
+    authDomain: resolveAuthDomain(effectiveHostname, firebaseConfig.authDomain),
+  };
+}
+
+const app = getApps().length > 0 ? getApps()[0] : initializeApp(getFirebaseClientConfig());
 
 function createFirestoreInstance() {
   try {

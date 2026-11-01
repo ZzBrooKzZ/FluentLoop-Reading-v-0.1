@@ -1186,5 +1186,61 @@ describe('Phase 1 Security Hardening & Persistence Verification Suite', () => {
       new Date(1_700_050_000 * 1000).toISOString()
     );
   });
+
+  it('13. Same-origin Firebase Authentication proxy rewrites and dynamic authDomain resolution preserve config integrity across environments', async () => {
+    const {
+      CUSTOM_AUTH_DOMAIN,
+      resolveAuthDomain,
+      getFirebaseClientConfig,
+    } = await import('../lib/firebase');
+    const rawFirebaseConfig = (await import('../../firebase-applet-config.json')).default;
+    const nextConfigModule = await import('../../next.config.mjs');
+    const nextConfig = nextConfigModule.default;
+
+    assert.equal(CUSTOM_AUTH_DOMAIN, 'fluentloop.space');
+
+    // 1. Custom domain uses fluentloop.space as authDomain while preserving all other Firebase config keys
+    const customDomainConfig = getFirebaseClientConfig('fluentloop.space');
+    assert.equal(customDomainConfig.authDomain, 'fluentloop.space');
+    assert.equal(customDomainConfig.projectId, rawFirebaseConfig.projectId);
+    assert.equal(customDomainConfig.apiKey, rawFirebaseConfig.apiKey);
+    assert.equal(customDomainConfig.appId, rawFirebaseConfig.appId);
+    assert.equal(customDomainConfig.firestoreDatabaseId, rawFirebaseConfig.firestoreDatabaseId);
+    assert.equal(customDomainConfig.oAuthClientId, rawFirebaseConfig.oAuthClientId);
+
+    // 2. AI Studio preview, Firebase hosted.app, localhost, and SSR preserve the default firebaseapp.com authDomain
+    for (const host of [
+      'localhost',
+      '127.0.0.1',
+      'ais-dev-m5smnqvfyxyrlvrkl76egf-965456113659.europe-west2.run.app',
+      'ais-pre-m5smnqvfyxyrlvrkl76egf-965456113659.europe-west2.run.app',
+      'fluentloop-reading--project-3ba42a74-36cc-4dbd-ac7.europe-west4.hosted.app',
+      undefined,
+      null,
+      '',
+    ]) {
+      assert.equal(
+        resolveAuthDomain(host),
+        'project-3ba42a74-36cc-4dbd-ac7.firebaseapp.com',
+        `Expected default authDomain for host: ${String(host)}`
+      );
+      const envConfig = getFirebaseClientConfig(host);
+      assert.equal(envConfig.authDomain, 'project-3ba42a74-36cc-4dbd-ac7.firebaseapp.com');
+    }
+
+    // 3. Next.js rewrites proxy /__/auth/:path* and /__/firebase/:path* to project-3ba42a74-36cc-4dbd-ac7.firebaseapp.com
+    assert.equal(typeof nextConfig.rewrites, 'function');
+    const rewrites = await nextConfig.rewrites();
+    assert.deepEqual(rewrites, [
+      {
+        source: '/__/auth/:path*',
+        destination: 'https://project-3ba42a74-36cc-4dbd-ac7.firebaseapp.com/__/auth/:path*',
+      },
+      {
+        source: '/__/firebase/:path*',
+        destination: 'https://project-3ba42a74-36cc-4dbd-ac7.firebaseapp.com/__/firebase/:path*',
+      },
+    ]);
+  });
 });
 
