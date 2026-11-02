@@ -1667,6 +1667,23 @@ describe('Phase 1 Security Hardening & Persistence Verification Suite', () => {
     assert.equal(apphostingYaml.includes('value: https://fluentloop.space'), true);
     assert.equal(apphostingYaml.includes('NEXT_PUBLIC_GEMINI'), false);
     assert.equal(apphostingYaml.includes('NEXT_PUBLIC_PLACEMENT'), false);
+
+    // 6. Google Search favicon compliance: 1:1 square PNGs (144x144, 96x96), 180x180 apple-touch-icon, and favicon.ico
+    const checkPngDimensions = (relPath: string, expectedSize: number) => {
+      const buf = fs.readFileSync(path.join(process.cwd(), relPath));
+      assert.equal(buf[0], 0x89);
+      assert.equal(buf[1], 0x50);
+      const width = buf.readUInt32BE(16);
+      const height = buf.readUInt32BE(20);
+      assert.equal(width, expectedSize, `${relPath} width must be ${expectedSize}`);
+      assert.equal(height, expectedSize, `${relPath} height must be ${expectedSize}`);
+      assert.equal(width, height, `${relPath} must be 1:1 square`);
+    };
+    checkPngDimensions('public/favicon-144x144.png', 144);
+    checkPngDimensions('public/favicon-96x96.png', 96);
+    checkPngDimensions('public/apple-touch-icon.png', 180);
+    assert.equal(fs.existsSync(path.join(process.cwd(), 'public/favicon.ico')), true);
+    assert.equal(fs.existsSync(path.join(process.cwd(), 'app/icon.svg')), false);
   });
 });
 

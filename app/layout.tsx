@@ -17,9 +17,20 @@ export const metadata: Metadata = {
     canonical: buildCanonicalUrl('/'),
   },
   icons: {
-    icon: '/assets/aistudio/FluentLoop_Open_Book_Infinity_Logo_3809769a.png',
-    shortcut: '/assets/aistudio/FluentLoop_Open_Book_Infinity_Logo_3809769a.png',
-    apple: '/assets/aistudio/FluentLoop_Open_Book_Infinity_Logo_3809769a.png',
+    icon: [
+      {
+        url: buildCanonicalUrl('/favicon-144x144.png'),
+        sizes: '144x144',
+        type: 'image/png',
+      },
+    ],
+    apple: [
+      {
+        url: buildCanonicalUrl('/apple-touch-icon.png'),
+        sizes: '180x180',
+        type: 'image/png',
+      },
+    ],
   },
   openGraph: {
     type: 'website',
