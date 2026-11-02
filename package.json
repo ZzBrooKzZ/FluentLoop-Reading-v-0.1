@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@next/third-parties": "^16.4.4",
     "@tailwindcss/postcss": "^4.3.3",
     "dotenv": "^17.2.3",
     "firebase": "^13.1.0",

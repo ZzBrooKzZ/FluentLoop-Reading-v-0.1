@@ -2,8 +2,11 @@ import type { Metadata } from 'next';
 import React from 'react';
 import '@/src/index.css';
 import { buildCanonicalUrl, resolveCanonicalSiteUrl } from '@/src/utils/seoUrl';
+import { FluentLoopAnalytics } from '@/src/components/FluentLoopAnalytics';
+import { resolveGaMeasurementId } from '@/src/utils/analytics';
 
 const CANONICAL_BASE_URL = resolveCanonicalSiteUrl();
+const GA_MEASUREMENT_ID = resolveGaMeasurementId();
 
 export const metadata: Metadata = {
   metadataBase: new URL(CANONICAL_BASE_URL),
@@ -92,7 +95,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: JSON.stringify(webAppSchema) }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <FluentLoopAnalytics gaId={GA_MEASUREMENT_ID} />
+      </body>
     </html>
   );
 }

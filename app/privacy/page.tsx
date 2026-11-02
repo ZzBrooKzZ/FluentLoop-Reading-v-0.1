@@ -79,13 +79,22 @@ export default function PrivacyPolicyPage() {
 
         <section className="space-y-3">
           <h2 className="font-display text-xl font-bold text-[#171615]">
-            3. Cookies & Third-Party Advertising (Google AdSense Readiness Disclosure)
+            3. Analytics, Cookies & Third-Party Advertising Disclosures
           </h2>
           <p>
-            Public educational guide pages on FluentLoop Reading may display advertisements served
-            by Google AdSense or certified third-party vendors:
+            FluentLoop Reading uses privacy-first analytics and cookies only in accordance with your
+            explicit consent preferences:
           </p>
           <ul className="list-disc pl-5 space-y-1.5 text-[#171615]">
+            <li>
+              <strong>Google Analytics 4 (Opt-In Only):</strong> Non-essential analytics cookies (
+              <code>_ga</code>) and Google Analytics 4 page-view measurement are blocked by default
+              until you explicitly click <strong>Accept Analytics</strong> in the consent banner. We
+              disable Google Signals and advertising storage (<code>ad_storage: &apos;denied&apos;</code>
+              ), and we never transmit your email address, name, Firebase UID, or reading answers to
+              Google Analytics. You can review or withdraw your analytics consent at any time using
+              the <strong>Cookie &amp; Analytics Preferences</strong> button in the site footer.
+            </li>
             <li>
               Third-party vendors, including Google, use cookies (such as the DoubleClick DART
               cookie) to serve ads based on a user’s prior visits to this website or other websites
@@ -118,7 +127,8 @@ export default function PrivacyPolicyPage() {
             </li>
             <li>
               For visitors in the European Economic Area (EEA), the United Kingdom, and Switzerland,
-              personalized advertising is only activated through a Google-certified Consent
+              non-essential analytics cookies are blocked until explicit opt-in consent is granted,
+              and personalized advertising is only activated through a Google-certified Consent
               Management Platform (CMP) compliant with the IAB TCF v2.2 framework.
             </li>
           </ul>

@@ -1685,5 +1685,73 @@ describe('Phase 1 Security Hardening & Persistence Verification Suite', () => {
     assert.equal(fs.existsSync(path.join(process.cwd(), 'public/favicon.ico')), true);
     assert.equal(fs.existsSync(path.join(process.cwd(), 'app/icon.svg')), false);
   });
+
+  it('18. Google Analytics 4 integration: validates NEXT_PUBLIC_GA_MEASUREMENT_ID as single source of truth, placeholder rejection, default-unset opt-in consent, and strict PII exclusion', async () => {
+    const {
+      PLACEHOLDER_GA_MEASUREMENT_ID,
+      resolveGaMeasurementId,
+      getAnalyticsConsentState,
+      sanitizeAnalyticsPayload,
+    } = await import('../utils/analytics');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+
+    // 1. Measurement ID resolution: NEXT_PUBLIC_GA_MEASUREMENT_ID is single source of truth (no hardcoded fallback)
+    assert.equal(resolveGaMeasurementId({}), null);
+    assert.equal(
+      resolveGaMeasurementId({ NEXT_PUBLIC_GA_MEASUREMENT_ID: 'G-K0HK3NPE7K' }),
+      'G-K0HK3NPE7K'
+    );
+    assert.equal(
+      resolveGaMeasurementId({ NEXT_PUBLIC_GA_MEASUREMENT_ID: PLACEHOLDER_GA_MEASUREMENT_ID }),
+      null
+    );
+    assert.equal(resolveGaMeasurementId({ NEXT_PUBLIC_GA_MEASUREMENT_ID: '' }), null);
+    assert.equal(resolveGaMeasurementId({ NEXT_PUBLIC_GA_MEASUREMENT_ID: 'invalid-id' }), null);
+
+    // 2. Opt-in consent state evaluation (defaults to 'unset' when no saved preference exists)
+    assert.equal(getAnalyticsConsentState(null), 'unset');
+    assert.equal(getAnalyticsConsentState({ getItem: () => null }), 'unset');
+    assert.equal(
+      getAnalyticsConsentState({ getItem: () => 'denied' }),
+      'denied'
+    );
+    assert.equal(
+      getAnalyticsConsentState({ getItem: () => 'false' }),
+      'denied'
+    );
+    assert.equal(
+      getAnalyticsConsentState({ getItem: () => 'granted' }),
+      'granted'
+    );
+
+    // 3. Strict PII and assessment data exclusion
+    const sanitized = sanitizeAnalyticsPayload({
+      page_path: '/guides/ielts-academic-reading',
+      page_title: 'IELTS Guide',
+      email: 'learner@example.com',
+      displayName: 'Jane Learner',
+      uid: 'firebase-uid-123',
+      userId: 'firebase-uid-123',
+      idToken: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig',
+      answers: 'TRUE',
+      score: 90,
+      accuracy: 90,
+      leakedEmailString: 'contact@fluentloop.space',
+    });
+    assert.deepEqual(sanitized, {
+      page_path: '/guides/ielts-academic-reading',
+      page_title: 'IELTS Guide',
+    });
+
+    // 4. Verify apphosting.yaml and .env.example configuration (not stored as a server secret)
+    const apphostingYaml = fs.readFileSync(path.join(process.cwd(), 'apphosting.yaml'), 'utf8');
+    assert.equal(apphostingYaml.includes('variable: NEXT_PUBLIC_GA_MEASUREMENT_ID'), true);
+    assert.equal(apphostingYaml.includes('value: G-K0HK3NPE7K'), true);
+    assert.equal(apphostingYaml.includes('secret: NEXT_PUBLIC_GA_MEASUREMENT_ID'), false);
+
+    const envExample = fs.readFileSync(path.join(process.cwd(), '.env.example'), 'utf8');
+    assert.equal(envExample.includes('NEXT_PUBLIC_GA_MEASUREMENT_ID="G-XXXXXXXXXX"'), true);
+  });
 });
 

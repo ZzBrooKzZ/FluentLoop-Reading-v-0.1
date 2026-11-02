@@ -1,7 +1,10 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
 import { Mail } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
+import { openAnalyticsPreferences } from '@/src/utils/analytics';
 
 const FOOTER_LINK_CLASS =
   'inline-block text-[#5C4E43] hover:text-[#A63816] hover:underline focus-visible:text-[#A63816] focus-visible:underline focus-visible:outline-none transition-colors';
@@ -134,6 +137,15 @@ export const PublicFooter: React.FC = () => {
                 <Link href="/terms" className={FOOTER_LINK_CLASS}>
                   Terms of Use
                 </Link>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={openAnalyticsPreferences}
+                  className={`${FOOTER_LINK_CLASS} text-left`}
+                >
+                  Cookie & Analytics Preferences
+                </button>
               </li>
             </ul>
           </div>

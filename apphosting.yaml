@@ -30,3 +30,8 @@ env:
     availability:
       - BUILD
       - RUNTIME
+  - variable: NEXT_PUBLIC_GA_MEASUREMENT_ID
+    value: G-K0HK3NPE7K
+    availability:
+      - BUILD
+      - RUNTIME
