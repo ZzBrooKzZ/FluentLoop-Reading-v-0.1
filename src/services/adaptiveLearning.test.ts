@@ -7,7 +7,7 @@ function lesson(id: string, level: ReadingLesson['level'], status: ReadingLesson
   return { id, title: id, level, topic: 'Science and technology', status, estimatedMinutes: 4, introduction: '', passage: 'A short test passage.', illustrationUrl: '', illustrationAlt: '', vocabulary: [], questions: [], createdAt: '', updatedAt: '' };
 }
 function attempt(lessonId: string, status: 'in_progress' | 'completed' = 'completed', attemptType: 'first' | 'practice' = 'first') {
-  return { id: `${lessonId}-attempt`, userId: 'user', lessonId, lessonTitle: lessonId, level: 'B1' as const, topic: 'Science and technology' as const, status, attemptType, score: 0, totalQuestions: 1, accuracy: 0, answers: {}, questionTypeStats: {}, createdAt: '', updatedAt: '2026-01-01' };
+  return { id: `${lessonId}-attempt`, userId: 'user', lessonId, lessonTitle: lessonId, level: 'B1' as ReadingLesson['level'], topic: 'Science and technology' as const, status, attemptType, score: 0, totalQuestions: 1, accuracy: 0, answers: {}, questionTypeStats: {}, createdAt: '', updatedAt: '2026-01-01' };
 }
 
 test('initial state uses chosen starting level and lower-range target', () => {
@@ -925,6 +925,316 @@ test('multi-word expression detection, contextual sense disambiguation, longest-
   }
 
   assert.equal(fetchCalled, false, 'MWE lookup must never invoke fetch()');
+});
+
+test('calibrated estimateLessonDifficulty spans lower, middle, and upper zones for every CEFR level (A1–C2) on real INITIAL_LESSONS', async () => {
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+  const { estimateLessonDifficulty, ADAPTIVE_SETTINGS } = await import('./adaptiveLearning');
+
+  for (const level of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const) {
+    const range = DIFFICULTY_RANGES[level];
+    const lessons = INITIAL_LESSONS.filter((l) => l.level === level && l.status === 'published');
+    assert.ok(lessons.length >= 10, `Expected at least 10 published lessons for ${level}`);
+
+    const scores = lessons.map((l) => estimateLessonDifficulty(l));
+    for (const s of scores) {
+      assert.ok(
+        s >= range.min && s <= range.max,
+        `Score ${s} for ${level} must stay within [${range.min}, ${range.max}]`
+      );
+    }
+
+    const lowerBoundaryCount = scores.filter(
+      (s) => s <= range.min + ADAPTIVE_SETTINGS.nearBoundaryWindow
+    ).length;
+    const upperBoundaryCount = scores.filter(
+      (s) => s >= range.max - ADAPTIVE_SETTINGS.nearBoundaryWindow
+    ).length;
+    const distinctScores = new Set(scores);
+
+    assert.ok(
+      lowerBoundaryCount >= 2,
+      `Level ${level} must have at least 2 lower-boundary lessons (<= ${range.min + ADAPTIVE_SETTINGS.nearBoundaryWindow}) for downward regression; found ${lowerBoundaryCount}`
+    );
+    assert.ok(
+      upperBoundaryCount >= 2,
+      `Level ${level} must have at least 2 upper-boundary lessons (>= ${range.max - ADAPTIVE_SETTINGS.nearBoundaryWindow}) for upward promotion; found ${upperBoundaryCount}`
+    );
+    assert.ok(
+      distinctScores.size >= 6,
+      `Level ${level} must have a well-distributed spread of difficulty scores; found ${distinctScores.size} distinct scores`
+    );
+  }
+});
+
+test('real curriculum upward progression: learner advances A1 -> A2 -> B1 -> B2 -> C1 -> C2 using real INITIAL_LESSONS without synthetic overrides', async () => {
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+  const { estimateLessonDifficulty } = await import('./adaptiveLearning');
+
+  let profile = createAdaptiveProfile('A1');
+  const attempts: ReturnType<typeof attempt>[] = [];
+  const expectedSequence: Array<ReadingLesson['level']> = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+  const visitedLevels: Array<ReadingLesson['level']> = [profile.currentLevel];
+
+  let safetyCounter = 0;
+  while (profile.currentLevel !== 'C2' && safetyCounter < 60) {
+    safetyCounter += 1;
+    const nextLesson = selectNextLesson(profile, INITIAL_LESSONS, attempts, undefined, () => 0);
+    assert.ok(nextLesson, `Expected a real lesson at level ${profile.currentLevel}`);
+    assert.equal(nextLesson.level, profile.currentLevel);
+
+    const lessonDifficulty = estimateLessonDifficulty(nextLesson);
+    const prevLevel = profile.currentLevel;
+
+    const outcome = applyAttemptProgression({
+      profile,
+      attemptType: 'first',
+      completed: true,
+      pendingReviewCount: 0,
+      accuracy: 95,
+      lessonDifficulty,
+    });
+
+    profile = outcome.profile;
+    attempts.push({
+      ...attempt(nextLesson.id, 'completed', 'first'),
+      level: nextLesson.level,
+      accuracy: 95,
+      updatedAt: new Date(1_700_000_000_000 + safetyCounter * 1000).toISOString(),
+    });
+
+    if (profile.currentLevel !== prevLevel) {
+      visitedLevels.push(profile.currentLevel);
+    }
+  }
+
+  assert.deepEqual(visitedLevels, expectedSequence);
+  assert.equal(profile.currentLevel, 'C2');
+  assert.equal(profile.currentDifficultyScore, DIFFICULTY_RANGES.C2.min + 4);
+});
+
+test('real curriculum downward regression: learner steps down C2 -> C1 -> B2 -> B1 -> A2 -> A1 using real INITIAL_LESSONS without synthetic overrides', async () => {
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+  const { estimateLessonDifficulty } = await import('./adaptiveLearning');
+
+  let profile = createAdaptiveProfile('C2');
+  const attempts: ReturnType<typeof attempt>[] = [];
+  const expectedSequence: Array<ReadingLesson['level']> = ['C2', 'C1', 'B2', 'B1', 'A2', 'A1'];
+  const visitedLevels: Array<ReadingLesson['level']> = [profile.currentLevel];
+
+  let safetyCounter = 0;
+  while (profile.currentLevel !== 'A1' && safetyCounter < 60) {
+    safetyCounter += 1;
+    const nextLesson = selectNextLesson(profile, INITIAL_LESSONS, attempts, undefined, () => 0);
+    assert.ok(nextLesson, `Expected a real lesson at level ${profile.currentLevel}`);
+    assert.equal(nextLesson.level, profile.currentLevel);
+
+    const lessonDifficulty = estimateLessonDifficulty(nextLesson);
+    const prevLevel = profile.currentLevel;
+
+    const outcome = applyAttemptProgression({
+      profile,
+      attemptType: 'first',
+      completed: true,
+      pendingReviewCount: 0,
+      accuracy: 35,
+      lessonDifficulty,
+    });
+
+    profile = outcome.profile;
+    attempts.push({
+      ...attempt(nextLesson.id, 'completed', 'first'),
+      level: nextLesson.level,
+      accuracy: 35,
+      updatedAt: new Date(1_700_000_000_000 + safetyCounter * 1000).toISOString(),
+    });
+
+    if (profile.currentLevel !== prevLevel) {
+      visitedLevels.push(profile.currentLevel);
+    }
+  }
+
+  assert.deepEqual(visitedLevels, expectedSequence);
+  assert.equal(profile.currentLevel, 'A1');
+});
+
+test('single-attempt non-promotion at C1 and single-attempt non-demotion at C2', () => {
+  // 1. Fresh C1 learner scoring 100% on a single C1 lesson must NOT unlock C2
+  const freshC1 = createAdaptiveProfile('C1');
+  const afterOnePerfectC1 = applyAttemptProgression({
+    profile: freshC1,
+    attemptType: 'first',
+    completed: true,
+    pendingReviewCount: 0,
+    accuracy: 100,
+    lessonDifficulty: DIFFICULTY_RANGES.C1.max,
+  });
+  assert.equal(afterOnePerfectC1.profile.currentLevel, 'C1');
+  assert.equal(afterOnePerfectC1.levelChanged, false);
+
+  // Even a learner already at the C1 upper boundary (score 96, consecutivePasses: 0) scoring 100% once only reaches streak 1/2
+  const boundaryC1 = { ...createAdaptiveProfile('C1'), currentDifficultyScore: 96, consecutivePasses: 0 };
+  const firstBoundaryPass = applyAttemptProgression({
+    profile: boundaryC1,
+    attemptType: 'first',
+    completed: true,
+    pendingReviewCount: 0,
+    accuracy: 100,
+    lessonDifficulty: 98,
+  });
+  assert.equal(firstBoundaryPass.profile.currentLevel, 'C1');
+  assert.equal(firstBoundaryPass.profile.consecutivePasses, 1);
+
+  // An intermediate score (60-84%) at the C1 boundary resets consecutivePasses back to 0
+  const resetAfterIntermediate = applyAttemptProgression({
+    profile: firstBoundaryPass.profile,
+    attemptType: 'first',
+    completed: true,
+    pendingReviewCount: 0,
+    accuracy: 75,
+    lessonDifficulty: 98,
+  });
+  assert.equal(resetAfterIntermediate.profile.currentLevel, 'C1');
+  assert.equal(resetAfterIntermediate.profile.consecutivePasses, 0);
+
+  // 2. Fresh C2 learner (starts at 105, lower boundary) scoring 0% on a single C2 lesson only reaches consecutiveFailures: 1, NOT demoted
+  const freshC2 = createAdaptiveProfile('C2');
+  const afterOneFailedC2 = applyAttemptProgression({
+    profile: freshC2,
+    attemptType: 'first',
+    completed: true,
+    pendingReviewCount: 0,
+    accuracy: 0,
+    lessonDifficulty: DIFFICULTY_RANGES.C2.min,
+  });
+  assert.equal(afterOneFailedC2.profile.currentLevel, 'C2');
+  assert.equal(afterOneFailedC2.profile.consecutiveFailures, 1);
+  assert.equal(afterOneFailedC2.levelChanged, false);
+});
+
+test('placement ceiling is strictly C1, C2 diagnostic passages are excluded from active pool, and non-active passages are rejected', async () => {
+  const {
+    PLACEMENT_LEVELS,
+    MAX_PLACEMENT_LEVEL,
+    getPlacementDiagnosticPool,
+    createPlacementSession,
+    applyDiagnosticSubmissionToSession,
+    saveDraftAnswersInPlacementSession,
+  } = await import('./placementEngine');
+  const { DIAGNOSTIC_PASSAGES } = await import('../data/diagnosticPassages');
+
+  assert.deepEqual(PLACEMENT_LEVELS, ['A1', 'A2', 'B1', 'B2', 'C1']);
+  assert.equal(MAX_PLACEMENT_LEVEL, 'C1');
+
+  const activePool = getPlacementDiagnosticPool();
+  assert.equal(activePool.length, 15);
+  assert.equal(activePool.some((p) => p.level === 'C2'), false);
+
+  let session = createPlacementSession('ceiling-test-user', false);
+  assert.equal(session.currentLevel, 'B1');
+
+  // Attempt to submit a non-active passage (e.g. a C1 passage when activePassageId is B1) -> throws on submit, returns wrongPassageRejected on draft
+  const wrongPassage = DIAGNOSTIC_PASSAGES.find((p) => p.level === 'C1')!;
+  assert.ok(wrongPassage);
+  assert.throws(
+    () => applyDiagnosticSubmissionToSession(session, wrongPassage, {}),
+    /does not match the active placement passage/
+  );
+  const wrongDraftRes = saveDraftAnswersInPlacementSession(session, wrongPassage.id, { q1: 'A' });
+  assert.equal(wrongDraftRes.accepted, false);
+  assert.equal(wrongDraftRes.wrongPassageRejected, true);
+
+  // Attempt to submit a C2 diagnostic passage -> throws
+  const c2Passage = DIAGNOSTIC_PASSAGES.find((p) => p.level === 'C2')!;
+  assert.throws(
+    () => applyDiagnosticSubmissionToSession(session, c2Passage, {}),
+    /outside the allowed A1–C1 placement range/
+  );
+
+  // Score 100% on all 3 placement steps (B1 -> B2 -> C1) -> ceiling is strictly C1, never C2
+  for (let stepIdx = 0; stepIdx < 3; stepIdx += 1) {
+    assert.ok(session.activePassageId, `Expected activePassageId on step ${stepIdx + 1}`);
+    assert.equal(session.activePassageId.startsWith('diag-c2'), false);
+    const activePassage = activePool.find((p) => p.id === session.activePassageId)!;
+    assert.ok(activePassage);
+
+    const perfectAnswers: Record<string, string> = {};
+    for (const q of activePassage.questions) {
+      perfectAnswers[q.id] = q.correctAnswer;
+    }
+
+    const res = applyDiagnosticSubmissionToSession(session, activePassage, perfectAnswers);
+    session = res.session;
+  }
+
+  assert.equal(session.status, 'completed');
+  assert.equal(session.recommendedLevel, 'C1');
+});
+
+test('computeAdaptiveRecommendation uses authoritative AdaptiveProfile and never claims C2 unlocked before currentLevel === C2', async () => {
+  const { computeAdaptiveRecommendation } = await import('./adaptiveEngine');
+  const { INITIAL_LESSONS } = await import('../data/initialLessons');
+
+  // 1. Learner at C1 with 3 high-accuracy attempts but profile still at C1 (streak 1/2 at boundary)
+  const c1Profile = {
+    ...createAdaptiveProfile('C1'),
+    currentDifficultyScore: 96,
+    consecutivePasses: 1,
+    consecutiveFailures: 0,
+  };
+  const recentHighC1Attempts = [
+    { ...attempt('c1-01-neuromorphic-computing'), level: 'C1' as const, accuracy: 95 },
+    { ...attempt('c1-02-epigenetic-inheritance'), level: 'C1' as const, accuracy: 92 },
+    { ...attempt('c1-03-algorithmic-antitrust'), level: 'C1' as const, accuracy: 94 },
+  ];
+
+  const recAtC1 = computeAdaptiveRecommendation(c1Profile, recentHighC1Attempts, INITIAL_LESSONS);
+  assert.equal(recAtC1.currentSelectedLevel, 'C1');
+  assert.equal(recAtC1.recommendedLevel, 'C1');
+  assert.equal(recAtC1.action, 'harder');
+  assert.equal(recAtC1.consecutivePasses, 1);
+  assert.equal(recAtC1.reason.includes('You have unlocked C2'), false);
+  assert.ok(recAtC1.reason.includes('1/2 consecutive top-boundary passes'));
+
+  // 2. Learner whose authoritative profile has actually promoted to C2
+  const c2Profile = { ...createAdaptiveProfile('C2'), startingLevel: 'C1' as const };
+  const recAtC2 = computeAdaptiveRecommendation(c2Profile, recentHighC1Attempts, INITIAL_LESSONS);
+  assert.equal(recAtC2.currentSelectedLevel, 'C2');
+  assert.equal(recAtC2.recommendedLevel, 'C2');
+});
+
+test('normalizeAdaptiveProfile safely migrates legacy accounts without resetting to A1 or demoting C2 users', async () => {
+  const { normalizeAdaptiveProfile, ADAPTIVE_PROFILE_SCHEMA_VERSION } = await import(
+    './adaptiveLearning'
+  );
+
+  assert.equal(ADAPTIVE_PROFILE_SCHEMA_VERSION, 1);
+
+  // Legacy B2 user without currentDifficultyScore or streaks
+  const legacyB2 = normalizeAdaptiveProfile({ preferredLevel: 'B2' }, 'A1');
+  assert.equal(legacyB2.currentLevel, 'B2');
+  assert.equal(legacyB2.startingLevel, 'B2');
+  assert.equal(legacyB2.currentDifficultyScore, DIFFICULTY_RANGES.B2.min + 4);
+  assert.equal(legacyB2.consecutivePasses, 0);
+  assert.equal(legacyB2.consecutiveFailures, 0);
+
+  // Legacy C2 user without currentDifficultyScore or streaks stays at C2 (startingLevel capped at C1)
+  const legacyC2 = normalizeAdaptiveProfile({ preferredLevel: 'C2' }, 'A1');
+  assert.equal(legacyC2.currentLevel, 'C2');
+  assert.equal(legacyC2.startingLevel, 'C1');
+  assert.equal(legacyC2.currentDifficultyScore, DIFFICULTY_RANGES.C2.min + 4);
+
+  // Out-of-band difficulty score is clamped into the user's currentLevel range
+  const outOfBand = normalizeAdaptiveProfile({
+    preferredLevel: 'B1',
+    startingLevel: 'A2',
+    currentDifficultyScore: 999,
+    consecutivePasses: 1,
+  });
+  assert.equal(outOfBand.currentLevel, 'B1');
+  assert.equal(outOfBand.startingLevel, 'A2');
+  assert.equal(outOfBand.currentDifficultyScore, DIFFICULTY_RANGES.B1.max);
+  assert.equal(outOfBand.consecutivePasses, 1);
 });
 
 

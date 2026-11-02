@@ -4,20 +4,29 @@ import type { Metadata } from 'next';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
 import { AdSenseSlotReserve } from '@/src/components/AdSenseSlotReserve';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
+
+const GUIDE_CANONICAL_URL = buildCanonicalUrl('/guides/vocabulary-in-context');
 
 export const metadata: Metadata = {
   title: 'Learning Academic English Vocabulary in Context (English-to-English)',
   description:
     'Learn why contextual English-to-English vocabulary explanations build faster reading comprehension and academic fluency than word-for-word bilingual translation.',
   alternates: {
-    canonical: '/guides/vocabulary-in-context',
+    canonical: GUIDE_CANONICAL_URL,
   },
   openGraph: {
     title: 'Learning Academic English Vocabulary in Context | FluentLoop',
     description:
       'How to master academic vocabulary using contextual English definitions, part-of-speech cues, and sentence-level evidence.',
-    url: '/guides/vocabulary-in-context',
+    url: GUIDE_CANONICAL_URL,
     type: 'article',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Learning Academic English Vocabulary in Context | FluentLoop',
+    description:
+      'How to master academic vocabulary using contextual English definitions, part-of-speech cues, and sentence-level evidence.',
   },
 };
 
@@ -105,7 +114,7 @@ export default function VocabularyInContextGuidePage() {
               Explore Contextual Vocabulary in Real Passages
             </h2>
             <p className="text-xs sm:text-sm text-[#76675B]">
-              Inspect our public sample lessons across CEFR A1–C1 or open the full interactive
+              Inspect our public sample lessons across CEFR A1–C2 or open the full interactive
               reading workspace.
             </p>
           </div>

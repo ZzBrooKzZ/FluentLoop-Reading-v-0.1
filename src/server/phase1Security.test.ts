@@ -1242,5 +1242,431 @@ describe('Phase 1 Security Hardening & Persistence Verification Suite', () => {
       },
     ]);
   });
+
+  it('14. Server-side placement security: rejects C2 diagnostic passages (400), rejects non-active passageId submissions/drafts (409), caps 100% 3-passage placement at C1, and initializes users/{uid} adaptive profile', async () => {
+    const {
+      setTestUserProfileFirestoreStoreForTests,
+      clearMemoryUserProfileStoreForTests,
+    } = await import('./userProfileRepository');
+    const {
+      getPlacementDiagnosticPassageById,
+      getPlacementDiagnosticPassages,
+      getAllDiagnosticPassages,
+    } = await import('./lessonRepository');
+
+    const userDocs = new Map<string, Record<string, unknown>>();
+    const attemptLocks = new Map<string, any>();
+    setTestUserProfileFirestoreStoreForTests({ users: userDocs, attemptLocks });
+    clearMemoryUserProfileStoreForTests();
+
+    try {
+      // 1. Start authenticated placement session
+      const startRes = await startPlacementRoute(
+        buildJsonRequest(
+          'http://localhost:3000/api/placement/start',
+          'POST',
+          { forceNew: true },
+          { authorization: 'Bearer valid-google-user-token' }
+        )
+      );
+      assert.equal(startRes.status, 200);
+      const startData = await startRes.json();
+      const sessionId: string = startData.session.id;
+      const activePassageId1: string = startData.session.activePassageId;
+      assert.ok(activePassageId1.startsWith('diag-b1'));
+
+      // 2. Attempting to save draft or submit any C2 diagnostic passage is rejected with HTTP 400
+      const c2Passages = getAllDiagnosticPassages().filter((p) => p.level === 'C2');
+      assert.equal(c2Passages.length, 3);
+      for (const c2Passage of c2Passages) {
+        const c2DraftRes = await draftPlacementRoute(
+          buildJsonRequest(
+            'http://localhost:3000/api/placement/draft',
+            'POST',
+            { sessionId, passageId: c2Passage.id, answers: { q1: 'A' } },
+            { authorization: 'Bearer valid-google-user-token' }
+          )
+        );
+        assert.equal(c2DraftRes.status, 400);
+
+        const c2SubmitRes = await submitPlacementRoute(
+          buildJsonRequest(
+            'http://localhost:3000/api/placement/submit',
+            'POST',
+            { sessionId, passageId: c2Passage.id, answers: { q1: 'A' } },
+            { authorization: 'Bearer valid-google-user-token' }
+          )
+        );
+        assert.equal(c2SubmitRes.status, 400);
+      }
+
+      // 3. Attempting to save draft or submit a valid A1-C1 passage that is NOT session.activePassageId is rejected with HTTP 409 without mutating the session
+      const nonActiveC1Passage = getPlacementDiagnosticPassages().find((p) => p.level === 'C1')!;
+      assert.ok(nonActiveC1Passage && nonActiveC1Passage.id !== activePassageId1);
+      const nonActiveQId = nonActiveC1Passage.questions[0].id;
+
+      const nonActiveDraftRes = await draftPlacementRoute(
+        buildJsonRequest(
+          'http://localhost:3000/api/placement/draft',
+          'POST',
+          { sessionId, passageId: nonActiveC1Passage.id, answers: { [nonActiveQId]: 'A' } },
+          { authorization: 'Bearer valid-google-user-token' }
+        )
+      );
+      assert.equal(nonActiveDraftRes.status, 409);
+
+      const nonActiveSubmitRes = await submitPlacementRoute(
+        buildJsonRequest(
+          'http://localhost:3000/api/placement/submit',
+          'POST',
+          { sessionId, passageId: nonActiveC1Passage.id, answers: { [nonActiveQId]: 'A' } },
+          { authorization: 'Bearer valid-google-user-token' }
+        )
+      );
+      assert.equal(nonActiveSubmitRes.status, 409);
+      assert.equal(placementDocs.get(sessionId)?.steps.length, 0);
+      assert.equal(placementDocs.get(sessionId)?.activePassageId, activePassageId1);
+
+      // 4. Complete all 3 passages with 100% accuracy -> ceiling is strictly C1 (never C2) and users/{uid} is initialized
+      let currentActiveId: string | null = activePassageId1;
+      let finalSubmitData: any = null;
+      for (let step = 0; step < 3; step += 1) {
+        assert.ok(currentActiveId);
+        const authDiag = getPlacementDiagnosticPassageById(currentActiveId);
+        assert.ok(authDiag, `Expected placement diagnostic passage for ${currentActiveId}`);
+        assert.notEqual(authDiag.level, 'C2');
+
+        const perfectAnswers: Record<string, string> = {};
+        for (const q of authDiag.questions) {
+          perfectAnswers[q.id] = q.correctAnswer;
+        }
+
+        const stepRes = await submitPlacementRoute(
+          buildJsonRequest(
+            'http://localhost:3000/api/placement/submit',
+            'POST',
+            { sessionId, passageId: currentActiveId, answers: perfectAnswers },
+            { authorization: 'Bearer valid-google-user-token' }
+          )
+        );
+        assert.equal(stepRes.status, 200);
+        finalSubmitData = await stepRes.json();
+        currentActiveId = finalSubmitData.session.activePassageId;
+      }
+
+      assert.equal(finalSubmitData.session.status, 'completed');
+      assert.equal(finalSubmitData.session.recommendedLevel, 'C1');
+
+      const storedUserDoc = userDocs.get('google-user-123');
+      assert.ok(storedUserDoc, 'users/google-user-123 should be initialized on placement completion');
+      assert.equal(storedUserDoc.preferredLevel, 'C1');
+      assert.equal(storedUserDoc.startingLevel, 'C1');
+      assert.equal(storedUserDoc.placementLevel, 'C1');
+      assert.equal(storedUserDoc.currentDifficultyScore, 84);
+      assert.equal(storedUserDoc.consecutivePasses, 0);
+      assert.equal(storedUserDoc.consecutiveFailures, 0);
+    } finally {
+      setTestUserProfileFirestoreStoreForTests(null);
+      clearMemoryUserProfileStoreForTests();
+    }
+  });
+
+  it('15. Server-authoritative adaptive profile persistence: ignores forged client profile on /api/attempts/submit, enforces idempotency, serializes concurrent attempts with contention retry, and hydrates across devices via GET /api/profile/adaptive', async () => {
+    const {
+      setTestUserProfileFirestoreStoreForTests,
+      clearMemoryUserProfileStoreForTests,
+      applyAttemptProgressionTransactional,
+    } = await import('./userProfileRepository');
+    const { getAuthoritativeLessonById } = await import('./lessonRepository');
+    const { GET: getAdaptiveProfileRoute } = await import('../../app/api/profile/adaptive/route');
+
+    const userDocs = new Map<string, Record<string, unknown>>();
+    const attemptLocks = new Map<string, any>();
+    // Simulate 1 contention retry per transaction to verify optimistic concurrency retry safety
+    setTestUserProfileFirestoreStoreForTests({
+      users: userDocs,
+      attemptLocks,
+      simulatedContentionRetries: 1,
+    });
+    clearMemoryUserProfileStoreForTests();
+
+    try {
+      // Seed user at C1 lower band (difficulty 84, consecutivePasses 0)
+      userDocs.set('google-user-123', {
+        uid: 'google-user-123',
+        displayName: 'Test Learner',
+        preferredLevel: 'C1',
+        startingLevel: 'C1',
+        placementLevel: 'C1',
+        currentDifficultyScore: 84,
+        consecutivePasses: 0,
+        consecutiveFailures: 0,
+        adaptiveProfileVersion: 1,
+      });
+
+      const c1Lesson = getAuthoritativeLessonById('c1-01-neuromorphic-computing');
+      assert.ok(c1Lesson);
+      const perfectC1Answers: Record<string, string> = {};
+      for (const q of c1Lesson.questions) {
+        perfectC1Answers[q.id] = q.correctAnswer;
+      }
+
+      // 1. Client attempts to spoof body.profile claiming currentDifficultyScore: 99, consecutivePasses: 1 to force immediate C2 promotion
+      const spoofedSubmitRes = await submitAttemptRoute(
+        buildJsonRequest(
+          'http://localhost:3000/api/attempts/submit',
+          'POST',
+          {
+            lessonId: c1Lesson.id,
+            attemptId: 'att-c1-spoof-test-1',
+            attemptType: 'first',
+            answers: perfectC1Answers,
+            profile: {
+              startingLevel: 'C1',
+              currentLevel: 'C1',
+              currentDifficultyScore: 99,
+              consecutivePasses: 1,
+              consecutiveFailures: 0,
+            },
+          },
+          { authorization: 'Bearer valid-google-user-token' }
+        )
+      );
+      assert.equal(spoofedSubmitRes.status, 200);
+      const spoofedData = await spoofedSubmitRes.json();
+
+      // Server ignored forged profile and incremented from stored 84 -> 88 (still C1, consecutivePasses: 0)
+      assert.equal(spoofedData.progression.profile.currentLevel, 'C1');
+      assert.equal(spoofedData.progression.profile.currentDifficultyScore, 88);
+      assert.equal(spoofedData.progression.profile.consecutivePasses, 0);
+      assert.equal(spoofedData.progression.changed, true);
+
+      // 2. Duplicate retry of the exact same attemptId must be idempotent and NOT increment 88 -> 92
+      const duplicateSubmitRes = await submitAttemptRoute(
+        buildJsonRequest(
+          'http://localhost:3000/api/attempts/submit',
+          'POST',
+          {
+            lessonId: c1Lesson.id,
+            attemptId: 'att-c1-spoof-test-1',
+            attemptType: 'first',
+            answers: perfectC1Answers,
+          },
+          { authorization: 'Bearer valid-google-user-token' }
+        )
+      );
+      assert.equal(duplicateSubmitRes.status, 200);
+      const duplicateData = await duplicateSubmitRes.json();
+      assert.equal(duplicateData.progression.profile.currentDifficultyScore, 88);
+      assert.equal(duplicateData.progression.changed, true);
+
+      // 3. Concurrent submissions with distinct attemptIds serialize cleanly without lost updates
+      const [concA, concB] = await Promise.all([
+        applyAttemptProgressionTransactional({
+          uid: 'google-user-123',
+          attemptId: 'att-concurrent-a',
+          attemptType: 'first',
+          completed: true,
+          pendingReviewCount: 0,
+          accuracy: 95,
+          lessonId: 'c1-02-epigenetic-inheritance',
+          lessonLevel: 'C1',
+          lessonDifficulty: 90,
+        }),
+        applyAttemptProgressionTransactional({
+          uid: 'google-user-123',
+          attemptId: 'att-concurrent-b',
+          attemptType: 'first',
+          completed: true,
+          pendingReviewCount: 0,
+          accuracy: 95,
+          lessonId: 'c1-03-algorithmic-antitrust',
+          lessonLevel: 'C1',
+          lessonDifficulty: 92,
+        }),
+      ]);
+      // 88 + 4 + 4 = 96
+      const finalScoreAfterConcurrent = Math.max(
+        concA.profile.currentDifficultyScore,
+        concB.profile.currentDifficultyScore
+      );
+      assert.equal(finalScoreAfterConcurrent, 96);
+      assert.equal(userDocs.get('google-user-123')?.currentDifficultyScore, 96);
+
+      // 4. Simulate sign-out / device switch (clear local memory) and hydrate via GET /api/profile/adaptive
+      clearMemoryUserProfileStoreForTests();
+      const hydrateRes = await getAdaptiveProfileRoute(
+        new NextRequest('http://localhost:3000/api/profile/adaptive?fallbackLevel=A1', {
+          method: 'GET',
+          headers: { authorization: 'Bearer valid-google-user-token' },
+        })
+      );
+      assert.equal(hydrateRes.status, 200);
+      const hydrateData = await hydrateRes.json();
+      assert.equal(hydrateData.profile.currentLevel, 'C1');
+      assert.equal(hydrateData.profile.currentDifficultyScore, 96);
+
+      // 5. Verify legacy C2 account without currentDifficultyScore hydrates safely at C2 (not reset to A1 or C1)
+      userDocs.set('google-user-456', {
+        uid: 'google-user-456',
+        displayName: 'Legacy C2 Learner',
+        preferredLevel: 'C2',
+      });
+      const legacyHydrateRes = await getAdaptiveProfileRoute(
+        new NextRequest('http://localhost:3000/api/profile/adaptive?fallbackLevel=A1', {
+          method: 'GET',
+          headers: { authorization: 'Bearer valid-google-user-2-token' },
+        })
+      );
+      assert.equal(legacyHydrateRes.status, 200);
+      const legacyHydrateData = await legacyHydrateRes.json();
+      assert.equal(legacyHydrateData.profile.currentLevel, 'C2');
+      assert.equal(legacyHydrateData.profile.startingLevel, 'C1');
+      assert.equal(legacyHydrateData.profile.currentDifficultyScore, 105);
+    } finally {
+      setTestUserProfileFirestoreStoreForTests(null);
+      clearMemoryUserProfileStoreForTests();
+    }
+  });
+
+  it('16. Firestore security rules validation: blocks client writes to server-owned adaptive fields and placementLevel C2 while permitting valid preference updates', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const rulesSource = fs.readFileSync(path.join(process.cwd(), 'firestore.rules'), 'utf8');
+
+    // 1. Verify placementLevel validation function strictly permits A1..C1 and excludes C2
+    const placementFnMatch = rulesSource.match(
+      /function\s+isValidPlacementLevel\s*\(\s*level\s*\)\s*\{([\s\S]*?)\}/
+    );
+    assert.ok(placementFnMatch, 'isValidPlacementLevel function must exist in firestore.rules');
+    assert.equal(placementFnMatch[1].includes("'C1'"), true);
+    assert.equal(placementFnMatch[1].includes("'C2'"), false);
+
+    // 2. Verify users/{userId} create rule blocks server-owned progression fields
+    const usersMatchBlock = rulesSource.match(
+      /match\s+\/users\/\{userId\}\s*\{([\s\S]*?)allow\s+delete:\s*if\s+false;\s*\}/
+    );
+    assert.ok(usersMatchBlock, 'match /users/{userId} block must exist in firestore.rules');
+    const usersRules = usersMatchBlock[1];
+
+    for (const protectedField of [
+      'currentDifficultyScore',
+      'consecutivePasses',
+      'consecutiveFailures',
+      'adaptiveProfileVersion',
+      'lastProcessedAttemptId',
+    ]) {
+      assert.equal(
+        usersRules.includes(`'${protectedField}'`),
+        true,
+        `create rule must explicitly forbid ${protectedField}`
+      );
+    }
+
+    // 3. Verify users/{userId} update affectedKeys().hasOnly([...]) excludes server-owned progression fields
+    const affectedKeysMatch = usersRules.match(
+      /affectedKeys\(\)\.hasOnly\(\s*\[([\s\S]*?)\]\s*\)/
+    );
+    assert.ok(affectedKeysMatch, 'users update rule must enforce affectedKeys().hasOnly(...)');
+    const allowedClientUpdateKeys = affectedKeysMatch[1];
+    for (const protectedField of [
+      'currentDifficultyScore',
+      'consecutivePasses',
+      'consecutiveFailures',
+      'adaptiveProfileVersion',
+      'lastProcessedAttemptId',
+    ]) {
+      assert.equal(
+        allowedClientUpdateKeys.includes(protectedField),
+        false,
+        `users update affectedKeys().hasOnly must NOT allow client mutation of ${protectedField}`
+      );
+    }
+    for (const allowedField of [
+      'displayName',
+      'preferredLevel',
+      'startingLevel',
+      'placementLevel',
+      'showArabicTranslation',
+      'fontSize',
+      'completedCount',
+      'averageAccuracy',
+      'updatedAt',
+    ]) {
+      assert.equal(
+        allowedClientUpdateKeys.includes(`'${allowedField}'`),
+        true,
+        `users update affectedKeys().hasOnly must allow ${allowedField}`
+      );
+    }
+  });
+
+  it('17. Canonical production domain & SEO URL enforcement: consistently resolves to https://fluentloop.space and rejects preview/local overrides', async () => {
+    const { OFFICIAL_SITE_URL, resolveCanonicalSiteUrl, buildCanonicalUrl } = await import(
+      '../utils/seoUrl'
+    );
+    const sitemapFn = (await import('../../app/sitemap')).default;
+    const robotsFn = (await import('../../app/robots')).default;
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+
+    assert.equal(OFFICIAL_SITE_URL, 'https://fluentloop.space');
+
+    // 1. Default and explicit production domain resolution
+    assert.equal(resolveCanonicalSiteUrl({}), 'https://fluentloop.space');
+    assert.equal(
+      resolveCanonicalSiteUrl({ NEXT_PUBLIC_SITE_URL: 'https://fluentloop.space/' }),
+      'https://fluentloop.space'
+    );
+
+    // 2. Preview / local origins injected via APP_URL or NEXT_PUBLIC_SITE_URL are ignored in favor of https://fluentloop.space
+    for (const previewOrigin of [
+      'https://ais-dev-m5smnqvfyxyrlvrkl76egf-965456113659.europe-west2.run.app',
+      'https://ais-pre-m5smnqvfyxyrlvrkl76egf-965456113659.europe-west2.run.app',
+      'https://fluentloop-reading--project-3ba42a74-36cc-4dbd-ac7.europe-west4.hosted.app',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+    ]) {
+      assert.equal(
+        resolveCanonicalSiteUrl({ APP_URL: previewOrigin }),
+        'https://fluentloop.space',
+        `APP_URL=${previewOrigin} must not override official production domain`
+      );
+      assert.equal(
+        resolveCanonicalSiteUrl({ NEXT_PUBLIC_SITE_URL: previewOrigin }),
+        'https://fluentloop.space',
+        `NEXT_PUBLIC_SITE_URL=${previewOrigin} must not override official production domain`
+      );
+    }
+
+    // 3. Canonical URL builder
+    assert.equal(buildCanonicalUrl('/'), 'https://fluentloop.space/');
+    assert.equal(buildCanonicalUrl('/about'), 'https://fluentloop.space/about');
+    assert.equal(
+      buildCanonicalUrl('/guides/ielts-academic-reading'),
+      'https://fluentloop.space/guides/ielts-academic-reading'
+    );
+
+    // 4. Sitemap and robots.txt entries
+    const sitemapEntries = sitemapFn();
+    assert.ok(sitemapEntries.length >= 15);
+    for (const entry of sitemapEntries) {
+      assert.equal(
+        entry.url.startsWith('https://fluentloop.space/'),
+        true,
+        `Sitemap entry must start with https://fluentloop.space/: ${entry.url}`
+      );
+    }
+
+    const robotsConfig = robotsFn();
+    assert.equal(robotsConfig.sitemap, 'https://fluentloop.space/sitemap.xml');
+
+    // 5. apphosting.yaml configures NEXT_PUBLIC_SITE_URL=https://fluentloop.space for BUILD and RUNTIME
+    const apphostingYaml = fs.readFileSync(path.join(process.cwd(), 'apphosting.yaml'), 'utf8');
+    assert.equal(apphostingYaml.includes('variable: NEXT_PUBLIC_SITE_URL'), true);
+    assert.equal(apphostingYaml.includes('value: https://fluentloop.space'), true);
+    assert.equal(apphostingYaml.includes('NEXT_PUBLIC_GEMINI'), false);
+    assert.equal(apphostingYaml.includes('NEXT_PUBLIC_PLACEMENT'), false);
+  });
 });
 

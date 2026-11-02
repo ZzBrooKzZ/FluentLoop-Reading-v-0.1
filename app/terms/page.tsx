@@ -2,13 +2,27 @@ import React from 'react';
 import type { Metadata } from 'next';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
 
 export const metadata: Metadata = {
   title: 'Terms of Use',
   description:
     'Terms of Use for the FluentLoop Reading academic English reading and IELTS practice platform.',
   alternates: {
-    canonical: '/terms',
+    canonical: buildCanonicalUrl('/terms'),
+  },
+  openGraph: {
+    title: 'Terms of Use | FluentLoop Reading',
+    description:
+      'Terms of Use for the FluentLoop Reading academic English reading and IELTS practice platform.',
+    url: buildCanonicalUrl('/terms'),
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Terms of Use | FluentLoop Reading',
+    description:
+      'Terms of Use for the FluentLoop Reading academic English reading and IELTS practice platform.',
   },
 };
 

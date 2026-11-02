@@ -228,11 +228,13 @@ export interface SavedVocabularyItem {
   updatedAt: string;
 }
 
+export type PlacementLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1';
+
 export interface UserReadingProfile {
   uid: string;
   displayName: string;
   preferredLevel: CEFRLevel;
-  placementLevel?: CEFRLevel;
+  placementLevel?: PlacementLevel;
   placementSessionId?: string;
   placementCompletedAt?: string;
   startingLevel?: CEFRLevel;
@@ -240,6 +242,8 @@ export interface UserReadingProfile {
   currentDifficultyScore?: number;
   consecutivePasses?: number;
   consecutiveFailures?: number;
+  adaptiveProfileVersion?: number;
+  lastProcessedAttemptId?: string;
   showArabicTranslation: boolean;
   fontSize: 'sm' | 'md' | 'lg' | 'xl';
   completedCount: number;
@@ -253,10 +257,16 @@ export interface AdaptiveRecommendation {
   recommendedLevel: CEFRLevel;
   action: 'easier' | 'similar' | 'harder';
   reason: string;
-  confidenceReady: boolean; // True when >= 3 completed lessons exist at current level
+  confidenceReady: boolean; // True when >= 3 completed lessons exist at current level or authoritative adaptive profile is active
   completedAtCurrentLevel: number;
   recentAverageAccuracy: number;
+  currentDifficultyScore?: number;
+  difficultyRange?: { min: number; max: number };
+  consecutivePasses?: number;
+  consecutiveFailures?: number;
+  boundaryStreakRequired?: number;
   weakestQuestionTypes: { type: QuestionType; label: string; accuracy: number }[];
   weakestTopics: { topic: AcademicTopic; accuracy: number }[];
   suggestedLessons: ReadingLesson[];
 }
+

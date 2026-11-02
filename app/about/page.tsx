@@ -3,13 +3,27 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
 
 export const metadata: Metadata = {
   title: 'About FluentLoop Reading — Academic English & IELTS Practice',
   description:
-    'Learn how FluentLoop Reading helps English learners build academic reading stamina, contextual vocabulary, and IELTS comprehension skills across CEFR A1–C1.',
+    'Learn how FluentLoop Reading helps English learners build academic reading stamina, contextual vocabulary, and IELTS comprehension skills across CEFR A1–C2.',
   alternates: {
-    canonical: '/about',
+    canonical: buildCanonicalUrl('/about'),
+  },
+  openGraph: {
+    title: 'About FluentLoop Reading — Academic English & IELTS Practice | FluentLoop',
+    description:
+      'Learn how FluentLoop Reading helps English learners build academic reading stamina, contextual vocabulary, and IELTS comprehension skills across CEFR A1–C2.',
+    url: buildCanonicalUrl('/about'),
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'About FluentLoop Reading — Academic English & IELTS Practice',
+    description:
+      'Learn how FluentLoop Reading helps English learners build academic reading stamina, contextual vocabulary, and IELTS comprehension skills across CEFR A1–C2.',
   },
 };
 
@@ -29,7 +43,7 @@ export default function AboutPage() {
           <p className="text-base sm:text-lg text-[#76675B] leading-relaxed">
             FluentLoop Reading is an academic English reading and vocabulary platform designed to
             help learners transition from foundational reading comprehension (CEFR A1–A2) to
-            university-level and IELTS Academic texts (CEFR B1–C1).
+            university-level, IELTS Academic, and mastery-level scholarly texts (CEFR B1–C2).
           </p>
         </header>
 
@@ -54,9 +68,9 @@ export default function AboutPage() {
               IELTS Academic question formats.
             </li>
             <li>
-              <strong>Gradual Adaptive Progression:</strong> Learners choose a comfortable starting
-              CEFR level without a high-stress placement test, and passages gradually adapt as
-              comprehension accuracy improves.
+              <strong>Gradual Adaptive Progression:</strong> Learners begin with a 3-passage
+              placement check (assigning a starting level from A1 to C1) and progress adaptively
+              across CEFR A1–C2 as sustained comprehension accuracy improves.
             </li>
           </ul>
         </section>
@@ -65,9 +79,23 @@ export default function AboutPage() {
           <h2 className="font-display text-xl font-bold text-[#171615]">
             Questions or Feedback?
           </h2>
-          <p className="text-xs sm:text-sm text-[#76675B]">
-            Visit our <Link href="/contact" className="font-semibold text-[#A63816] underline">Contact & Support</Link> page or review our{' '}
-            <Link href="/privacy" className="font-semibold text-[#A63816] underline">Privacy Policy</Link>.
+          <p className="text-xs sm:text-sm text-[#76675B] leading-relaxed">
+            For questions about reading passages, comprehension grading, or account data requests,
+            visit our{' '}
+            <Link
+              href="/contact"
+              className="font-semibold text-[#A63816] hover:underline focus-visible:outline-none focus-visible:underline"
+            >
+              Contact & Learner Support
+            </Link>{' '}
+            page or review our{' '}
+            <Link
+              href="/privacy"
+              className="font-semibold text-[#A63816] hover:underline focus-visible:outline-none focus-visible:underline"
+            >
+              Privacy Policy & Cookie Disclosure
+            </Link>
+            .
           </p>
         </section>
       </main>

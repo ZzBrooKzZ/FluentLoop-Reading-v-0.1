@@ -14,6 +14,7 @@ import {
   resolvePlacementGuestSecret,
   verifyPlacementGuestToken,
 } from '@/src/server/placementToken';
+import { initializePlacementAdaptiveProfileTransactional } from '@/src/server/userProfileRepository';
 
 export const runtime = 'nodejs';
 
@@ -95,6 +96,21 @@ export async function POST(req: NextRequest) {
       verifiedUid,
       verifiedGuestTokenHash,
     });
+
+    if (
+      verifiedUid &&
+      result.session.status === 'completed' &&
+      result.session.recommendedLevel
+    ) {
+      await initializePlacementAdaptiveProfileTransactional({
+        uid: verifiedUid,
+        recommendedLevel: result.session.recommendedLevel,
+        recommendedDifficultyScore: result.session.recommendedDifficultyScore,
+        placementSessionId: result.session.id,
+        placementCompletedAt: result.session.finalizedAt || result.session.updatedAt,
+      });
+    }
+
     return NextResponse.json(result, { status: 200 });
   } catch (err: any) {
     if (err instanceof PlacementSecretConfigurationError) {

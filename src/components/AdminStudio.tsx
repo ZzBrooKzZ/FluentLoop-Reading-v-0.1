@@ -369,7 +369,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
             Content Studio & Curriculum CMS
           </h1>
           <p className="mt-1 text-sm text-[#76675B]">
-            Create, annotate, validate, and bulk-import CEFR A1–C1 academic reading lessons with English-to-English contextual vocabulary.
+            Create, annotate, validate, and bulk-import CEFR A1–C2 academic reading lessons with English-to-English contextual vocabulary.
           </p>
         </div>
 
@@ -1584,7 +1584,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
           {/* Coverage by CEFR Level */}
           <div className="rounded-xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 space-y-4">
             <h4 className="font-display text-lg font-bold text-[#171615]">
-              Coverage Breakdown by CEFR Level (A1–C1)
+              Coverage Breakdown by CEFR Level (A1–C2)
             </h4>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">

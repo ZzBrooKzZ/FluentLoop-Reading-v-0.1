@@ -25,3 +25,8 @@ env:
     availability:
       - BUILD
       - RUNTIME
+  - variable: APP_URL
+    value: https://fluentloop.space
+    availability:
+      - BUILD
+      - RUNTIME

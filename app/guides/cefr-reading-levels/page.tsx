@@ -4,20 +4,29 @@ import type { Metadata } from 'next';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
 import { AdSenseSlotReserve } from '@/src/components/AdSenseSlotReserve';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
+
+const GUIDE_CANONICAL_URL = buildCanonicalUrl('/guides/cefr-reading-levels');
 
 export const metadata: Metadata = {
-  title: 'CEFR Reading Levels (A1 to C1) & Academic Stamina Guide',
+  title: 'CEFR Reading Levels (A1 to C2) & Academic Stamina Guide',
   description:
-    'Understand how English reading passages progress from CEFR A1 beginner texts to B2 and C1 university-level academic articles, word counts, and adaptive progression.',
+    'Understand how English reading passages progress from CEFR A1 beginner texts to B2, C1, and C2 university-level academic articles, word counts, and adaptive progression.',
   alternates: {
-    canonical: '/guides/cefr-reading-levels',
+    canonical: GUIDE_CANONICAL_URL,
   },
   openGraph: {
-    title: 'CEFR Reading Levels (A1 to C1) & Academic Stamina Guide | FluentLoop',
+    title: 'CEFR Reading Levels (A1 to C2) & Academic Stamina Guide | FluentLoop',
     description:
-      'Compare passage word counts, lexical density, sentence structure, and comprehension tasks across CEFR A1, A2, B1, B2, and C1 reading levels.',
-    url: '/guides/cefr-reading-levels',
+      'Compare passage word counts, lexical density, sentence structure, and comprehension tasks across CEFR A1, A2, B1, B2, C1, and C2 reading levels.',
+    url: GUIDE_CANONICAL_URL,
     type: 'article',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'CEFR Reading Levels (A1 to C2) & Academic Stamina Guide | FluentLoop',
+    description:
+      'Compare passage word counts, lexical density, sentence structure, and comprehension tasks across CEFR A1, A2, B1, B2, C1, and C2 reading levels.',
   },
 };
 
@@ -133,14 +142,16 @@ export default function CefrReadingLevelsGuidePage() {
             How Adaptive Progression Works in FluentLoop
           </h2>
           <p className="text-sm text-[#76675B] leading-relaxed">
-            When you choose a comfortable starting level, FluentLoop selects unseen passages that
-            match your current reading comfort. As you complete first-time assessments with strong
-            comprehension accuracy, the system gradually introduces more demanding passages within
-            your CEFR band before advancing you to the next CEFR level.
+            Our initial 3-passage placement assessment evaluates your starting reading comfort from
+            CEFR A1 through C1 (with C1 as the maximum initial placement level). As you complete
+            first-time assessments with strong comprehension accuracy, the system gradually
+            introduces more demanding passages within your CEFR band before advancing you to the
+            next level—including unlocking C2 Mastery after sustained high-accuracy performance at C1.
           </p>
           <p className="text-sm text-[#76675B] leading-relaxed">
-            Reviewing completed lessons or practicing a passage a second time is always encouraged
-            and never penalizes your adaptive standing.
+            If a passage band feels too demanding across multiple attempts, difficulty also steps
+            down smoothly to reinforce comprehension. Reviewing completed lessons or practicing a
+            passage a second time is always encouraged and never penalizes your adaptive standing.
           </p>
         </section>
       </main>

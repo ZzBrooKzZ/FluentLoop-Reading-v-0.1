@@ -21,6 +21,8 @@ export const ADAPTIVE_SETTINGS = {
   candidateTolerance: 4,
 } as const;
 
+export const ADAPTIVE_PROFILE_SCHEMA_VERSION = 1;
+
 export interface AdaptiveProfile {
   startingLevel: CEFRLevel;
   currentLevel: CEFRLevel;
@@ -29,31 +31,183 @@ export interface AdaptiveProfile {
   consecutiveFailures: number;
 }
 
+export function isValidAdaptiveLevel(level: unknown): level is CEFRLevel {
+  return typeof level === 'string' && ADAPTIVE_LEVELS.includes(level as CEFRLevel);
+}
+
 export function createAdaptiveProfile(startingLevel: CEFRLevel): AdaptiveProfile {
-  const range = DIFFICULTY_RANGES[startingLevel];
+  const safeLevel: CEFRLevel = isValidAdaptiveLevel(startingLevel) ? startingLevel : 'B1';
+  const range = DIFFICULTY_RANGES[safeLevel];
   return {
-    startingLevel,
-    currentLevel: startingLevel,
+    startingLevel: safeLevel,
+    currentLevel: safeLevel,
     currentDifficultyScore: Math.min(range.max, range.min + ADAPTIVE_SETTINGS.difficultyStep),
     consecutivePasses: 0,
     consecutiveFailures: 0,
   };
 }
 
-/** Consistent offline rating: sentence length, lexical length, and question demands. */
+export interface RawStoredAdaptiveProfile {
+  startingLevel?: unknown;
+  currentLevel?: unknown;
+  preferredLevel?: unknown;
+  placementLevel?: unknown;
+  currentDifficultyScore?: unknown;
+  consecutivePasses?: unknown;
+  consecutiveFailures?: unknown;
+  adaptiveProfileVersion?: unknown;
+}
+
+/**
+ * Safely hydrates an authoritative AdaptiveProfile from stored user profile fields.
+ * Preserves existing preferredLevel / placementLevel (including C1 and C2),
+ * clamps or initializes currentDifficultyScore inside DIFFICULTY_RANGES[currentLevel],
+ * and initializes missing streak counters to 0 without resetting users to A1.
+ */
+export function normalizeAdaptiveProfile(
+  raw: RawStoredAdaptiveProfile | null | undefined,
+  fallbackLevel: CEFRLevel = 'B1'
+): AdaptiveProfile {
+  const safeFallback: CEFRLevel = isValidAdaptiveLevel(fallbackLevel) ? fallbackLevel : 'B1';
+  const currentLevel: CEFRLevel = isValidAdaptiveLevel(raw?.currentLevel)
+    ? raw.currentLevel
+    : isValidAdaptiveLevel(raw?.preferredLevel)
+      ? raw.preferredLevel
+      : isValidAdaptiveLevel(raw?.placementLevel)
+        ? raw.placementLevel
+        : isValidAdaptiveLevel(raw?.startingLevel)
+          ? raw.startingLevel
+          : safeFallback;
+
+  const startingLevel: CEFRLevel = isValidAdaptiveLevel(raw?.startingLevel)
+    ? raw.startingLevel
+    : isValidAdaptiveLevel(raw?.placementLevel)
+      ? raw.placementLevel
+      : currentLevel === 'C2'
+        ? 'C1'
+        : currentLevel;
+
+  const range = DIFFICULTY_RANGES[currentLevel];
+  const defaultScore = Math.min(range.max, range.min + ADAPTIVE_SETTINGS.difficultyStep);
+  const rawScore = raw?.currentDifficultyScore;
+  const currentDifficultyScore =
+    typeof rawScore === 'number' && Number.isFinite(rawScore)
+      ? Math.max(range.min, Math.min(range.max, Math.round(rawScore)))
+      : defaultScore;
+
+  const rawPasses = raw?.consecutivePasses;
+  const consecutivePasses =
+    typeof rawPasses === 'number' && Number.isFinite(rawPasses) && rawPasses >= 0
+      ? Math.min(ADAPTIVE_SETTINGS.boundaryStreakRequired, Math.floor(rawPasses))
+      : 0;
+
+  const rawFailures = raw?.consecutiveFailures;
+  const consecutiveFailures =
+    typeof rawFailures === 'number' && Number.isFinite(rawFailures) && rawFailures >= 0
+      ? Math.min(ADAPTIVE_SETTINGS.boundaryStreakRequired, Math.floor(rawFailures))
+      : 0;
+
+  return {
+    startingLevel,
+    currentLevel,
+    currentDifficultyScore,
+    consecutivePasses,
+    consecutiveFailures,
+  };
+}
+
+/**
+ * Empirically calibrated per-band linguistic baselines across the FluentLoop reading corpus:
+ * - asl: average sentence length (words per sentence)
+ * - awl: average lexical word length (characters per word)
+ * - w7: share of words with >= 7 alphabetic characters
+ * - w9: share of words with >= 9 alphabetic characters
+ * - clause: internal clause punctuation density (commas, semicolons, colons, dashes per sentence)
+ * - wc: passage word count stamina range
+ */
+const LEVEL_LINGUISTIC_NORMS: Record<
+  CEFRLevel,
+  {
+    asl: [number, number];
+    awl: [number, number];
+    w7: [number, number];
+    w9: [number, number];
+    clause: [number, number];
+    wc: [number, number];
+  }
+> = {
+  A1: { asl: [9.3, 10.6], awl: [4.55, 4.78], w7: [0.16, 0.235], w9: [0.035, 0.068], clause: [0.42, 0.68], wc: [188, 206] },
+  A2: { asl: [12.1, 13.5], awl: [4.88, 5.15], w7: [0.23, 0.305], w9: [0.068, 0.115], clause: [0.68, 0.90], wc: [286, 308] },
+  B1: { asl: [16.1, 17.6], awl: [5.38, 5.65], w7: [0.33, 0.388], w9: [0.125, 0.175], clause: [0.95, 1.15], wc: [478, 505] },
+  B2: { asl: [19.8, 21.3], awl: [5.72, 6.02], w7: [0.39, 0.455], w9: [0.180, 0.235], clause: [1.02, 1.25], wc: [740, 770] },
+  C1: { asl: [23.3, 25.4], awl: [6.08, 6.36], w7: [0.455, 0.515], w9: [0.240, 0.292], clause: [1.06, 1.26], wc: [935, 962] },
+  C2: { asl: [26.8, 30.8], awl: [6.40, 6.55], w7: [0.515, 0.548], w9: [0.300, 0.338], clause: [1.14, 1.48], wc: [1110, 1142] },
+};
+
+function normalizeBandFeature(value: number, [low, high]: [number, number]): number {
+  if (high <= low) return 0.5;
+  return Math.max(0, Math.min(1, (value - low) / (high - low)));
+}
+
+/**
+ * Consistent offline rating within each CEFR band's DIFFICULTY_RANGES[level]:
+ * combines sentence length, lexical complexity (mean word length, >=7-char and >=9-char academic density),
+ * syntactic clause density, passage length stamina, and question cognitive demand.
+ */
 export function estimateLessonDifficulty(lesson: ReadingLesson): number {
   const range = DIFFICULTY_RANGES[lesson.level];
-  const words = lesson.passage.match(/[A-Za-z][A-Za-z'-]*/g) || [];
-  const sentences = lesson.passage.match(/[^.!?]+[.!?]+/g) || [lesson.passage];
-  const averageSentenceLength = words.length / Math.max(1, sentences.length);
-  const longWordShare = words.filter((word) => word.replace(/[^A-Za-z]/g, '').length >= 9).length / Math.max(1, words.length);
-  const demandingQuestionShare = lesson.questions.filter((question) =>
-    question.difficulty === 'challenging' || ['matching_headings', 'matching_information', 'matching_features', 'yes_no_not_given'].includes(question.type)
-  ).length / Math.max(1, lesson.questions.length);
-  const sentenceComplexity = Math.min(1, averageSentenceLength / 32);
-  const lexicalComplexity = Math.min(1, longWordShare / 0.24);
-  const featureScore = (sentenceComplexity * 0.4) + (lexicalComplexity * 0.4) + (demandingQuestionShare * 0.2);
-  const score = range.min + Math.round(featureScore * (range.max - range.min));
+  const norms = LEVEL_LINGUISTIC_NORMS[lesson.level];
+  const words = (lesson.passage.match(/[A-Za-z][A-Za-z'-]*/g) || [])
+    .map((w) => w.replace(/[^A-Za-z]/g, ''))
+    .filter(Boolean);
+  const wordCount = Math.max(1, words.length);
+  const sentences = (lesson.passage.match(/[^.!?]+[.!?]+/g) || [lesson.passage])
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const sentenceCount = Math.max(1, sentences.length);
+
+  const averageSentenceLength = wordCount / sentenceCount;
+  const averageWordLength = words.reduce((acc, w) => acc + w.length, 0) / wordCount;
+  const mediumLongWordShare = words.filter((w) => w.length >= 7).length / wordCount;
+  const longWordShare = words.filter((w) => w.length >= 9).length / wordCount;
+  const clauseMarks = (lesson.passage.match(/[,;:—–-]/g) || []).length;
+  const clauseDensity = clauseMarks / sentenceCount;
+
+  const demandingQuestionShare =
+    lesson.questions.length > 0
+      ? lesson.questions.filter(
+          (question) =>
+            question.difficulty === 'challenging' ||
+            [
+              'matching_headings',
+              'matching_information',
+              'matching_features',
+              'matching_sentence_endings',
+              'yes_no_not_given',
+              'short_answer',
+            ].includes(question.type)
+        ).length / lesson.questions.length
+      : 0.5;
+
+  const fAsl = normalizeBandFeature(averageSentenceLength, norms.asl);
+  const fAwl = normalizeBandFeature(averageWordLength, norms.awl);
+  const fW7 = normalizeBandFeature(mediumLongWordShare, norms.w7);
+  const fW9 = normalizeBandFeature(longWordShare, norms.w9);
+  const fClause = normalizeBandFeature(clauseDensity, norms.clause);
+  const fWc = normalizeBandFeature(wordCount, norms.wc);
+
+  const rawComposite =
+    fAsl * 0.25 +
+    fAwl * 0.20 +
+    fW7 * 0.18 +
+    fW9 * 0.17 +
+    fClause * 0.10 +
+    fWc * 0.05 +
+    demandingQuestionShare * 0.05;
+
+  // Center at 0.5 and expand intra-band contrast so each CEFR band spans its full [min, max] range
+  const stretched = Math.max(0, Math.min(1, 0.5 + (rawComposite - 0.5) * 1.65));
+  const score = range.min + Math.round(stretched * (range.max - range.min));
   return Math.max(range.min, Math.min(range.max, score));
 }
 

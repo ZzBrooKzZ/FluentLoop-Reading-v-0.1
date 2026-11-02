@@ -2,13 +2,27 @@ import React from 'react';
 import type { Metadata } from 'next';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
 
 export const metadata: Metadata = {
   title: 'Privacy Policy & Cookie Disclosure',
   description:
     'Privacy Policy for FluentLoop Reading covering Firebase Authentication, Cloud Firestore storage, Gemini semantic grading, cookies, and Google AdSense disclosures.',
   alternates: {
-    canonical: '/privacy',
+    canonical: buildCanonicalUrl('/privacy'),
+  },
+  openGraph: {
+    title: 'Privacy Policy & Cookie Disclosure | FluentLoop Reading',
+    description:
+      'Privacy Policy for FluentLoop Reading covering Firebase Authentication, Cloud Firestore storage, Gemini semantic grading, cookies, and Google AdSense disclosures.',
+    url: buildCanonicalUrl('/privacy'),
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Privacy Policy & Cookie Disclosure | FluentLoop Reading',
+    description:
+      'Privacy Policy for FluentLoop Reading covering Firebase Authentication, Cloud Firestore storage, Gemini semantic grading, cookies, and Google AdSense disclosures.',
   },
 };
 
@@ -117,9 +131,12 @@ export default function PrivacyPolicyPage() {
           <p>
             You can clear local browser data at any time by clearing your site storage, or request
             deletion of your synchronized Firebase account and Firestore records by contacting{' '}
-            <span className="font-mono-code text-xs font-semibold text-[#A63816]">
-              megritarek19@gmail.com
-            </span>
+            <a
+              href="mailto:hello@fluentloop.space"
+              className="font-mono-code text-xs font-semibold text-[#A63816] hover:underline focus:outline-none focus:underline"
+            >
+              hello@fluentloop.space
+            </a>
             .
           </p>
         </section>

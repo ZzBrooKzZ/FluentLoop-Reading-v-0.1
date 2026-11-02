@@ -17,6 +17,8 @@ import {
 import {
   getAllDiagnosticPassages,
   getDiagnosticPassageById,
+  getPlacementDiagnosticPassageById,
+  getPlacementDiagnosticPassages,
   sanitizeLessonForLearner,
 } from './lessonRepository';
 import { getServerFirestore } from './firebaseAdmin';
@@ -25,7 +27,12 @@ import {
   verifyStoredGuestTokenHash,
 } from './placementToken';
 
-export { getAllDiagnosticPassages, getDiagnosticPassageById };
+export {
+  getAllDiagnosticPassages,
+  getDiagnosticPassageById,
+  getPlacementDiagnosticPassageById,
+  getPlacementDiagnosticPassages,
+};
 
 export const PLACEMENT_SESSIONS_COLLECTION = 'placement_sessions';
 export const PLACEMENT_USER_INDEX_COLLECTION = 'placement_user_index';
@@ -678,7 +685,7 @@ export async function startOrResumePlacementSessionPersistent(params: {
     typeof params.nowMs === 'number' && Number.isFinite(params.nowMs)
       ? Math.floor(params.nowMs)
       : Date.now();
-  const diagnosticBank = getAllDiagnosticPassages();
+  const diagnosticBank = getPlacementDiagnosticPassages();
   const verifiedUid = params.verifiedUid?.trim() || null;
   const isGuest = !verifiedUid;
   const preIssuedGuestToken = isGuest
@@ -826,7 +833,7 @@ export async function startOrResumePlacementSessionPersistent(params: {
     }
 
     const activePassage = freshSession.activePassageId
-      ? getDiagnosticPassageById(freshSession.activePassageId)
+      ? getPlacementDiagnosticPassageById(freshSession.activePassageId)
       : null;
 
     return {
@@ -858,11 +865,11 @@ export async function savePlacementDraftAnswersPersistent(params: {
     typeof params.nowMs === 'number' && Number.isFinite(params.nowMs)
       ? Math.floor(params.nowMs)
       : Date.now();
-  const passage = getDiagnosticPassageById(params.passageId);
+  const passage = getPlacementDiagnosticPassageById(params.passageId);
   if (!passage) {
     throw new PlacementHttpError(
       400,
-      `Diagnostic passage "${params.passageId}" not found.`
+      `Diagnostic passage "${params.passageId}" not found or not eligible for initial placement.`
     );
   }
 
@@ -904,6 +911,13 @@ export async function savePlacementDraftAnswersPersistent(params: {
         expired: isPlacementSessionExpired(session, nowMs),
         serverNowMs: nowMs,
       };
+    }
+
+    if (session.activePassageId && passage.id !== session.activePassageId) {
+      throw new PlacementHttpError(
+        409,
+        `Draft passage "${passage.id}" does not match the active placement passage "${session.activePassageId}".`
+      );
     }
 
     const nextDraftCount = (session.draftSaveCount || 0) + 1;
@@ -959,12 +973,12 @@ export async function submitPlacementPassagePersistent(params: {
     typeof params.nowMs === 'number' && Number.isFinite(params.nowMs)
       ? Math.floor(params.nowMs)
       : Date.now();
-  const diagnosticBank = getAllDiagnosticPassages();
-  const passage = getDiagnosticPassageById(params.passageId);
+  const diagnosticBank = getPlacementDiagnosticPassages();
+  const passage = getPlacementDiagnosticPassageById(params.passageId);
   if (!passage) {
     throw new PlacementHttpError(
       400,
-      `Diagnostic passage "${params.passageId}" not found.`
+      `Diagnostic passage "${params.passageId}" not found or not eligible for initial placement.`
     );
   }
 
@@ -999,6 +1013,25 @@ export async function submitPlacementPassagePersistent(params: {
       );
     }
 
+    // Idempotency guard: if this passageId was already graded in this session, return existing state
+    const existingStep = session.steps.find((s) => s.passageId === passage.id);
+    if (existingStep) {
+      const currentNextPassage = session.activePassageId
+        ? getPlacementDiagnosticPassageById(session.activePassageId)
+        : null;
+      return {
+        session: sanitizePlacementSessionForClient(session),
+        stepResult: existingStep,
+        nextPassage: currentNextPassage
+          ? sanitizeLessonForLearner(currentNextPassage)
+          : null,
+        wasDuplicate: true,
+        lateRejected: !params.autoSubmitOnTimeout && isPlacementSessionExpired(session, nowMs),
+        timedOut: Boolean(session.timedOut),
+        serverNowMs: nowMs,
+      };
+    }
+
     if (session.status === 'completed') {
       const lastStep =
         session.steps.find((s) => s.passageId === params.passageId) ||
@@ -1013,6 +1046,14 @@ export async function submitPlacementPassagePersistent(params: {
         timedOut: Boolean(session.timedOut),
         serverNowMs: nowMs,
       };
+    }
+
+    // Active passage validation: submitted passage must match the session's activePassageId
+    if (!session.activePassageId || passage.id !== session.activePassageId) {
+      throw new PlacementHttpError(
+        409,
+        `Submitted diagnostic passage "${passage.id}" does not match the active placement passage "${session.activePassageId || 'none'}".`
+      );
     }
 
     const nextSubmitCount = (session.submitAttemptCount || 0) + 1;
@@ -1406,7 +1447,7 @@ export function startOrResumePlacementSessionOnServer(params: {
       ? Math.floor(params.nowMs)
       : Date.now();
   const registry = getPlacementRegistry();
-  const diagnosticBank = getAllDiagnosticPassages();
+  const diagnosticBank = getPlacementDiagnosticPassages();
   const userId = params.userId?.trim() || 'guest';
   const isAnonymous = params.isAnonymous ?? userId === 'guest';
 
@@ -1521,7 +1562,7 @@ export function startOrResumePlacementSessionOnServer(params: {
   syncRegistryToDisk();
 
   const activePassage = fresh.activePassageId
-    ? getDiagnosticPassageById(fresh.activePassageId)
+    ? getPlacementDiagnosticPassageById(fresh.activePassageId)
     : null;
 
   return {
@@ -1568,6 +1609,15 @@ export function savePlacementDraftAnswersOnServer(params: {
     throw new Error('Placement session belongs to a different learner account.');
   }
 
+  const passage = getPlacementDiagnosticPassageById(params.passageId);
+  if (!passage) {
+    throw new Error(`Diagnostic passage "${params.passageId}" not found or not eligible for initial placement.`);
+  }
+
+  if (session.status === 'in_progress' && session.activePassageId && passage.id !== session.activePassageId) {
+    throw new Error(`Draft passage "${passage.id}" does not match the active placement passage "${session.activePassageId}".`);
+  }
+
   const result = saveDraftAnswersInPlacementSession(
     session,
     params.passageId,
@@ -1611,11 +1661,11 @@ export function submitPlacementPassageOnServer(params: {
       ? Math.floor(params.nowMs)
       : Date.now();
   const registry = getPlacementRegistry();
-  const diagnosticBank = getAllDiagnosticPassages();
-  const passage = getDiagnosticPassageById(params.passageId);
+  const diagnosticBank = getPlacementDiagnosticPassages();
+  const passage = getPlacementDiagnosticPassageById(params.passageId);
 
   if (!passage) {
-    throw new Error(`Diagnostic passage "${params.passageId}" not found.`);
+    throw new Error(`Diagnostic passage "${params.passageId}" not found or not eligible for initial placement.`);
   }
 
   const existingCheck = registry.sessions.get(params.sessionId);
@@ -1653,7 +1703,7 @@ export function submitPlacementPassageOnServer(params: {
       for (const rawStep of params.priorStepsForRecovery.slice(0, 2)) {
         if (!rawStep || typeof rawStep.passageId !== 'string') continue;
         if (rawStep.passageId === params.passageId) continue;
-        const priorPassage = getDiagnosticPassageById(rawStep.passageId);
+        const priorPassage = getPlacementDiagnosticPassageById(rawStep.passageId);
         if (!priorPassage) continue;
         const appliedPrior = applyDiagnosticSubmissionToSession(
           reconstructed,
@@ -1674,6 +1724,24 @@ export function submitPlacementPassageOnServer(params: {
     throw new Error('Placement session belongs to a different learner account.');
   }
 
+  const existingStep = session.steps.find((s) => s.passageId === passage.id);
+  if (existingStep) {
+    const currentNextPassage = session.activePassageId
+      ? getPlacementDiagnosticPassageById(session.activePassageId)
+      : null;
+    return {
+      session,
+      stepResult: existingStep,
+      nextPassage: currentNextPassage
+        ? sanitizeLessonForLearner(currentNextPassage)
+        : null,
+      wasDuplicate: true,
+      lateRejected: !params.autoSubmitOnTimeout && isPlacementSessionExpired(session, nowMs),
+      timedOut: Boolean(session.timedOut),
+      serverNowMs: nowMs,
+    };
+  }
+
   if (session.status === 'completed') {
     const lastStep =
       session.steps.find((s) => s.passageId === params.passageId) ||
@@ -1688,6 +1756,12 @@ export function submitPlacementPassageOnServer(params: {
       timedOut: Boolean(session.timedOut),
       serverNowMs: nowMs,
     };
+  }
+
+  if (!session.activePassageId || passage.id !== session.activePassageId) {
+    throw new Error(
+      `Submitted diagnostic passage "${passage.id}" does not match the active placement passage "${session.activePassageId || 'none'}".`
+    );
   }
 
   if (params.autoSubmitOnTimeout) {
@@ -1812,7 +1886,7 @@ export function finalizeExpiredPlacementSessionOnServer(params: {
     throw new Error('Placement session belongs to a different learner account.');
   }
 
-  const diagnosticBank = getAllDiagnosticPassages();
+  const diagnosticBank = getPlacementDiagnosticPassages();
   const finalized = finalizePlacementSessionOnTimeout(
     session,
     diagnosticBank,
@@ -1851,7 +1925,7 @@ export function linkPlacementSessionToUserOnServer(params: {
     Array.isArray(params.recoverySteps) &&
     params.recoverySteps.length >= 3
   ) {
-    const diagnosticBank = getAllDiagnosticPassages();
+    const diagnosticBank = getPlacementDiagnosticPassages();
     let recovered = createPlacementSession(
       params.targetUserId,
       false,
@@ -1861,7 +1935,7 @@ export function linkPlacementSessionToUserOnServer(params: {
       recovered = { ...recovered, id: params.sessionId };
     }
     for (const rawStep of params.recoverySteps.slice(0, 3)) {
-      const passage = getDiagnosticPassageById(rawStep.passageId);
+      const passage = getPlacementDiagnosticPassageById(rawStep.passageId);
       if (!passage) continue;
       const applied = applyDiagnosticSubmissionToSession(
         recovered,

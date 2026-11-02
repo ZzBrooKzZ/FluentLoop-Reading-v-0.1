@@ -4,20 +4,29 @@ import type { Metadata } from 'next';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
 import { AdSenseSlotReserve } from '@/src/components/AdSenseSlotReserve';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
+
+const GUIDE_CANONICAL_URL = buildCanonicalUrl('/guides/ielts-academic-reading');
 
 export const metadata: Metadata = {
   title: 'IELTS Academic Reading Preparation Guide & Question Formats',
   description:
     'Master all 12 IELTS Academic Reading question types including True/False/Not Given, Yes/No/Not Given, Matching Headings, Summary Completion, and strict word-limit rules.',
   alternates: {
-    canonical: '/guides/ielts-academic-reading',
+    canonical: GUIDE_CANONICAL_URL,
   },
   openGraph: {
     title: 'IELTS Academic Reading Preparation Guide & Question Formats | FluentLoop',
     description:
       'Detailed breakdown of IELTS Academic Reading question formats, strict word-limit conventions, and evidence localization strategies.',
-    url: '/guides/ielts-academic-reading',
+    url: GUIDE_CANONICAL_URL,
     type: 'article',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'IELTS Academic Reading Preparation Guide & Question Formats | FluentLoop',
+    description:
+      'Detailed breakdown of IELTS Academic Reading question formats, strict word-limit conventions, and evidence localization strategies.',
   },
 };
 
@@ -25,6 +34,7 @@ export default function IeltsAcademicReadingGuidePage() {
   const faqSchema = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
+    url: GUIDE_CANONICAL_URL,
     mainEntity: [
       {
         '@type': 'Question',
@@ -187,7 +197,7 @@ export default function IeltsAcademicReadingGuidePage() {
             </h2>
             <p className="text-xs sm:text-sm text-[#76675B]">
               Try our curated public sample passages or launch the adaptive reading workspace to
-              practice across CEFR A1–C1 levels.
+              practice across CEFR A1–C2 levels.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

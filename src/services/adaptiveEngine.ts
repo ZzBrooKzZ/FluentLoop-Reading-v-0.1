@@ -6,22 +6,41 @@ import {
   QuestionType,
   ReadingLesson,
 } from '../types/reading';
+import {
+  ADAPTIVE_LEVELS,
+  ADAPTIVE_SETTINGS,
+  AdaptiveProfile,
+  createAdaptiveProfile,
+  DIFFICULTY_RANGES,
+  getLessonDifficulty,
+  normalizeAdaptiveProfile,
+  selectNextLesson,
+} from './adaptiveLearning';
 import { QUESTION_TYPE_LABELS } from './gradingService';
 import { isQualifyingStreakAttempt, parseActivityTimestamp } from './streakService';
 
-const LEVEL_ORDER: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
-
 /**
- * Transparent, rule-based adaptive reading difficulty recommender.
- * Never automatically mutates the user's selected level after a single result;
- * requires at least 3 completed lessons at the current level to suggest a level shift,
- * and explains recommendations clearly.
+ * Authoritative, rule-based adaptive reading difficulty recommender.
+ * Driven directly by the learner's server-authoritative AdaptiveProfile
+ * (`DIFFICULTY_RANGES` and `ADAPTIVE_SETTINGS` from `adaptiveLearning.ts`),
+ * ensuring dashboard recommendations never diverge from actual progression rules
+ * or claim C2 readiness before the authoritative profile reaches C2.
  */
 export function computeAdaptiveRecommendation(
-  currentSelectedLevel: CEFRLevel,
+  profileOrLevel: AdaptiveProfile | CEFRLevel,
   attempts: LessonAttempt[],
-  allPublishedLessons: ReadingLesson[]
+  allPublishedLessons: ReadingLesson[],
+  difficultyOverrides: Record<string, number> = {}
 ): AdaptiveRecommendation {
+  const profile: AdaptiveProfile =
+    typeof profileOrLevel === 'string'
+      ? createAdaptiveProfile(profileOrLevel)
+      : normalizeAdaptiveProfile(profileOrLevel, profileOrLevel.currentLevel || 'B1');
+
+  const currentSelectedLevel: CEFRLevel = profile.currentLevel;
+  const recommendedLevel: CEFRLevel = profile.currentLevel;
+  const range = DIFFICULTY_RANGES[currentSelectedLevel];
+
   const completedAttempts = attempts
     .filter(isQualifyingStreakAttempt)
     .sort((a, b) => {
@@ -30,8 +49,7 @@ export function computeAdaptiveRecommendation(
       return timeB - timeA;
     });
 
-  // Deduplicate by lessonId at the current level (preferring first-time completion) so repeated
-  // practice attempts of the same passage do not inflate `completedAtCurrentLevel`.
+  // Deduplicate by lessonId at the current level (preferring first-time completion)
   const currentLevelAll = completedAttempts.filter((a) => a.level === currentSelectedLevel);
   const currentLevelByLesson = new Map<string, LessonAttempt>();
   for (const att of currentLevelAll) {
@@ -48,7 +66,6 @@ export function computeAdaptiveRecommendation(
   }
   const currentLevelAttempts = Array.from(currentLevelByLesson.values());
   const completedAtCurrentLevel = currentLevelAttempts.length;
-  const confidenceReady = completedAtCurrentLevel >= 3;
 
   // Compute recent accuracy at current level (last 5 distinct completed lessons at this level)
   const recentSlice = currentLevelAttempts.slice(0, 5);
@@ -59,7 +76,7 @@ export function computeAdaptiveRecommendation(
         )
       : 0;
 
-  // Aggregate accuracy by question type across all completed attempts
+  // Aggregate accuracy by question type and topic across all completed attempts
   const typeTotals: Record<string, { correct: number; total: number }> = {};
   const topicTotals: Record<string, { sumAccuracy: number; count: number }> = {};
 
@@ -99,44 +116,114 @@ export function computeAdaptiveRecommendation(
     .sort((a, b) => a.accuracy - b.accuracy)
     .slice(0, 3);
 
-  const currentIdx = LEVEL_ORDER.indexOf(currentSelectedLevel);
-  let recommendedLevel: CEFRLevel = currentSelectedLevel;
+  const currentIdx = ADAPTIVE_LEVELS.indexOf(currentSelectedLevel);
+  const nextLevel =
+    currentIdx >= 0 && currentIdx < ADAPTIVE_LEVELS.length - 1
+      ? ADAPTIVE_LEVELS[currentIdx + 1]
+      : null;
+  const prevLevel = currentIdx > 0 ? ADAPTIVE_LEVELS[currentIdx - 1] : null;
+
+  const atUpperBoundary =
+    profile.currentDifficultyScore >= range.max - ADAPTIVE_SETTINGS.difficultyStep;
+  const atLowerBoundary =
+    profile.currentDifficultyScore <= range.min + ADAPTIVE_SETTINGS.difficultyStep;
+
+  const confidenceReady =
+    completedAtCurrentLevel >= 2 ||
+    profile.consecutivePasses > 0 ||
+    profile.consecutiveFailures > 0 ||
+    atUpperBoundary;
+
   let action: 'easier' | 'similar' | 'harder' = 'similar';
   let reason = '';
 
-  if (completedAtCurrentLevel === 0) {
-    reason = `You have selected ${currentSelectedLevel}. Complete at least 3 passages at this level to unlock personalized level-progression recommendations.`;
-  } else if (!confidenceReady) {
-    reason = `You have completed ${completedAtCurrentLevel} of 3 required passages at ${currentSelectedLevel} (recent average: ${recentAverageAccuracy}%). We require at least 3 completed passages before suggesting a level change so a single result never skews your path.`;
-  } else if (recentAverageAccuracy >= 85 && currentIdx < LEVEL_ORDER.length - 1) {
-    recommendedLevel = LEVEL_ORDER[currentIdx + 1];
+  if (currentSelectedLevel === 'C2') {
+    if (atLowerBoundary && profile.consecutiveFailures > 0 && prevLevel) {
+      action = 'easier';
+      const remaining = Math.max(
+        1,
+        ADAPTIVE_SETTINGS.boundaryStreakRequired - profile.consecutiveFailures
+      );
+      reason = `You are at the lower difficulty boundary of C2 (${profile.currentDifficultyScore}/${range.max}) with ${profile.consecutiveFailures}/${ADAPTIVE_SETTINGS.boundaryStreakRequired} lower-boundary results below ${ADAPTIVE_SETTINGS.lowScore}%. One more result below ${ADAPTIVE_SETTINGS.lowScore}% (${remaining} remaining) on an entry-band C2 passage will adjust your level to ${prevLevel} to consolidate comprehension.`;
+    } else {
+      action = 'similar';
+      reason = `C2 Proficiency is active (difficulty target ${profile.currentDifficultyScore} in band ${range.min}–${range.max}${completedAtCurrentLevel > 0 ? `, ${recentAverageAccuracy}% recent accuracy` : ''}). Continue practising unseen C2 scholarly passages matched to your current difficulty target.`;
+    }
+  } else if (atUpperBoundary && nextLevel) {
     action = 'harder';
-    reason = `Strong mastery across ${completedAtCurrentLevel} passages at ${currentSelectedLevel} (${recentAverageAccuracy}% recent accuracy). You are ready to try ${recommendedLevel} passages with denser academic syntax and deeper inference questions.`;
-  } else if (recentAverageAccuracy >= 85 && currentIdx === LEVEL_ORDER.length - 1) {
-    recommendedLevel = 'C2';
-    action = 'similar';
-    reason = `Exceptional mastery across ${completedAtCurrentLevel} passages at C2 Proficiency (${recentAverageAccuracy}% recent accuracy), our highest CEFR reading level. Continue exploring unseen C2 scholarly passages to deepen your analytical stamina.`;
-  } else if (recentAverageAccuracy < 55 && currentIdx > 0) {
-    recommendedLevel = LEVEL_ORDER[currentIdx - 1];
+    const remainingPasses = Math.max(
+      1,
+      ADAPTIVE_SETTINGS.boundaryStreakRequired - profile.consecutivePasses
+    );
+    reason = `You have reached the upper difficulty boundary of ${currentSelectedLevel} (${profile.currentDifficultyScore}/${range.max}) with ${profile.consecutivePasses}/${ADAPTIVE_SETTINGS.boundaryStreakRequired} consecutive top-boundary passes (≥${ADAPTIVE_SETTINGS.highScore}%). Complete ${remainingPasses} more demanding upper-boundary ${currentSelectedLevel} passage${remainingPasses === 1 ? '' : 's'} at ≥${ADAPTIVE_SETTINGS.highScore}% to advance to ${nextLevel}.`;
+  } else if (atLowerBoundary && profile.consecutiveFailures > 0 && prevLevel) {
     action = 'easier';
-    reason = `Your recent accuracy across ${completedAtCurrentLevel} passages at ${currentSelectedLevel} is ${recentAverageAccuracy}%. Consolidating core vocabulary and sentence structures at ${recommendedLevel} will build stronger reading fluency.`;
-  } else {
-    recommendedLevel = currentSelectedLevel;
+    const remainingFailures = Math.max(
+      1,
+      ADAPTIVE_SETTINGS.boundaryStreakRequired - profile.consecutiveFailures
+    );
+    reason = `You are at the lower difficulty boundary of ${currentSelectedLevel} (${profile.currentDifficultyScore}/${range.max}) with ${profile.consecutiveFailures}/${ADAPTIVE_SETTINGS.boundaryStreakRequired} lower-boundary results below ${ADAPTIVE_SETTINGS.lowScore}%. If ${remainingFailures} more lower-boundary passage${remainingFailures === 1 ? ' is' : 's are'} below ${ADAPTIVE_SETTINGS.lowScore}%, your level will step down to ${prevLevel}.`;
+  } else if (completedAtCurrentLevel === 0) {
     action = 'similar';
-    reason = `Consistent progress at ${currentSelectedLevel} (${recentAverageAccuracy}% recent accuracy across ${completedAtCurrentLevel} passages). Continue practising ${currentSelectedLevel} passages—especially in topics or question formats where accuracy is below 75%.`;
+    reason = `Your active adaptive level is ${currentSelectedLevel} at difficulty target ${profile.currentDifficultyScore} (band ${range.min}–${range.max}). First-time completions ≥${ADAPTIVE_SETTINGS.highScore}% step difficulty up by +${ADAPTIVE_SETTINGS.difficultyStep} toward ${range.max}, where ${ADAPTIVE_SETTINGS.boundaryStreakRequired} consecutive top-boundary passes unlock ${nextLevel || currentSelectedLevel}.`;
+  } else {
+    action = 'similar';
+    reason = `Progressing within ${currentSelectedLevel} at difficulty target ${profile.currentDifficultyScore}/${range.max} (${recentAverageAccuracy}% recent accuracy across ${completedAtCurrentLevel} passage${completedAtCurrentLevel === 1 ? '' : 's'}). Scoring ≥${ADAPTIVE_SETTINGS.highScore}% advances your difficulty target toward the ${range.max} upper boundary required before promoting to ${nextLevel || currentSelectedLevel}.`;
   }
 
-  const completedLessonIds = new Set(completedAttempts.map((a) => a.lessonId));
-  const candidateLessons = allPublishedLessons.filter(
-    (l) => l.status === 'published' && l.level === recommendedLevel && !completedLessonIds.has(l.id)
+  const weakTopicSet = new Set(weakestTopics.map((w) => w.topic));
+  const primaryNext = selectNextLesson(
+    profile,
+    allPublishedLessons,
+    attempts,
+    difficultyOverrides,
+    () => 0
   );
 
-  // Prioritize weak topics if available
-  const weakTopicSet = new Set(weakestTopics.map((w) => w.topic));
-  const prioritized = [
-    ...candidateLessons.filter((l) => weakTopicSet.has(l.topic)),
-    ...candidateLessons.filter((l) => !weakTopicSet.has(l.topic)),
-  ].slice(0, 3);
+  const attemptedFirstTime = new Set(
+    attempts
+      .filter((attempt) => (attempt.attemptType || 'first') === 'first')
+      .map((attempt) => attempt.lessonId)
+  );
+
+  const unseenAtLevel = allPublishedLessons
+    .filter(
+      (l) =>
+        l.status === 'published' &&
+        !l.isDiagnostic &&
+        l.level === recommendedLevel &&
+        !attemptedFirstTime.has(l.id)
+    )
+    .sort((a, b) => {
+      const distA = Math.abs(
+        getLessonDifficulty(a, difficultyOverrides) - profile.currentDifficultyScore
+      );
+      const distB = Math.abs(
+        getLessonDifficulty(b, difficultyOverrides) - profile.currentDifficultyScore
+      );
+      if (distA !== distB) return distA - distB;
+      const weakDiff = (weakTopicSet.has(b.topic) ? 1 : 0) - (weakTopicSet.has(a.topic) ? 1 : 0);
+      if (weakDiff !== 0) return weakDiff;
+      return a.id.localeCompare(b.id);
+    });
+
+  const suggestedLessons: ReadingLesson[] = [];
+  if (primaryNext) {
+    suggestedLessons.push(primaryNext);
+  }
+  for (const candidate of unseenAtLevel) {
+    if (suggestedLessons.length >= 3) break;
+    if (!suggestedLessons.some((s) => s.id === candidate.id)) {
+      suggestedLessons.push(candidate);
+    }
+  }
+  if (suggestedLessons.length === 0) {
+    suggestedLessons.push(
+      ...allPublishedLessons
+        .filter((l) => l.status === 'published' && !l.isDiagnostic && l.level === recommendedLevel)
+        .slice(0, 3)
+    );
+  }
 
   return {
     currentSelectedLevel,
@@ -146,13 +233,14 @@ export function computeAdaptiveRecommendation(
     confidenceReady,
     completedAtCurrentLevel,
     recentAverageAccuracy,
+    currentDifficultyScore: profile.currentDifficultyScore,
+    difficultyRange: range,
+    consecutivePasses: profile.consecutivePasses,
+    consecutiveFailures: profile.consecutiveFailures,
+    boundaryStreakRequired: ADAPTIVE_SETTINGS.boundaryStreakRequired,
     weakestQuestionTypes,
     weakestTopics,
-    suggestedLessons:
-      prioritized.length > 0
-        ? prioritized
-        : allPublishedLessons
-            .filter((l) => l.status === 'published' && l.level === recommendedLevel)
-            .slice(0, 3),
+    suggestedLessons,
   };
 }
+

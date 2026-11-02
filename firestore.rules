@@ -45,6 +45,12 @@ service cloud.firestore {
       );
     }
 
+    function isValidPlacementLevel(level) {
+      return level is string && level.size() == 2 && (
+        level == 'A1' || level == 'A2' || level == 'B1' || level == 'B2' || level == 'C1'
+      );
+    }
+
     // Entity Blueprints
     function isValidUserProfile(data) {
       return data.keys().hasAll([
@@ -53,21 +59,35 @@ service cloud.firestore {
       ]) &&
       data.keys().hasOnly([
         'uid', 'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
-        'fontSize', 'completedCount', 'averageAccuracy', 'createdAt', 'updatedAt'
+        'fontSize', 'completedCount', 'averageAccuracy', 'currentDifficultyScore', 'consecutivePasses',
+        'consecutiveFailures', 'adaptiveProfileVersion', 'lastProcessedAttemptId', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.uid) &&
       data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
       isValidLevel(data.preferredLevel) &&
       (!data.keys().hasAny(['startingLevel']) || isValidLevel(data.startingLevel)) &&
-      (!data.keys().hasAny(['placementLevel']) || isValidLevel(data.placementLevel)) &&
+      (!data.keys().hasAny(['placementLevel']) || isValidPlacementLevel(data.placementLevel)) &&
+      (!data.keys().hasAny(['currentDifficultyScore']) || (
+        data.currentDifficultyScore is number && data.currentDifficultyScore >= 0 && data.currentDifficultyScore <= 120
+      )) &&
+      (!data.keys().hasAny(['consecutivePasses']) || (
+        data.consecutivePasses is number && data.consecutivePasses >= 0 && data.consecutivePasses <= 10
+      )) &&
+      (!data.keys().hasAny(['consecutiveFailures']) || (
+        data.consecutiveFailures is number && data.consecutiveFailures >= 0 && data.consecutiveFailures <= 10
+      )) &&
+      (!data.keys().hasAny(['adaptiveProfileVersion']) || (
+        data.adaptiveProfileVersion is number && data.adaptiveProfileVersion >= 1 && data.adaptiveProfileVersion <= 10
+      )) &&
+      (!data.keys().hasAny(['lastProcessedAttemptId']) || isValidId(data.lastProcessedAttemptId)) &&
       data.showArabicTranslation is bool &&
       data.fontSize is string && data.fontSize.size() == 2 && (
         data.fontSize == 'sm' || data.fontSize == 'md' || data.fontSize == 'lg' || data.fontSize == 'xl'
       ) &&
-      data.completedCount is int && data.completedCount >= 0 && data.completedCount <= 100000 &&
+      data.completedCount is number && data.completedCount >= 0 && data.completedCount <= 100000 &&
       data.averageAccuracy is number && data.averageAccuracy >= 0 && data.averageAccuracy <= 100 &&
-      data.createdAt is timestamp &&
-      data.updatedAt is timestamp;
+      (data.createdAt is timestamp || (data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 64)) &&
+      (data.updatedAt is timestamp || (data.updatedAt is string && data.updatedAt.size() >= 10 && data.updatedAt.size() <= 64));
     }
 
     function isValidLesson(data) {
@@ -178,19 +198,22 @@ service cloud.firestore {
       allow list: if false;
       allow create: if isVerified() && isValidId(userId) && request.auth.uid == userId &&
         isValidUserProfile(incoming()) &&
+        !incoming().keys().hasAny([
+          'currentDifficultyScore', 'consecutivePasses', 'consecutiveFailures',
+          'adaptiveProfileVersion', 'lastProcessedAttemptId'
+        ]) &&
         incoming().uid == userId &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
       allow update: if isVerified() && isValidId(userId) && isValidUserProfile(incoming()) &&
         incoming().uid == userId &&
-        incoming().uid == existing().uid &&
-        incoming().createdAt == existing().createdAt &&
+        (!existing().keys().hasAny(['uid']) || incoming().uid == existing().uid) &&
+        (!existing().keys().hasAny(['createdAt']) || incoming().createdAt == existing().createdAt || incoming().createdAt == request.time) &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'preferredLevel', 'startingLevel', 'placementLevel', 'showArabicTranslation',
-          'fontSize', 'completedCount', 'averageAccuracy', 'updatedAt'
+          'fontSize', 'completedCount', 'averageAccuracy', 'createdAt', 'updatedAt'
         ]) &&
-        (!existing().keys().hasAny(['startingLevel']) || incoming().startingLevel == existing().startingLevel) &&
         (request.auth.uid == userId || isAdmin());
       allow delete: if false;
     }

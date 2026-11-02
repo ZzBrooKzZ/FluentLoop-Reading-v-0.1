@@ -10,8 +10,6 @@ import {
   extractTrustedClientIp,
   readJsonBodyWithLimit,
 } from '@/src/server/placementToken';
-import { ADAPTIVE_LEVELS, createAdaptiveProfile } from '@/src/services/adaptiveLearning';
-import { CEFRLevel } from '@/src/types/reading';
 
 export const runtime = 'nodejs';
 
@@ -90,33 +88,15 @@ export async function POST(req: NextRequest) {
   const attemptType: 'first' | 'practice' | 'review' =
     rawAttemptType === 'practice' || rawAttemptType === 'review' ? rawAttemptType : 'first';
 
-  let currentProfile = undefined;
-  if (body?.profile && typeof body.profile === 'object') {
-    const startLvl: CEFRLevel = ADAPTIVE_LEVELS.includes(body.profile.startingLevel)
-      ? body.profile.startingLevel
-      : 'B1';
-    const currLvl: CEFRLevel = ADAPTIVE_LEVELS.includes(body.profile.currentLevel)
-      ? body.profile.currentLevel
-      : startLvl;
-    const base = createAdaptiveProfile(startLvl);
-    currentProfile = {
-      startingLevel: startLvl,
-      currentLevel: currLvl,
-      currentDifficultyScore: Number.isFinite(Number(body.profile.currentDifficultyScore))
-        ? Number(body.profile.currentDifficultyScore)
-        : base.currentDifficultyScore,
-      consecutivePasses: Math.max(0, Math.floor(Number(body.profile.consecutivePasses) || 0)),
-      consecutiveFailures: Math.max(0, Math.floor(Number(body.profile.consecutiveFailures) || 0)),
-    };
-  }
-
+  // 6. Grade on server and compute adaptive progression transactionally from stored users/{uid} profile.
+  // Client-supplied body.profile is intentionally ignored so difficulty and streaks cannot be forged.
   const { graded, progression } = await gradeLessonSubmissionOnServer({
     lesson: authoritativeLesson,
     answers: sanitizedAnswers,
     authenticatedUserId: verifiedUser.uid,
     attemptId,
     attemptType,
-    currentProfile,
+    useServerProfileTransaction: true,
   });
 
   return NextResponse.json({
@@ -124,3 +104,4 @@ export async function POST(req: NextRequest) {
     progression,
   });
 }
+

@@ -8,6 +8,7 @@ import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
 import { AdSenseSlotReserve } from '@/src/components/AdSenseSlotReserve';
 import { getPassagePhotoMetadata } from '@/src/utils/illustrations';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
 
 export function generateStaticParams() {
   const samples = getPublicSampleLessons();
@@ -28,16 +29,18 @@ export async function generateMetadata({
     };
   }
 
+  const canonicalUrl = buildCanonicalUrl(`/sample-lessons/${lesson.id}`);
+
   return {
     title: `${lesson.title} — CEFR ${lesson.level} Academic Reading Sample`,
     description: `${lesson.introduction} Read this CEFR ${lesson.level} academic passage with ${lesson.vocabulary.length} contextual English-to-English vocabulary explanations and IELTS comprehension questions.`,
     alternates: {
-      canonical: `/sample-lessons/${lesson.id}`,
+      canonical: canonicalUrl,
     },
     openGraph: {
       title: `${lesson.title} (CEFR ${lesson.level}) | FluentLoop Reading`,
       description: lesson.introduction,
-      url: `/sample-lessons/${lesson.id}`,
+      url: canonicalUrl,
       type: 'article',
       images: [
         {
@@ -47,6 +50,12 @@ export async function generateMetadata({
           alt: lesson.illustrationAlt,
         },
       ],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${lesson.title} (CEFR ${lesson.level}) | FluentLoop Reading`,
+      description: lesson.introduction,
+      images: [lesson.illustrationUrl],
     },
   };
 }

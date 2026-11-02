@@ -5,6 +5,7 @@ import { addLessonVocabulary } from '../data/vocabularyExpansion';
 import { CEFR_TARGET_WORD_RANGES, upgradeLessonToIeltsAcademic } from '../data/ieltsAcademicUpgrade';
 import { ComprehensionQuestion, ReadingLesson } from '../types/reading';
 import { getLessonDifficulty } from '../services/adaptiveLearning';
+import { isAllowedPlacementLevel } from '../services/placementEngine';
 import { getServerFirestore } from './firebaseAdmin';
 
 export const AUTHORITATIVE_LESSONS_COLLECTION = 'authoritative_lessons';
@@ -378,13 +379,26 @@ export function getAllDiagnosticPassages(): ReadingLesson[] {
   return DIAGNOSTIC_PASSAGES.map(addLessonVocabulary);
 }
 
+/**
+ * Returns only diagnostic passages eligible for initial placement (CEFR A1–C1).
+ * C2 diagnostic passages are strictly excluded from initial placement.
+ */
+export function getPlacementDiagnosticPassages(): ReadingLesson[] {
+  return getAllDiagnosticPassages().filter((p) => isAllowedPlacementLevel(p.level));
+}
+
 export function getDiagnosticPassageById(passageId: string): ReadingLesson | null {
   const all = getAllDiagnosticPassages();
   return all.find((p) => p.id === passageId) || null;
 }
 
+export function getPlacementDiagnosticPassageById(passageId: string): ReadingLesson | null {
+  const allowed = getPlacementDiagnosticPassages();
+  return allowed.find((p) => p.id === passageId) || null;
+}
+
 export function getSanitizedDiagnosticPassageById(passageId: string): ReadingLesson | null {
-  const found = getDiagnosticPassageById(passageId);
+  const found = getPlacementDiagnosticPassageById(passageId);
   return found ? sanitizeLessonForLearner(found) : null;
 }
 
@@ -428,7 +442,7 @@ export function sanitizeLessonForLearner(lesson: ReadingLesson): ReadingLesson {
 }
 
 /**
- * Curated public sample lessons (one representative passage per CEFR level A1–C1)
+ * Curated public sample lessons (one representative passage per CEFR level A1–C2)
  * for indexable SEO sample pages without exposing the full unseen adaptive passage bank.
  */
 export const PUBLIC_SAMPLE_LESSON_IDS: string[] = [

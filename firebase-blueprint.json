@@ -60,8 +60,8 @@
         },
         "placementLevel": {
           "type": "string",
-          "description": "Recommended CEFR level from the 3-passage adaptive placement test.",
-          "enum": ["A1", "A2", "B1", "B2", "C1", "C2"],
+          "description": "Recommended CEFR level from the 3-passage adaptive placement test (capped at C1).",
+          "enum": ["A1", "A2", "B1", "B2", "C1"],
           "minLength": 2,
           "maxLength": 2
         },
@@ -83,6 +83,29 @@
         "averageAccuracy": {
           "type": "number",
           "description": "Average percentage accuracy across completed lessons."
+        },
+        "currentDifficultyScore": {
+          "type": "number",
+          "description": "Server-authoritative adaptive difficulty score (0 to 120)."
+        },
+        "consecutivePasses": {
+          "type": "integer",
+          "description": "Server-authoritative consecutive pass streak at upper level boundary."
+        },
+        "consecutiveFailures": {
+          "type": "integer",
+          "description": "Server-authoritative consecutive failure streak at lower level boundary."
+        },
+        "adaptiveProfileVersion": {
+          "type": "integer",
+          "description": "Schema version of the server-authoritative adaptive profile."
+        },
+        "lastProcessedAttemptId": {
+          "type": "string",
+          "description": "Last first-time attempt ID processed by the server progression engine.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
         "createdAt": {
           "type": "string",

@@ -206,7 +206,8 @@ FluentLoop was redesigned into a cozy, high-craft digital reading journal:
 ### Environment Variables (`.env.example` & `apphosting.yaml`)
 - `GEMINI_API_KEY` *(Server-only secret)* — Used in `/api/grade` for AI short-answer grading fallback.
 - `GEMINI_GRADING_MODEL` *(Server/Build)* — Defaults to `gemini-3-flash-preview`.
-- `NEXT_PUBLIC_SITE_URL` *(Public)* — Canonical base URL for `sitemap.xml`, `robots.txt`, and OpenGraph tags.
+- `NEXT_PUBLIC_SITE_URL` *(Public, BUILD + RUNTIME)* — Set to `https://fluentloop.space`; canonical base URL for `sitemap.xml`, `robots.txt`, canonical links, JSON-LD, and OpenGraph/Twitter tags.
+- `APP_URL` *(Public, BUILD + RUNTIME)* — Set to `https://fluentloop.space` in `apphosting.yaml`.
 - `FIREBASE_SERVICE_ACCOUNT_KEY` *(Optional Server-only)* — Not needed on Firebase App Hosting (uses ADC automatically); only needed if self-hosting outside Google Cloud.
 - `NEXT_PUBLIC_ADSENSE_CLIENT_ID` *(Postponed/Optional)* — AdSense is currently disabled by user preference; `AdSenseSlot.tsx` renders nothing when unset.
 
@@ -227,8 +228,8 @@ Because the AI Studio container does not have interactive `firebase login` acces
    npx firebase-tools apphosting:secrets:grantaccess GEMINI_API_KEY --backend <your-backend-id> --project project-3ba42a74-36cc-4dbd-ac7
    ```
 3. **Verify IAM Roles** for the App Hosting compute service account (`roles/datastore.user` and Firebase Auth viewer) so `/api/admin/lessons` can write to Firestore via ADC.
-4. **Add the live `.hosted.app` / custom domain** to **Firebase Console → Authentication → Settings → Authorized domains** so Google Sign-In popups work on the production URL.
-5. **Update `NEXT_PUBLIC_SITE_URL` in `apphosting.yaml`** to the final production domain once assigned.
+4. **Ensure `fluentloop.space` (and any preview `.hosted.app` domain)** is added in **Firebase Console → Authentication → Settings → Authorized domains** so Google Sign-In popups work on the production URL.
+5. **Verify `NEXT_PUBLIC_SITE_URL`** (`https://fluentloop.space`) is active after your next Firebase App Hosting rollout.
 
 ---
 
@@ -269,4 +270,4 @@ Because the AI Studio container does not have interactive `firebase login` acces
 3. **Expand MWE & Passage Vocabulary Annotations Over Time:**
    - As new passages are added in Content Studio, add domain-specific collocations or idioms to `src/data/multiWordExpressions.ts` and run `npm test` to verify phrase boundary detection.
 4. **Custom Domain & Google Search Console Verification:**
-   - Once your custom domain is attached in Firebase App Hosting, update `NEXT_PUBLIC_SITE_URL` in `apphosting.yaml` and submit `/sitemap.xml` to Google Search Console.
+   - Once the updated build is deployed on `https://fluentloop.space`, verify `/sitemap.xml` and `/robots.txt` in production and submit `https://fluentloop.space/sitemap.xml` to Google Search Console.

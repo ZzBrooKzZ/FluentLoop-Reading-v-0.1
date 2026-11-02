@@ -5,20 +5,27 @@ import { getPublicSampleLessons } from '@/src/server/lessonRepository';
 import { PublicGuideHeader } from '@/src/components/PublicGuideHeader';
 import { PublicFooter } from '@/src/components/PublicFooter';
 import { AdSenseSlotReserve } from '@/src/components/AdSenseSlotReserve';
+import { buildCanonicalUrl } from '@/src/utils/seoUrl';
 
 export const metadata: Metadata = {
-  title: 'Public Sample Academic Reading Passages (CEFR A1–C1)',
+  title: 'Public Sample Academic Reading Passages (CEFR A1–C2)',
   description:
-    'Explore curated sample English reading passages from CEFR A1 to C1 with contextual English-to-English vocabulary annotations and IELTS Academic comprehension questions.',
+    'Explore curated sample English reading passages from CEFR A1 to C2 with contextual English-to-English vocabulary annotations and IELTS Academic comprehension questions.',
   alternates: {
-    canonical: '/sample-lessons',
+    canonical: buildCanonicalUrl('/sample-lessons'),
   },
   openGraph: {
-    title: 'Public Sample Academic Reading Passages (CEFR A1–C1) | FluentLoop',
+    title: 'Public Sample Academic Reading Passages (CEFR A1–C2) | FluentLoop',
     description:
-      'Preview representative A1, A2, B1, B2, and C1 reading passages with contextual vocabulary and IELTS Academic question formats.',
-    url: '/sample-lessons',
+      'Preview representative A1, A2, B1, B2, C1, and C2 reading passages with contextual vocabulary and IELTS Academic question formats.',
+    url: buildCanonicalUrl('/sample-lessons'),
     type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Public Sample Academic Reading Passages (CEFR A1–C2) | FluentLoop',
+    description:
+      'Preview representative A1, A2, B1, B2, C1, and C2 reading passages with contextual vocabulary and IELTS Academic question formats.',
   },
 };
 

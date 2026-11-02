@@ -91,6 +91,21 @@ export const LEVEL_PLACEMENT_DESCRIPTIONS: Record<CEFRLevel, string> = {
   C2: 'You demonstrate full academic proficiency with complex interdisciplinary synthesis, rhetorical subtlety, and high-density scholarly arguments.',
 };
 
+export const PLACEMENT_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+export const MAX_PLACEMENT_LEVEL: CEFRLevel = 'C1';
+
+export function isAllowedPlacementLevel(
+  level: unknown
+): level is 'A1' | 'A2' | 'B1' | 'B2' | 'C1' {
+  return typeof level === 'string' && PLACEMENT_LEVELS.includes(level as CEFRLevel);
+}
+
+export function getPlacementDiagnosticPool(
+  passageBank: ReadingLesson[] = DIAGNOSTIC_PASSAGES
+): ReadingLesson[] {
+  return passageBank.filter((passage) => isAllowedPlacementLevel(passage.level));
+}
+
 function clampMaxPassages(requested?: number): number {
   if (typeof requested !== 'number' || !Number.isFinite(requested)) {
     return DEFAULT_PLACEMENT_SETTINGS.maxPassages;
@@ -102,25 +117,31 @@ function clampMaxPassages(requested?: number): number {
 export function resolvePlacementSettings(
   overrides?: Partial<PlacementSettings>
 ): PlacementSettings {
+  const requestedInitial = overrides?.initialLevel;
+  const safeInitialLevel: CEFRLevel = isAllowedPlacementLevel(requestedInitial)
+    ? requestedInitial
+    : DEFAULT_PLACEMENT_SETTINGS.initialLevel;
   return {
     ...DEFAULT_PLACEMENT_SETTINGS,
     ...overrides,
+    initialLevel: safeInitialLevel,
     maxPassages: clampMaxPassages(overrides?.maxPassages),
   };
 }
 
 function stepLevelIndex(level: CEFRLevel): number {
-  return ADAPTIVE_LEVELS.indexOf(level);
+  const idx = PLACEMENT_LEVELS.indexOf(level);
+  return idx >= 0 ? idx : PLACEMENT_LEVELS.length - 1;
 }
 
 function shiftCefrLevel(level: CEFRLevel, delta: -1 | 0 | 1): CEFRLevel {
   const idx = stepLevelIndex(level);
-  const nextIdx = Math.max(0, Math.min(ADAPTIVE_LEVELS.length - 1, idx + delta));
-  return ADAPTIVE_LEVELS[nextIdx];
+  const nextIdx = Math.max(0, Math.min(PLACEMENT_LEVELS.length - 1, idx + delta));
+  return PLACEMENT_LEVELS[nextIdx];
 }
 
 /**
- * Picks an unseen diagnostic passage for the target CEFR level and preferred band.
+ * Picks an unseen diagnostic passage for the target CEFR level (strictly A1–C1) and preferred band.
  */
 export function pickUnseenDiagnosticPassage(
   targetLevel: CEFRLevel,
@@ -128,17 +149,22 @@ export function pickUnseenDiagnosticPassage(
   preferredBand: 'foundation' | 'core' | 'stretch' = 'foundation',
   passageBank: ReadingLesson[] = DIAGNOSTIC_PASSAGES
 ): ReadingLesson | null {
-  const candidatesAtLevel = passageBank.filter(
-    (p) => p.level === targetLevel && !attemptedPassageIds.has(p.id)
+  const pool = getPlacementDiagnosticPool(passageBank);
+  const safeTargetLevel: CEFRLevel = isAllowedPlacementLevel(targetLevel)
+    ? targetLevel
+    : MAX_PLACEMENT_LEVEL;
+
+  const candidatesAtLevel = pool.filter(
+    (p) => p.level === safeTargetLevel && !attemptedPassageIds.has(p.id)
   );
   if (candidatesAtLevel.length > 0) {
     const exactBand = candidatesAtLevel.find((p) => p.diagnosticBand === preferredBand);
     return exactBand || candidatesAtLevel[0];
   }
 
-  // Fallback to nearest adjacent level if all 3 at targetLevel were somehow exhausted
-  const targetIdx = stepLevelIndex(targetLevel);
-  const remaining = passageBank
+  // Fallback to nearest adjacent allowed placement level (A1–C1) if all 3 at targetLevel were exhausted
+  const targetIdx = stepLevelIndex(safeTargetLevel);
+  const remaining = pool
     .filter((p) => !attemptedPassageIds.has(p.id))
     .sort(
       (a, b) =>
@@ -159,8 +185,9 @@ export interface NextDiagnosticDecision {
  * Determines whether the placement assessment should finish early (at 2 passages),
  * finish at the strict 3-passage cap, or select the next diagnostic passage.
  *
- * STRICT INVARIANT: Once steps.length >= 3, shouldComplete is ALWAYS true.
- * A fourth passage is never assigned.
+ * STRICT INVARIANTS:
+ * - Once steps.length >= 3, shouldComplete is ALWAYS true. A fourth passage is never assigned.
+ * - Active placement selection is strictly capped at C1; C2 passages are never selected.
  */
 export function decideNextDiagnosticPassage(
   steps: PlacementStepResult[],
@@ -168,19 +195,20 @@ export function decideNextDiagnosticPassage(
   customSettings?: Partial<PlacementSettings>
 ): NextDiagnosticDecision {
   const settings = resolvePlacementSettings(customSettings);
+  const pool = getPlacementDiagnosticPool(passageBank);
   const attemptedIds = new Set(steps.map((s) => s.passageId));
 
-  // Initial state: Passage 1 always starts at B1
+  // Initial state: Passage 1 always starts at B1 (or configured A1–C1 initialLevel)
   if (steps.length === 0) {
     const firstPassage = pickUnseenDiagnosticPassage(
       settings.initialLevel,
       attemptedIds,
       'foundation',
-      passageBank
+      pool
     );
     return {
       shouldComplete: false,
-      nextLevel: settings.initialLevel,
+      nextLevel: firstPassage?.level || settings.initialLevel,
       nextPassage: firstPassage,
       reason: `Starting adaptive placement assessment at ${settings.initialLevel}.`,
     };
@@ -197,65 +225,74 @@ export function decideNextDiagnosticPassage(
   }
 
   const lastStep = steps[steps.length - 1];
+  const lastStepLevel: CEFRLevel = isAllowedPlacementLevel(lastStep.level)
+    ? lastStep.level
+    : MAX_PLACEMENT_LEVEL;
 
   // After Passage 1 (typically at B1):
   if (steps.length === 1) {
     if (lastStep.accuracy >= settings.strongThreshold) {
-      const nextLevel = shiftCefrLevel(lastStep.level, 1);
+      const nextLevel = shiftCefrLevel(lastStepLevel, 1);
+      const preferredBand = nextLevel === lastStepLevel ? 'stretch' : 'core';
       const nextPassage = pickUnseenDiagnosticPassage(
         nextLevel,
         attemptedIds,
-        'core',
-        passageBank
+        preferredBand,
+        pool
       );
       return {
         shouldComplete: !nextPassage,
-        nextLevel: nextPassage ? nextLevel : null,
+        nextLevel: nextPassage ? nextPassage.level : null,
         nextPassage,
-        reason: `Strong result (${lastStep.accuracy}%) at ${lastStep.level}; stepping up one level to ${nextLevel}.`,
+        reason: `Strong result (${lastStep.accuracy}%) at ${lastStepLevel}; stepping up one level to ${nextLevel}.`,
       };
     }
 
     if (lastStep.accuracy < settings.weakThreshold) {
-      const nextLevel = shiftCefrLevel(lastStep.level, -1);
+      const nextLevel = shiftCefrLevel(lastStepLevel, -1);
+      const preferredBand = nextLevel === lastStepLevel ? 'foundation' : 'core';
       const nextPassage = pickUnseenDiagnosticPassage(
         nextLevel,
         attemptedIds,
-        'core',
-        passageBank
+        preferredBand,
+        pool
       );
       return {
         shouldComplete: !nextPassage,
-        nextLevel: nextPassage ? nextLevel : null,
+        nextLevel: nextPassage ? nextPassage.level : null,
         nextPassage,
-        reason: `Below-threshold result (${lastStep.accuracy}%) at ${lastStep.level}; stepping down one level to ${nextLevel}.`,
+        reason: `Below-threshold result (${lastStep.accuracy}%) at ${lastStepLevel}; stepping down one level to ${nextLevel}.`,
       };
     }
 
     // Borderline result (60%–79%): gather more evidence at the same level
     const nextPassage = pickUnseenDiagnosticPassage(
-      lastStep.level,
+      lastStepLevel,
       attemptedIds,
       'core',
-      passageBank
+      pool
     );
     return {
       shouldComplete: !nextPassage,
-      nextLevel: nextPassage ? lastStep.level : null,
+      nextLevel: nextPassage ? nextPassage.level : null,
       nextPassage,
-      reason: `Borderline result (${lastStep.accuracy}%) at ${lastStep.level}; selecting a second passage at ${lastStep.level} to confirm comprehension.`,
+      reason: `Borderline result (${lastStep.accuracy}%) at ${lastStepLevel}; selecting a second passage at ${lastStepLevel} to confirm comprehension.`,
     };
   }
 
   // After Passage 2 (steps.length === 2):
   const firstStep = steps[0];
   const secondStep = steps[1];
+  const firstStepLevel: CEFRLevel = isAllowedPlacementLevel(firstStep.level)
+    ? firstStep.level
+    : MAX_PLACEMENT_LEVEL;
+  const secondStepLevel: CEFRLevel = isAllowedPlacementLevel(secondStep.level)
+    ? secondStep.level
+    : MAX_PLACEMENT_LEVEL;
 
   // Early-stop checks when 2 passages already establish a clear, consistent level:
-  // Case A: Both passages were at the same level (e.g., B1 borderline followed by another B1)
-  // and both demonstrated at least borderline/confirmed competence (>= 60%), with combined average >= 67%.
   if (
-    firstStep.level === secondStep.level &&
+    firstStepLevel === secondStepLevel &&
     firstStep.accuracy >= settings.weakThreshold &&
     secondStep.accuracy >= settings.weakThreshold
   ) {
@@ -265,24 +302,24 @@ export function decideNextDiagnosticPassage(
         shouldComplete: true,
         nextLevel: null,
         nextPassage: null,
-        reason: `Two consistent passages at ${secondStep.level} (${firstStep.accuracy}% and ${secondStep.accuracy}%) establish ${secondStep.level} without needing a third passage.`,
+        reason: `Two consistent passages at ${secondStepLevel} (${firstStep.accuracy}% and ${secondStep.accuracy}%) establish ${secondStepLevel} without needing a third passage.`,
       };
     }
   }
 
-  // Otherwise, select the 3rd (and final) passage adaptively:
-  let targetThirdLevel: CEFRLevel = secondStep.level;
+  // Otherwise, select the 3rd (and final) passage adaptively within A1–C1:
+  let targetThirdLevel: CEFRLevel = secondStepLevel;
   let preferredBand: 'foundation' | 'core' | 'stretch' = 'core';
 
   if (secondStep.accuracy >= settings.strongThreshold) {
-    targetThirdLevel = shiftCefrLevel(secondStep.level, 1);
-    preferredBand = targetThirdLevel === secondStep.level ? 'stretch' : 'core';
+    targetThirdLevel = shiftCefrLevel(secondStepLevel, 1);
+    preferredBand = targetThirdLevel === secondStepLevel ? 'stretch' : 'core';
   } else if (secondStep.accuracy < settings.weakThreshold) {
-    targetThirdLevel = shiftCefrLevel(secondStep.level, -1);
-    preferredBand = targetThirdLevel === secondStep.level ? 'foundation' : 'core';
+    targetThirdLevel = shiftCefrLevel(secondStepLevel, -1);
+    preferredBand = targetThirdLevel === secondStepLevel ? 'foundation' : 'core';
   } else {
     // Borderline on Passage 2: test one more passage at the same level to confirm
-    targetThirdLevel = secondStep.level;
+    targetThirdLevel = secondStepLevel;
     preferredBand = 'stretch';
   }
 
@@ -290,7 +327,7 @@ export function decideNextDiagnosticPassage(
     targetThirdLevel,
     attemptedIds,
     preferredBand,
-    passageBank
+    pool
   );
 
   if (!thirdPassage) {
@@ -319,11 +356,12 @@ export interface PlacementRecommendationSummary {
 
 /**
  * Calculates a conservative, evidence-based starting CEFR recommendation across ALL
- * completed diagnostic passages (up to 3).
+ * completed diagnostic passages (up to 3), strictly bounded within A1–C1.
  *
  * Rules:
  * - Evaluates accuracy at each tested level, consistency across passages, and whether
  *   the learner demonstrated comprehension at a higher level.
+ * - Never assigns C2; C1 is the maximum initial placement level.
  * - Never assigns a level simply because it was the last passage attempted.
  * - When results are borderline or contradictory, chooses the more conservative suitable
  *   starting level rather than overstating ability.
@@ -345,16 +383,19 @@ export function calculateConservativeRecommendation(
     };
   }
 
-  // Group performance by CEFR level
+  // Group performance by allowed placement CEFR level (A1–C1)
   const statsByLevel = new Map<
     CEFRLevel,
     { count: number; totalAccuracy: number; avgAccuracy: number; maxAccuracy: number; minAccuracy: number }
   >();
 
   for (const step of steps) {
-    const existing = statsByLevel.get(step.level);
+    const safeLevel: CEFRLevel = isAllowedPlacementLevel(step.level)
+      ? step.level
+      : MAX_PLACEMENT_LEVEL;
+    const existing = statsByLevel.get(safeLevel);
     if (!existing) {
-      statsByLevel.set(step.level, {
+      statsByLevel.set(safeLevel, {
         count: 1,
         totalAccuracy: step.accuracy,
         avgAccuracy: step.accuracy,
@@ -364,7 +405,7 @@ export function calculateConservativeRecommendation(
     } else {
       const count = existing.count + 1;
       const totalAccuracy = existing.totalAccuracy + step.accuracy;
-      statsByLevel.set(step.level, {
+      statsByLevel.set(safeLevel, {
         count,
         totalAccuracy,
         avgAccuracy: Math.round(totalAccuracy / count),
@@ -374,12 +415,12 @@ export function calculateConservativeRecommendation(
     }
   }
 
-  // Determine the highest level with demonstrated competence, checking for contradictions at lower levels
+  // Determine the highest level in PLACEMENT_LEVELS (A1–C1) with demonstrated competence
   let highestDemonstratedIdx = -1;
   let hasContradiction = false;
 
-  for (let i = 0; i < ADAPTIVE_LEVELS.length; i++) {
-    const lvl = ADAPTIVE_LEVELS[i];
+  for (let i = 0; i < PLACEMENT_LEVELS.length; i++) {
+    const lvl = PLACEMENT_LEVELS[i];
     const stat = statsByLevel.get(lvl);
     if (!stat) continue;
 
@@ -393,7 +434,7 @@ export function calculateConservativeRecommendation(
       // Check if the learner failed (< 60%) at a LOWER tested level (contradictory evidence)
       let failedLowerLevel = false;
       for (let lowerIdx = 0; lowerIdx < i; lowerIdx++) {
-        const lowerStat = statsByLevel.get(ADAPTIVE_LEVELS[lowerIdx]);
+        const lowerStat = statsByLevel.get(PLACEMENT_LEVELS[lowerIdx]);
         if (lowerStat && lowerStat.avgAccuracy < settings.weakThreshold) {
           failedLowerLevel = true;
           break;
@@ -412,7 +453,7 @@ export function calculateConservativeRecommendation(
   let confidence: 'high' | 'moderate' | 'conservative' = 'moderate';
 
   if (highestDemonstratedIdx >= 0) {
-    recommendedLevel = ADAPTIVE_LEVELS[highestDemonstratedIdx];
+    recommendedLevel = PLACEMENT_LEVELS[highestDemonstratedIdx];
 
     // Check if the learner had a contradictory failure at the same level or erratic swings
     const chosenStat = statsByLevel.get(recommendedLevel);
@@ -429,7 +470,7 @@ export function calculateConservativeRecommendation(
       chosenStat.avgAccuracy < settings.strongThreshold &&
       overallAvg < settings.confirmedCompetenceThreshold
     ) {
-      recommendedLevel = ADAPTIVE_LEVELS[highestDemonstratedIdx - 1];
+      recommendedLevel = PLACEMENT_LEVELS[highestDemonstratedIdx - 1];
       confidence = 'conservative';
     } else if (
       chosenStat &&
@@ -443,7 +484,7 @@ export function calculateConservativeRecommendation(
   } else {
     // Learner did not reach 67% at any tested level (e.g. weak at B1, weak at A2, weak/borderline at A1)
     const lowestTestedIdx = Math.min(...steps.map((s) => stepLevelIndex(s.level)));
-    const lowestLevel = ADAPTIVE_LEVELS[Math.max(0, lowestTestedIdx)];
+    const lowestLevel = PLACEMENT_LEVELS[Math.max(0, lowestTestedIdx)];
     const lowestStat = statsByLevel.get(lowestLevel);
 
     if (
@@ -455,9 +496,14 @@ export function calculateConservativeRecommendation(
       confidence = 'conservative';
     } else {
       // Step one level below the lowest tested level, floored at A1
-      recommendedLevel = ADAPTIVE_LEVELS[Math.max(0, lowestTestedIdx - 1)];
+      recommendedLevel = PLACEMENT_LEVELS[Math.max(0, lowestTestedIdx - 1)];
       confidence = 'conservative';
     }
+  }
+
+  // Strictly enforce the C1 placement ceiling
+  if (!isAllowedPlacementLevel(recommendedLevel)) {
+    recommendedLevel = MAX_PLACEMENT_LEVEL;
   }
 
   // Compute initial internal difficulty score inside the recommended level's band
@@ -570,7 +616,8 @@ export function createPlacementSession(
   startedAtMs: number = Date.now()
 ): PlacementSession {
   const settings = resolvePlacementSettings(customSettings);
-  const decision = decideNextDiagnosticPassage([], passageBank, settings);
+  const pool = getPlacementDiagnosticPool(passageBank);
+  const decision = decideNextDiagnosticPassage([], pool, settings);
   const effectiveStartMs =
     typeof startedAtMs === 'number' && Number.isFinite(startedAtMs) ? startedAtMs : Date.now();
   const nowIso = new Date(effectiveStartMs).toISOString();
@@ -652,7 +699,8 @@ export function abandonPlacementSession(
 /**
  * Updates draft answers for an active placement session without ever modifying or
  * extending `startedAtMs` or `deadlineAtMs`.
- * If the session is already completed, abandoned, or expired at `nowMs`, the update is rejected.
+ * If the session is already completed, abandoned, expired at `nowMs`, or if `passageId`
+ * does not match `session.activePassageId`, the update is rejected.
  */
 export function saveDraftAnswersInPlacementSession(
   session: PlacementSession,
@@ -664,6 +712,7 @@ export function saveDraftAnswersInPlacementSession(
   accepted: boolean;
   lateRejected: boolean;
   abandonedRejected?: boolean;
+  wrongPassageRejected?: boolean;
 } {
   if (session.status === 'abandoned') {
     return {
@@ -671,6 +720,7 @@ export function saveDraftAnswersInPlacementSession(
       accepted: false,
       lateRejected: false,
       abandonedRejected: true,
+      wrongPassageRejected: false,
     };
   }
 
@@ -680,6 +730,17 @@ export function saveDraftAnswersInPlacementSession(
       accepted: false,
       lateRejected: true,
       abandonedRejected: false,
+      wrongPassageRejected: false,
+    };
+  }
+
+  if (session.activePassageId && passageId !== session.activePassageId) {
+    return {
+      session,
+      accepted: false,
+      lateRejected: false,
+      abandonedRejected: false,
+      wrongPassageRejected: true,
     };
   }
 
@@ -709,6 +770,7 @@ export function saveDraftAnswersInPlacementSession(
     accepted: true,
     lateRejected: false,
     abandonedRejected: false,
+    wrongPassageRejected: false,
   };
 }
 
@@ -717,7 +779,7 @@ export function saveDraftAnswersInPlacementSession(
  * - Preserves all previously completed steps (`session.steps`).
  * - Grades the currently active passage (if any) using only answers selected before the deadline,
  *   marking all unanswered questions as incorrect.
- * - Computes the final CEFR level using the unchanged `calculateConservativeRecommendation` algorithm.
+ * - Computes the final CEFR level using the conservative `calculateConservativeRecommendation` algorithm (strictly A1–C1).
  * - Idempotent: calling multiple times on an already completed session returns the same result.
  * - Rejects abandoned sessions so an abandoned session can never be finalized.
  */
@@ -736,6 +798,7 @@ export function finalizePlacementSessionOnTimeout(
     throw new Error('Placement session has been abandoned and cannot be finalized.');
   }
   const settings = resolvePlacementSettings(customSettings);
+  const pool = getPlacementDiagnosticPool(passageBank);
 
   if (session.status === 'completed') {
     return {
@@ -753,7 +816,7 @@ export function finalizePlacementSessionOnTimeout(
   if (session.activePassageId && updatedSteps.length < settings.maxPassages) {
     const alreadyGraded = updatedSteps.some((s) => s.passageId === session.activePassageId);
     if (!alreadyGraded) {
-      const activePassage = passageBank.find((p) => p.id === session.activePassageId);
+      const activePassage = pool.find((p) => p.id === session.activePassageId);
       if (activePassage) {
         const storedDrafts = session.draftAnswersByPassage?.[activePassage.id] || {};
         const effectivePreDeadlineAnswers =
@@ -761,8 +824,6 @@ export function finalizePlacementSessionOnTimeout(
             ? { ...storedDrafts, ...preDeadlineActiveAnswers }
             : storedDrafts;
 
-        // If this is Passage 1 (no steps completed yet), or if the learner is on an active passage,
-        // grade the active passage with all unanswered questions marked incorrect.
         const gradedActive = gradeDiagnosticPassage(
           activePassage,
           effectivePreDeadlineAnswers,
@@ -806,8 +867,10 @@ export function finalizePlacementSessionOnTimeout(
 
 /**
  * Applies a submitted diagnostic passage to an active PlacementSession idempotently.
- * Enforces the strict 3-passage cap, preserves the original 20-minute deadline across passages,
- * and prevents duplicate submission of the same passageId.
+ * Enforces:
+ * - Strict A1–C1 placement passage eligibility (C2 passages are rejected).
+ * - Strict activePassageId match (`passage.id === session.activePassageId`) on non-duplicate submissions.
+ * - Strict 3-passage cap and original 20-minute deadline preservation.
  */
 export function applyDiagnosticSubmissionToSession(
   session: PlacementSession,
@@ -826,13 +889,20 @@ export function applyDiagnosticSubmissionToSession(
     throw new Error('Placement session has been abandoned and cannot accept submissions.');
   }
 
+  if (!isAllowedPlacementLevel(passage.level)) {
+    throw new Error(
+      `Diagnostic passage ${passage.id} (${passage.level}) is outside the allowed A1–C1 placement range.`
+    );
+  }
+
   const settings = resolvePlacementSettings(customSettings);
+  const pool = getPlacementDiagnosticPool(passageBank);
 
   // Idempotency guard: if this passageId was already graded in this session, return existing state
   const existingStep = session.steps.find((s) => s.passageId === passage.id);
   if (existingStep) {
     const nextPassage = session.activePassageId
-      ? passageBank.find((p) => p.id === session.activePassageId) || null
+      ? pool.find((p) => p.id === session.activePassageId) || null
       : null;
     return {
       session,
@@ -849,7 +919,10 @@ export function applyDiagnosticSubmissionToSession(
       ...session,
       status: 'completed',
       activePassageId: null,
-      recommendedLevel: session.recommendedLevel || rec.recommendedLevel,
+      recommendedLevel:
+        session.recommendedLevel && isAllowedPlacementLevel(session.recommendedLevel)
+          ? session.recommendedLevel
+          : rec.recommendedLevel,
       recommendedDifficultyScore:
         session.recommendedDifficultyScore ?? rec.recommendedDifficultyScore,
       confidence: session.confidence || rec.confidence,
@@ -867,10 +940,17 @@ export function applyDiagnosticSubmissionToSession(
     };
   }
 
+  // Active passage validation: submitted passage must match the session's currently assigned activePassageId
+  if (!session.activePassageId || passage.id !== session.activePassageId) {
+    throw new Error(
+      `Submitted diagnostic passage (${passage.id}) does not match the active placement passage (${session.activePassageId || 'none'}).`
+    );
+  }
+
   const nowIso = new Date(nowMs).toISOString();
   const stepResult = gradeDiagnosticPassage(passage, answers, nowIso);
   const updatedSteps = [...session.steps, stepResult].slice(0, settings.maxPassages);
-  const decision = decideNextDiagnosticPassage(updatedSteps, passageBank, settings);
+  const decision = decideNextDiagnosticPassage(updatedSteps, pool, settings);
 
   const remainingDrafts = { ...(session.draftAnswersByPassage || {}) };
   delete remainingDrafts[passage.id];
@@ -923,4 +1003,5 @@ export function applyDiagnosticSubmissionToSession(
     wasDuplicate: false,
   };
 }
+
 

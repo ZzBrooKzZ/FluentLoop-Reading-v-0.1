@@ -17,6 +17,7 @@ import {
   getAllAuthoritativeLessons,
   getAuthoritativeLessonDifficulty,
 } from './lessonRepository';
+import { applyAttemptProgressionTransactional } from './userProfileRepository';
 
 export { getAllAuthoritativeLessons };
 
@@ -524,6 +525,7 @@ export async function gradeLessonSubmissionOnServer(params: {
   attemptId?: string;
   attemptType?: 'first' | 'practice' | 'review';
   currentProfile?: AdaptiveProfile;
+  useServerProfileTransaction?: boolean;
 }): Promise<{
   graded: GradedAttemptSummary;
   progression: ProgressionResult | null;
@@ -535,6 +537,7 @@ export async function gradeLessonSubmissionOnServer(params: {
     attemptId,
     attemptType = 'first',
     currentProfile,
+    useServerProfileTransaction = false,
   } = params;
   assertVerifiedAuthenticatedUserId(authenticatedUserId);
 
@@ -628,8 +631,22 @@ export async function gradeLessonSubmissionOnServer(params: {
   };
 
   let progression: ProgressionResult | null = null;
-  if (currentProfile) {
-    // Idempotency guard: if this attemptId already triggered progression, return the cached progression result
+  const lessonDifficulty = getAuthoritativeLessonDifficulty(lesson);
+
+  if (useServerProfileTransaction) {
+    progression = await applyAttemptProgressionTransactional({
+      uid: authenticatedUserId,
+      attemptId,
+      attemptType,
+      completed: true,
+      pendingReviewCount,
+      accuracy,
+      lessonId: lesson.id,
+      lessonLevel: lesson.level,
+      lessonDifficulty,
+    });
+  } else if (currentProfile) {
+    // Idempotency guard for pure in-memory unit test callers supplying currentProfile explicitly
     if (attemptId && processedProgressionAttemptIds.has(attemptId)) {
       progression = processedProgressionAttemptIds.get(attemptId)!;
     } else {
@@ -639,7 +656,7 @@ export async function gradeLessonSubmissionOnServer(params: {
         completed: true,
         pendingReviewCount,
         accuracy,
-        lessonDifficulty: getAuthoritativeLessonDifficulty(lesson),
+        lessonDifficulty,
       });
       if (attemptId && progression.changed) {
         if (processedProgressionAttemptIds.size >= 2000) {

@@ -533,9 +533,10 @@ export const PlacementAssessmentView: React.FC<PlacementAssessmentViewProps> = (
 
             <div className="mt-5 rounded-xl border border-[#E3D7C3] bg-[#FAF7F1] p-4 text-xs leading-relaxed text-[#76675B]">
               <strong className="text-[#171615]">Important Note:</strong> This is an estimated
-              starting level for FluentLoop based on a brief {session.steps.length}-passage
+              starting level (CEFR A1–C1) for FluentLoop based on a brief {session.steps.length}-passage
               placement check, not an official CEFR certification or a guaranteed IELTS band score.
-              Your course difficulty will automatically adjust as you read.
+              C1 is the maximum initial placement level; C2 Mastery passages unlock automatically
+              through adaptive progression as you demonstrate consistent C1 comprehension.
             </div>
           </div>
 

@@ -12,6 +12,7 @@ import {
   resolvePlacementGuestSecret,
   verifyPlacementGuestToken,
 } from '@/src/server/placementToken';
+import { initializePlacementAdaptiveProfileTransactional } from '@/src/server/userProfileRepository';
 
 export const runtime = 'nodejs';
 
@@ -68,7 +69,20 @@ export async function POST(req: NextRequest) {
       verifiedUid: verifiedUser.uid,
       verifiedGuestTokenHash: guestCheck.tokenHash,
     });
-    return NextResponse.json({ session: linked }, { status: 200 });
+
+    let adaptiveProfile = undefined;
+    if (linked.status === 'completed' && linked.recommendedLevel) {
+      const initialized = await initializePlacementAdaptiveProfileTransactional({
+        uid: verifiedUser.uid,
+        recommendedLevel: linked.recommendedLevel,
+        recommendedDifficultyScore: linked.recommendedDifficultyScore,
+        placementSessionId: linked.id,
+        placementCompletedAt: linked.finalizedAt || linked.updatedAt,
+      });
+      adaptiveProfile = initialized.profile;
+    }
+
+    return NextResponse.json({ session: linked, adaptiveProfile }, { status: 200 });
   } catch (err: any) {
     if (err instanceof PlacementSecretConfigurationError) {
       return NextResponse.json(

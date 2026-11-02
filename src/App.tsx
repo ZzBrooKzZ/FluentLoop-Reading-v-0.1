@@ -89,9 +89,12 @@ import {
 } from './services/gradingService';
 import { computeAdaptiveRecommendation } from './services/adaptiveEngine';
 import {
+  AdaptiveProfile,
   createAdaptiveProfile,
+  normalizeAdaptiveProfile,
   selectNextLesson,
 } from './services/adaptiveLearning';
+import { isAllowedPlacementLevel } from './services/placementEngine';
 import {
   buildDeterministicFirstAttemptId,
   calculateReadingStreak,
@@ -245,6 +248,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [currentLevel, setCurrentLevel] = useState<CEFRLevel>('B1');
   const [startingLevel, setStartingLevel] = useState<CEFRLevel | null>(null);
   const [placementLevel, setPlacementLevel] = useState<CEFRLevel | null>(null);
+  const [adaptiveProfile, setAdaptiveProfile] = useState<AdaptiveProfile>(() =>
+    createAdaptiveProfile('B1')
+  );
 
   // Adaptive Placement Assessment state (max 3 diagnostic passages)
   const [showPlacementAssessment, setShowPlacementAssessment] = useState<boolean>(false);
@@ -410,16 +416,32 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const savedPlacementLvl = localStorage.getItem(STORAGE_KEYS.PLACEMENT_LEVEL) as CEFRLevel | null;
     const savedCurrLevel = localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null;
     const savedStart = localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null;
+    const savedDiffTarget = Number(localStorage.getItem('fluentloop_difficulty_target_v1'));
+    const savedPassStreak = Number(localStorage.getItem('fluentloop_pass_streak_v1'));
+    const savedFailStreak = Number(localStorage.getItem('fluentloop_fail_streak_v1'));
 
     // Only assign a known level if the user has completed the placement assessment
     if (savedPlacementLvl && CEFR_LEVELS.includes(savedPlacementLvl)) {
-      setPlacementLevel(savedPlacementLvl);
+      const safePlacement = isAllowedPlacementLevel(savedPlacementLvl) ? savedPlacementLvl : 'C1';
+      setPlacementLevel(safePlacement);
       const effectiveStart =
-        savedStart && CEFR_LEVELS.includes(savedStart) ? savedStart : savedPlacementLvl;
+        savedStart && CEFR_LEVELS.includes(savedStart) ? savedStart : safePlacement;
       const effectiveCurr =
         savedCurrLevel && CEFR_LEVELS.includes(savedCurrLevel) ? savedCurrLevel : effectiveStart;
-      setStartingLevel(effectiveStart);
-      setCurrentLevel(effectiveCurr);
+      const localHydrated = normalizeAdaptiveProfile(
+        {
+          startingLevel: effectiveStart,
+          currentLevel: effectiveCurr,
+          placementLevel: safePlacement,
+          currentDifficultyScore: Number.isFinite(savedDiffTarget) && savedDiffTarget > 0 ? savedDiffTarget : undefined,
+          consecutivePasses: Number.isFinite(savedPassStreak) ? savedPassStreak : 0,
+          consecutiveFailures: Number.isFinite(savedFailStreak) ? savedFailStreak : 0,
+        },
+        effectiveCurr
+      );
+      setStartingLevel(localHydrated.startingLevel);
+      setCurrentLevel(localHydrated.currentLevel);
+      setAdaptiveProfile(localHydrated);
     } else {
       setPlacementLevel(null);
       setStartingLevel(null);
@@ -772,12 +794,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
           // Only restore a level if the user has genuinely completed the placement assessment,
           // has a persisted profile level, or has historical/active attempts in Firestore.
           const verifiedPlacementLevel: CEFRLevel | null =
-            localPlacementLevel && CEFR_LEVELS.includes(localPlacementLevel)
+            !effectiveFreshMode &&
+            existingProfile?.placementLevel &&
+            isAllowedPlacementLevel(existingProfile.placementLevel)
+              ? existingProfile.placementLevel
+              : localPlacementLevel && isAllowedPlacementLevel(localPlacementLevel)
               ? localPlacementLevel
-              : !effectiveFreshMode &&
-                existingProfile?.placementLevel &&
-                CEFR_LEVELS.includes(existingProfile.placementLevel)
-              ? (existingProfile.placementLevel as CEFRLevel)
               : !effectiveFreshMode &&
                 existingProfile?.startingLevel &&
                 CEFR_LEVELS.includes(existingProfile.startingLevel)
@@ -793,59 +815,159 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               : null;
 
           if (verifiedPlacementLevel) {
-            setPlacementLevel(verifiedPlacementLevel);
-            localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, verifiedPlacementLevel);
+            const safePlacementBadgeLevel = isAllowedPlacementLevel(verifiedPlacementLevel)
+              ? verifiedPlacementLevel
+              : 'C1';
+            setPlacementLevel(safePlacementBadgeLevel);
+            localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, safePlacementBadgeLevel);
 
-            const restoredStartingLevel: CEFRLevel =
-              (localStorage.getItem('fluentloop_starting_level_v1') as CEFRLevel | null) ||
-              (!effectiveFreshMode &&
-              existingProfile?.startingLevel &&
-              CEFR_LEVELS.includes(existingProfile.startingLevel)
-                ? (existingProfile.startingLevel as CEFRLevel)
-                : verifiedPlacementLevel);
+            const hydratedProfile = normalizeAdaptiveProfile(
+              {
+                startingLevel:
+                  (!effectiveFreshMode && existingProfile?.startingLevel) ||
+                  localStorage.getItem('fluentloop_starting_level_v1') ||
+                  safePlacementBadgeLevel,
+                currentLevel:
+                  (!effectiveFreshMode && existingProfile?.preferredLevel) ||
+                  localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) ||
+                  verifiedPlacementLevel,
+                preferredLevel: !effectiveFreshMode ? existingProfile?.preferredLevel : undefined,
+                placementLevel: safePlacementBadgeLevel,
+                currentDifficultyScore:
+                  !effectiveFreshMode && typeof existingProfile?.currentDifficultyScore === 'number'
+                    ? existingProfile.currentDifficultyScore
+                    : Number(localStorage.getItem('fluentloop_difficulty_target_v1')) || undefined,
+                consecutivePasses:
+                  !effectiveFreshMode && typeof existingProfile?.consecutivePasses === 'number'
+                    ? existingProfile.consecutivePasses
+                    : Number(localStorage.getItem('fluentloop_pass_streak_v1')) || 0,
+                consecutiveFailures:
+                  !effectiveFreshMode && typeof existingProfile?.consecutiveFailures === 'number'
+                    ? existingProfile.consecutiveFailures
+                    : Number(localStorage.getItem('fluentloop_fail_streak_v1')) || 0,
+              },
+              verifiedPlacementLevel
+            );
 
-            const restoredCurrentLevel: CEFRLevel =
-              (localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL) as CEFRLevel | null) ||
-              (!effectiveFreshMode &&
-              existingProfile?.preferredLevel &&
-              CEFR_LEVELS.includes(existingProfile.preferredLevel)
-                ? (existingProfile.preferredLevel as CEFRLevel)
-                : restoredStartingLevel);
-
-            localStorage.setItem('fluentloop_starting_level_v1', restoredStartingLevel);
-            localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, restoredCurrentLevel);
-            setStartingLevel(restoredStartingLevel);
-            setCurrentLevel(restoredCurrentLevel);
+            localStorage.setItem('fluentloop_starting_level_v1', hydratedProfile.startingLevel);
+            localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, hydratedProfile.currentLevel);
+            localStorage.setItem(
+              'fluentloop_difficulty_target_v1',
+              String(hydratedProfile.currentDifficultyScore)
+            );
+            localStorage.setItem(
+              'fluentloop_pass_streak_v1',
+              String(hydratedProfile.consecutivePasses)
+            );
+            localStorage.setItem(
+              'fluentloop_fail_streak_v1',
+              String(hydratedProfile.consecutiveFailures)
+            );
+            setStartingLevel(hydratedProfile.startingLevel);
+            setCurrentLevel(hydratedProfile.currentLevel);
+            setAdaptiveProfile(hydratedProfile);
 
             const localCompletedCount = calculateReadingStreak(attemptsRef.current).completedCount;
+            const safeFontSize: 'sm' | 'md' | 'lg' | 'xl' =
+              existingProfile?.fontSize === 'sm' ||
+              existingProfile?.fontSize === 'md' ||
+              existingProfile?.fontSize === 'lg' ||
+              existingProfile?.fontSize === 'xl'
+                ? existingProfile.fontSize
+                : fontSize === 'sm' || fontSize === 'md' || fontSize === 'lg' || fontSize === 'xl'
+                ? fontSize
+                : 'md';
+            const existingCreatedAt =
+              existingProfile?.createdAt &&
+              typeof existingProfile.createdAt === 'object' &&
+              ('seconds' in existingProfile.createdAt ||
+                typeof (existingProfile.createdAt as { toDate?: unknown }).toDate === 'function')
+                ? existingProfile.createdAt
+                : serverTimestamp();
 
             await setDoc(
               userRef,
               {
                 uid: user.uid,
-                displayName: user.displayName || existingProfile?.displayName || 'Academic Reader',
-                preferredLevel: restoredCurrentLevel,
-                startingLevel: restoredStartingLevel,
-                placementLevel: verifiedPlacementLevel,
+                displayName: (
+                  user.displayName ||
+                  existingProfile?.displayName ||
+                  'Academic Reader'
+                ).slice(0, 120),
+                preferredLevel: hydratedProfile.currentLevel,
+                startingLevel: hydratedProfile.startingLevel,
+                placementLevel: safePlacementBadgeLevel,
                 showArabicTranslation:
                   typeof existingProfile?.showArabicTranslation === 'boolean'
                     ? existingProfile.showArabicTranslation
-                    : showArabicTranslation,
-                fontSize:
-                  (existingProfile?.fontSize as 'sm' | 'md' | 'lg' | 'xl' | undefined) || fontSize,
-                completedCount:
-                  typeof existingProfile?.completedCount === 'number'
-                    ? Math.max(existingProfile.completedCount, localCompletedCount)
-                    : localCompletedCount,
-                averageAccuracy:
-                  typeof existingProfile?.averageAccuracy === 'number'
-                    ? existingProfile.averageAccuracy
-                    : 0,
-                createdAt: existingProfile?.createdAt || serverTimestamp(),
+                    : Boolean(showArabicTranslation),
+                fontSize: safeFontSize,
+                completedCount: Math.max(
+                  0,
+                  Math.floor(
+                    typeof existingProfile?.completedCount === 'number'
+                      ? Math.max(existingProfile.completedCount, localCompletedCount)
+                      : localCompletedCount
+                  )
+                ),
+                averageAccuracy: Math.min(
+                  100,
+                  Math.max(
+                    0,
+                    typeof existingProfile?.averageAccuracy === 'number'
+                      ? Math.round(existingProfile.averageAccuracy)
+                      : 0
+                  )
+                ),
+                createdAt: existingCreatedAt,
                 updatedAt: serverTimestamp(),
               },
               { merge: true }
             );
+
+            // Hydrate or migrate server-owned adaptive profile fields on the backend
+            user
+              .getIdToken()
+              .then((token) =>
+                fetch(
+                  `/api/profile/adaptive?fallbackLevel=${encodeURIComponent(
+                    hydratedProfile.currentLevel
+                  )}`,
+                  {
+                    headers: { Authorization: `Bearer ${token}` },
+                  }
+                )
+              )
+              .then((resp) => (resp.ok ? resp.json() : null))
+              .then((data) => {
+                if (data?.profile) {
+                  const serverHydrated = normalizeAdaptiveProfile(
+                    data.profile,
+                    hydratedProfile.currentLevel
+                  );
+                  setAdaptiveProfile(serverHydrated);
+                  setStartingLevel(serverHydrated.startingLevel);
+                  setCurrentLevel(serverHydrated.currentLevel);
+                  localStorage.setItem(
+                    'fluentloop_starting_level_v1',
+                    serverHydrated.startingLevel
+                  );
+                  localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, serverHydrated.currentLevel);
+                  localStorage.setItem(
+                    'fluentloop_difficulty_target_v1',
+                    String(serverHydrated.currentDifficultyScore)
+                  );
+                  localStorage.setItem(
+                    'fluentloop_pass_streak_v1',
+                    String(serverHydrated.consecutivePasses)
+                  );
+                  localStorage.setItem(
+                    'fluentloop_fail_streak_v1',
+                    String(serverHydrated.consecutiveFailures)
+                  );
+                }
+              })
+              .catch(() => {});
           } else {
             // Keep level strictly unknown until the user completes the placement assessment
             setPlacementLevel(null);
@@ -1207,29 +1329,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     return allLessons.find((l) => l.id === activeLessonId) || publishedLessons[0] || null;
   }, [activeLessonId, allLessons, publishedLessons]);
 
+  const effectiveAdaptiveProfile = useMemo<AdaptiveProfile>(() => {
+    return normalizeAdaptiveProfile(
+      {
+        ...adaptiveProfile,
+        startingLevel: startingLevel || adaptiveProfile.startingLevel || currentLevel,
+        currentLevel,
+      },
+      currentLevel
+    );
+  }, [adaptiveProfile, startingLevel, currentLevel]);
+
   const dashboardLesson = useMemo(() => {
-    const base = createAdaptiveProfile(startingLevel || currentLevel);
-    const diffTarget =
-      typeof window !== 'undefined'
-        ? Number(localStorage.getItem('fluentloop_difficulty_target_v1'))
-        : 0;
-    const passStreak =
-      typeof window !== 'undefined'
-        ? Number(localStorage.getItem('fluentloop_pass_streak_v1'))
-        : 0;
-    const failStreak =
-      typeof window !== 'undefined'
-        ? Number(localStorage.getItem('fluentloop_fail_streak_v1'))
-        : 0;
-    const profile = {
-      ...base,
-      currentLevel,
-      currentDifficultyScore: diffTarget || base.currentDifficultyScore,
-      consecutivePasses: passStreak || 0,
-      consecutiveFailures: failStreak || 0,
-    };
-    return selectNextLesson(profile, publishedLessons, attempts) || activeLesson;
-  }, [startingLevel, currentLevel, publishedLessons, attempts, activeLesson]);
+    return selectNextLesson(effectiveAdaptiveProfile, publishedLessons, attempts) || activeLesson;
+  }, [effectiveAdaptiveProfile, publishedLessons, attempts, activeLesson]);
 
   const dashboardAttempt = dashboardLesson
     ? attempts.find(
@@ -1258,8 +1371,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   }, [savedVocab, activeLesson]);
 
   const adaptiveRecommendation = useMemo(() => {
-    return computeAdaptiveRecommendation(currentLevel, attempts, publishedLessons);
-  }, [currentLevel, attempts, publishedLessons]);
+    return computeAdaptiveRecommendation(effectiveAdaptiveProfile, attempts, publishedLessons);
+  }, [effectiveAdaptiveProfile, attempts, publishedLessons]);
 
   const handleSignIn = async () => {
     try {
@@ -1885,9 +1998,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       // Only apply progression on valid first-time attempts
       if (
         (recordOutcome.persistedAttempt?.attemptType || effectiveAttemptType) === 'first' &&
-        serverProgression?.changed
+        serverProgression?.profile
       ) {
+        setAdaptiveProfile(serverProgression.profile);
         setCurrentLevel(serverProgression.profile.currentLevel);
+        setStartingLevel((prev) => prev || serverProgression.profile.startingLevel);
+        localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, serverProgression.profile.currentLevel);
         localStorage.setItem(
           'fluentloop_difficulty_target_v1',
           String(serverProgression.profile.currentDifficultyScore)
@@ -1912,7 +2028,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
               )
             : 0;
         const nextLevel =
-          serverProgression?.changed &&
+          serverProgression?.profile &&
           (recordOutcome.persistedAttempt?.attemptType || effectiveAttemptType) === 'first'
             ? serverProgression.profile.currentLevel
             : currentLevel;
@@ -1920,27 +2036,49 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         getDoc(userRef)
           .then((snap) => {
             const existingProfile = snap.exists() ? snap.data() : null;
+            const rawPlace = placementLevel || existingProfile?.placementLevel;
+            const validPlace = isAllowedPlacementLevel(rawPlace) ? rawPlace : undefined;
+            const rawStart = startingLevel || existingProfile?.startingLevel;
+            const validStart =
+              rawStart && CEFR_LEVELS.includes(rawStart as CEFRLevel)
+                ? (rawStart as CEFRLevel)
+                : undefined;
+            const safeFontSize: 'sm' | 'md' | 'lg' | 'xl' =
+              existingProfile?.fontSize === 'sm' ||
+              existingProfile?.fontSize === 'md' ||
+              existingProfile?.fontSize === 'lg' ||
+              existingProfile?.fontSize === 'xl'
+                ? existingProfile.fontSize
+                : fontSize === 'sm' || fontSize === 'md' || fontSize === 'lg' || fontSize === 'xl'
+                ? fontSize
+                : 'md';
+            const existingCreatedAt =
+              existingProfile?.createdAt &&
+              typeof existingProfile.createdAt === 'object' &&
+              ('seconds' in existingProfile.createdAt ||
+                typeof (existingProfile.createdAt as { toDate?: unknown }).toDate === 'function')
+                ? existingProfile.createdAt
+                : serverTimestamp();
             return setDoc(
               userRef,
               {
                 uid: currentUser.uid,
-                displayName:
-                  currentUser.displayName || existingProfile?.displayName || 'Academic Reader',
+                displayName: (
+                  currentUser.displayName ||
+                  existingProfile?.displayName ||
+                  'Academic Reader'
+                ).slice(0, 120),
                 preferredLevel: nextLevel,
-                ...(startingLevel || existingProfile?.startingLevel
-                  ? { startingLevel: startingLevel || existingProfile?.startingLevel }
-                  : {}),
-                ...(placementLevel || existingProfile?.placementLevel
-                  ? { placementLevel: placementLevel || existingProfile?.placementLevel }
-                  : {}),
+                ...(validStart ? { startingLevel: validStart } : {}),
+                ...(validPlace ? { placementLevel: validPlace } : {}),
                 showArabicTranslation:
                   typeof existingProfile?.showArabicTranslation === 'boolean'
                     ? existingProfile.showArabicTranslation
-                    : showArabicTranslation,
-                fontSize: (existingProfile?.fontSize as any) || fontSize,
-                completedCount: recordOutcome.streak.completedCount,
-                averageAccuracy: avgAcc,
-                createdAt: existingProfile?.createdAt || serverTimestamp(),
+                    : Boolean(showArabicTranslation),
+                fontSize: safeFontSize,
+                completedCount: Math.max(0, Math.floor(recordOutcome.streak.completedCount)),
+                averageAccuracy: Math.min(100, Math.max(0, Math.round(avgAcc))),
+                createdAt: existingCreatedAt,
                 updatedAt: serverTimestamp(),
               },
               { merge: true }
@@ -1957,16 +2095,18 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const effectiveLevel = levelOverride || currentLevel;
     const effectiveUid =
       currentUser && !currentUser.isAnonymous ? currentUser.uid : 'guest';
-    const initialProfile = createAdaptiveProfile(startingLevel || effectiveLevel);
-    const profile = {
-      ...initialProfile,
-      currentLevel: effectiveLevel,
-      currentDifficultyScore:
-        Number(localStorage.getItem('fluentloop_difficulty_target_v1')) ||
-        initialProfile.currentDifficultyScore,
-      consecutivePasses: Number(localStorage.getItem('fluentloop_pass_streak_v1')) || 0,
-      consecutiveFailures: Number(localStorage.getItem('fluentloop_fail_streak_v1')) || 0,
-    };
+    const profile = normalizeAdaptiveProfile(
+      {
+        ...adaptiveProfile,
+        startingLevel: startingLevel || effectiveLevel,
+        currentLevel: effectiveLevel,
+        currentDifficultyScore:
+          levelOverride && levelOverride !== adaptiveProfile.currentLevel
+            ? undefined
+            : adaptiveProfile.currentDifficultyScore,
+      },
+      effectiveLevel
+    );
 
     // Always restore any existing active unfinished regular reading assignment first
     // unless the caller explicitly passed an already-completed lesson to preview.
@@ -2542,18 +2682,35 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     } catch {}
 
     // 4. Apply recommended placement level to learner profile and start personalized reading journey
+    const safePlacementLevel = isAllowedPlacementLevel(recLevel) ? recLevel : 'C1';
+    const placedProfile = normalizeAdaptiveProfile(
+      {
+        startingLevel: safePlacementLevel,
+        currentLevel: safePlacementLevel,
+        placementLevel: safePlacementLevel,
+        currentDifficultyScore: recDifficulty,
+        consecutivePasses: 0,
+        consecutiveFailures: 0,
+      },
+      safePlacementLevel
+    );
+
     localStorage.removeItem(STORAGE_KEYS.FRESH_NEW_USER_MODE);
-    setPlacementLevel(recLevel);
-    setStartingLevel(recLevel);
-    setCurrentLevel(recLevel);
+    setPlacementLevel(safePlacementLevel);
+    setStartingLevel(safePlacementLevel);
+    setCurrentLevel(safePlacementLevel);
+    setAdaptiveProfile(placedProfile);
     setShowLandingHome(false);
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
 
-    localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, recLevel);
-    localStorage.setItem('fluentloop_starting_level_v1', recLevel);
-    localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, recLevel);
-    localStorage.setItem('fluentloop_difficulty_target_v1', String(recDifficulty));
+    localStorage.setItem(STORAGE_KEYS.PLACEMENT_LEVEL, safePlacementLevel);
+    localStorage.setItem('fluentloop_starting_level_v1', safePlacementLevel);
+    localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, safePlacementLevel);
+    localStorage.setItem(
+      'fluentloop_difficulty_target_v1',
+      String(placedProfile.currentDifficultyScore)
+    );
     localStorage.setItem('fluentloop_pass_streak_v1', '0');
     localStorage.setItem('fluentloop_fail_streak_v1', '0');
 
@@ -2562,26 +2719,61 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       const snapshot = await getDoc(profileRef);
       const now = serverTimestamp();
       const existingData = snapshot.exists() ? snapshot.data() : null;
+      const safeFontSize: 'sm' | 'md' | 'lg' | 'xl' =
+        existingData?.fontSize === 'sm' ||
+        existingData?.fontSize === 'md' ||
+        existingData?.fontSize === 'lg' ||
+        existingData?.fontSize === 'xl'
+          ? existingData.fontSize
+          : fontSize === 'sm' || fontSize === 'md' || fontSize === 'lg' || fontSize === 'xl'
+          ? fontSize
+          : 'md';
+      const existingCreatedAt =
+        existingData?.createdAt &&
+        typeof existingData.createdAt === 'object' &&
+        ('seconds' in existingData.createdAt ||
+          typeof (existingData.createdAt as { toDate?: unknown }).toDate === 'function')
+          ? existingData.createdAt
+          : now;
       await setDoc(
         profileRef,
         {
           uid: linkedUser.uid,
-          displayName: linkedUser.displayName || existingData?.displayName || 'Academic Reader',
-          preferredLevel: recLevel,
-          startingLevel: existingData?.startingLevel || recLevel,
-          placementLevel: recLevel,
+          displayName: (
+            linkedUser.displayName ||
+            existingData?.displayName ||
+            'Academic Reader'
+          ).slice(0, 120),
+          preferredLevel: safePlacementLevel,
+          startingLevel:
+            existingData?.startingLevel &&
+            CEFR_LEVELS.includes(existingData.startingLevel as CEFRLevel)
+              ? existingData.startingLevel
+              : safePlacementLevel,
+          placementLevel: safePlacementLevel,
           showArabicTranslation:
             typeof existingData?.showArabicTranslation === 'boolean'
               ? existingData.showArabicTranslation
-              : showArabicTranslation,
-          fontSize: (existingData?.fontSize as any) || fontSize,
-          completedCount:
-            typeof existingData?.completedCount === 'number'
-              ? existingData.completedCount
-              : calculateReadingStreak(attemptsRef.current).completedCount,
-          averageAccuracy:
-            typeof existingData?.averageAccuracy === 'number' ? existingData.averageAccuracy : 0,
-          createdAt: existingData?.createdAt || now,
+              : Boolean(showArabicTranslation),
+          fontSize: safeFontSize,
+          completedCount: Math.max(
+            0,
+            Math.floor(
+              typeof existingData?.completedCount === 'number'
+                ? existingData.completedCount
+                : calculateReadingStreak(attemptsRef.current).completedCount
+            )
+          ),
+          averageAccuracy: Math.min(
+            100,
+            Math.max(
+              0,
+              typeof existingData?.averageAccuracy === 'number'
+                ? Math.round(existingData.averageAccuracy)
+                : 0
+            )
+          ),
+          createdAt: existingCreatedAt,
           updatedAt: now,
         },
         { merge: true }
@@ -2593,12 +2785,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     const candidateFromLoaded =
       newlyLoadedLessons.length > 0
         ? selectNextLesson(
-            createAdaptiveProfile(recLevel),
+            placedProfile,
             newlyLoadedLessons.filter((l) => l.status === 'published'),
             attemptsRef.current
           ) || undefined
         : undefined;
-    handleStartNextPassage(candidateFromLoaded, recLevel);
+    handleStartNextPassage(candidateFromLoaded, safePlacementLevel);
   };
 
   const handleSaveAdminLesson = async (lesson: ReadingLesson) => {
@@ -2959,7 +3151,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                 onClick={() => abandonActivePlacementAssessment('navigation_exit')}
                 className="rounded-lg px-3 py-1.5 hover:bg-[#F2EDE3] hover:text-[#171615] transition-colors"
               >
-                CEFR A1–C1 Levels
+                CEFR A1–C2 Levels
               </Link>
               <Link
                 href="/guides/vocabulary-in-context"
@@ -3165,7 +3357,7 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold text-[#171615] hover:bg-[#F2EDE3]"
                 >
                   <Compass className="h-4 w-4 text-[#A63816]" />
-                  <span>CEFR A1–C1 Levels</span>
+                  <span>CEFR A1–C2 Levels</span>
                 </Link>
                 <Link
                   href="/guides/vocabulary-in-context"
