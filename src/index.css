@@ -4,10 +4,10 @@
 
 @layer base {
   :root {
-    --font-display: 'Fraunces', 'Newsreader', Georgia, serif;
-    --font-serif: 'Source Serif 4', 'Newsreader', Georgia, serif;
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
+    --font-display: var(--font-fraunces), 'Fraunces', Georgia, serif;
+    --font-serif: var(--font-source-serif), 'Source Serif 4', Georgia, serif;
+    --font-sans: var(--font-plus-jakarta), 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
 
     /* Official FluentLoop Warm Editorial Palette */
     --color-primary: #A63816;
@@ -166,12 +166,12 @@ html[data-theme="dark"] [data-evidence-highlighted="true"] {
   backface-visibility: hidden;
 }
 
-/* 1. Closed book gentle upward entrance on initial load */
+/* 1. Closed book gentle upward entrance on initial load (visible from frame 0 for fast LCP) */
 .fl-book-entrance {
-  opacity: 0;
-  transform: translate3d(0, 8px, 0) scale3d(0.985, 0.985, 1);
-  animation: flBookEnter 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.05s forwards;
-  will-change: transform, opacity;
+  opacity: 1;
+  transform: translate3d(0, 6px, 0) scale3d(0.985, 0.985, 1);
+  animation: flBookEnter 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform;
   backface-visibility: hidden;
 }
 
@@ -250,8 +250,8 @@ html[data-theme="dark"] [data-evidence-highlighted="true"] {
 
 @keyframes flBookEnter {
   0% {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale3d(0.985, 0.985, 1);
+    opacity: 1;
+    transform: translate3d(0, 6px, 0) scale3d(0.985, 0.985, 1);
   }
   100% {
     opacity: 1;
@@ -816,6 +816,28 @@ html[data-theme="dark"] [data-evidence-highlighted="true"] {
     transform: translate3d(25%, 0, 0) !important;
     width: 50% !important;
   }
+  .fl-skeleton-pulse,
+  .fl-passage-card-reveal {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }
 
+/* My Reading Previous-Passage Card Skeleton & Smooth Reveal */
+.fl-skeleton-pulse {
+  animation: flSkeletonOpacityPulse 1.75s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 
+.fl-passage-card-reveal {
+  animation: flLoaderFadeIn 0.22s ease-out forwards;
+}
+
+@keyframes flSkeletonOpacityPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.52;
+  }
+}

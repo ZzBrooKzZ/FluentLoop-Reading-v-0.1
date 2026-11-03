@@ -1,6 +1,14 @@
 import { CEFRLevel, LessonAttempt, ReadingLesson } from '../types/reading';
 
 export const ADAPTIVE_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+export const PLACEMENT_LEVELS: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
+export const MAX_PLACEMENT_LEVEL: CEFRLevel = 'C1';
+
+export function isAllowedPlacementLevel(
+  level: unknown
+): level is 'A1' | 'A2' | 'B1' | 'B2' | 'C1' {
+  return typeof level === 'string' && PLACEMENT_LEVELS.includes(level as CEFRLevel);
+}
 
 /** Internal product scale only. These bands are not Lexile or CEFR conversions. */
 export const DIFFICULTY_RANGES: Record<CEFRLevel, { min: number; max: number }> = {

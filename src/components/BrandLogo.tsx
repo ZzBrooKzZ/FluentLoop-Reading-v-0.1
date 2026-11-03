@@ -20,6 +20,9 @@ export const FluentLoopInfinityMark: React.FC<{ className?: string }> = ({
   <img
     src={OFFICIAL_LOGO_ASSET_PATH}
     alt=""
+    width={52}
+    height={44}
+    decoding="async"
     aria-hidden="true"
     className={`shrink-0 object-contain scale-110 mix-blend-multiply dark:mix-blend-normal dark:rounded-lg dark:bg-[#FAF7F1] dark:p-0.5 ${className}`}
   />

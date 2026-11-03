@@ -14,8 +14,14 @@ import {
   lookupPassageWord,
   formatPartOfSpeechLabel,
   extractPassageWordTokens,
+  registerPrecomputedDictionaries,
 } from '../src/services/wordLookupService';
 import type { ReadingLesson, VocabularyAnnotation } from '../src/types/reading';
+
+registerPrecomputedDictionaries(
+  PRECOMPUTED_PASSAGE_DICTIONARY,
+  PRECOMPUTED_MULTI_WORD_EXPRESSIONS
+);
 
 export type AuditIssueType =
   | 'missing_word'

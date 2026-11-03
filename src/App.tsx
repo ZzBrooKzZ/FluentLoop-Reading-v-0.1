@@ -66,15 +66,10 @@ import {
   SavedVocabularyItem,
   VocabularyAnnotation,
 } from './types/reading';
-import { InteractivePassage } from './components/InteractivePassage';
-import { QuestionAssessment } from './components/QuestionAssessment';
-import { AssignedPassagePreview } from './components/AssignedPassagePreview';
-import { PlacementAssessmentView } from './components/PlacementAssessmentView';
 import { PublicFooter } from './components/PublicFooter';
 import { BrandLogo } from './components/BrandLogo';
 import { AnimatedBookHero } from './components/AnimatedBookHero';
 import { AnimatedBookLoader } from './components/AnimatedBookLoader';
-import { StreakBadge } from './components/StreakBadge';
 import {
   AutumnBranchIllustration,
   BooksAndTeaIllustration,
@@ -91,10 +86,10 @@ import { computeAdaptiveRecommendation } from './services/adaptiveEngine';
 import {
   AdaptiveProfile,
   createAdaptiveProfile,
+  isAllowedPlacementLevel,
   normalizeAdaptiveProfile,
   selectNextLesson,
 } from './services/adaptiveLearning';
-import { isAllowedPlacementLevel } from './services/placementEngine';
 import {
   buildDeterministicFirstAttemptId,
   calculateReadingStreak,
@@ -109,9 +104,49 @@ import {
   saveInProgressAttemptAnswers,
 } from './services/optionRandomizer';
 import { stopPlacementSessionTimer } from './services/placementTimerService';
-import { getPassagePhotoMetadata } from './utils/illustrations';
 
-// Lazy-load heavy administrator and documentation views so ordinary learners don't download them
+// Lazy-load heavy interactive reading, placement, and administrator views so homepage visitors don't download them upfront
+const InteractivePassage = dynamic(
+  () => import('./components/InteractivePassage').then((mod) => mod.InteractivePassage),
+  {
+    ssr: false,
+  }
+);
+
+const QuestionAssessment = dynamic(
+  () => import('./components/QuestionAssessment').then((mod) => mod.QuestionAssessment),
+  {
+    ssr: false,
+  }
+);
+
+const AssignedPassagePreview = dynamic(
+  () => import('./components/AssignedPassagePreview').then((mod) => mod.AssignedPassagePreview),
+  {
+    ssr: false,
+  }
+);
+
+const PlacementAssessmentView = dynamic(
+  () => import('./components/PlacementAssessmentView').then((mod) => mod.PlacementAssessmentView),
+  {
+    ssr: false,
+    loading: () => (
+      <AnimatedBookLoader
+        message="Preparing your reading experience"
+        subtext="Opening your adaptive diagnostic passage..."
+      />
+    ),
+  }
+);
+
+const StreakBadge = dynamic(
+  () => import('./components/StreakBadge').then((mod) => mod.StreakBadge),
+  {
+    ssr: false,
+  }
+);
+
 const AdminStudio = dynamic(
   () => import('./components/AdminStudio').then((mod) => mod.AdminStudio),
   {
@@ -288,6 +323,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   const [authenticatedLessons, setAuthenticatedLessons] = useState<ReadingLesson[]>(
     initialSanitizedLessons || []
   );
+  const [lessonsLoadedForUid, setLessonsLoadedForUid] = useState<string | null>(() =>
+    initialSanitizedLessons && initialSanitizedLessons.length > 0 ? 'initial' : null
+  );
+  const [lessonsLoadError, setLessonsLoadError] = useState<string | null>(null);
+  const [lessonsRetryCount, setLessonsRetryCount] = useState<number>(0);
+  const [attemptsSyncedForUid, setAttemptsSyncedForUid] = useState<string | null>(null);
   const [customLessonsMap, setCustomLessonsMap] = useState<Record<string, ReadingLesson>>({});
   const [adminAuthoritativeLessons, setAdminAuthoritativeLessons] = useState<ReadingLesson[] | null>(
     null
@@ -396,6 +437,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
 
     // One-time cache purge so the browser starts cleanly as a brand-new user
     if (localStorage.getItem(STORAGE_KEYS.FRESH_START_EPOCH) !== CURRENT_FRESH_START_EPOCH) {
+      const hadCachedAuthUser = Boolean(
+        localStorage.getItem(STORAGE_KEYS.LAST_AUTH_UID) || auth.currentUser
+      );
       purgeLocalLearnerCache();
       localStorage.setItem(STORAGE_KEYS.FRESH_START_EPOCH, CURRENT_FRESH_START_EPOCH);
       localStorage.setItem(STORAGE_KEYS.FRESH_NEW_USER_MODE, 'true');
@@ -409,7 +453,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       setSavedVocab([]);
       setActiveLessonId(null);
       setActiveTab('library');
-      signOut(auth).catch(() => {});
+      if (hadCachedAuthUser) {
+        signOut(auth).catch(() => {});
+      }
       return;
     }
 
@@ -687,10 +733,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
   };
 
   useEffect(() => {
-    if (authReady) {
+    if (authReady && currentUser && !currentUser.isAnonymous) {
       testConnection();
     }
-  }, [authReady]);
+  }, [authReady, currentUser]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -727,6 +773,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             setShowPlacementAssessment(false);
             setPendingStepFeedback(null);
             setPlacementSubmissionError(null);
+            setLessonsLoadedForUid(null);
+            setLessonsLoadError(null);
+            setAttemptsSyncedForUid(null);
           }
           localStorage.setItem(STORAGE_KEYS.LAST_AUTH_UID, user.uid);
 
@@ -1002,26 +1051,60 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     if (!authReady) return;
     if (!currentUser || !isVerifiedGoogleUser) {
       setAuthenticatedLessons([]);
+      setLessonsLoadedForUid(null);
+      setLessonsLoadError(null);
+      return;
+    }
+    if (authenticatedLessons.length > 0 && lessonsLoadedForUid === currentUser.uid) {
       return;
     }
     let cancelled = false;
+    const targetUid = currentUser.uid;
+    setLessonsLoadError(null);
+
     currentUser
       .getIdToken()
       .then(async (token) => {
         const resp = await fetch('/api/lessons', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!resp.ok || cancelled) return;
+        if (cancelled) return;
+        if (!resp.ok) {
+          setLessonsLoadError(
+            'We could not load your reading passage right now. Please check your connection and try again.'
+          );
+          return;
+        }
         const data = await resp.json().catch(() => null);
-        if (!cancelled && data && Array.isArray(data.lessons)) {
+        if (cancelled) return;
+        if (data && Array.isArray(data.lessons)) {
           setAuthenticatedLessons(data.lessons);
+          setLessonsLoadedForUid(targetUid);
+          setLessonsLoadError(null);
+        } else {
+          setLessonsLoadError(
+            'We could not load your reading passage right now. Please try again.'
+          );
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) {
+          setLessonsLoadError(
+            'We could not load your reading passage right now. Please check your connection and try again.'
+          );
+        }
+      });
     return () => {
       cancelled = true;
     };
-  }, [authReady, currentUser, isVerifiedGoogleUser]);
+  }, [
+    authReady,
+    currentUser,
+    isVerifiedGoogleUser,
+    authenticatedLessons.length,
+    lessonsLoadedForUid,
+    lessonsRetryCount,
+  ]);
 
   // Load authoritative lessons, diagnostic passages, and admin health status when admin is verified
   useEffect(() => {
@@ -1129,8 +1212,12 @@ export default function App({ initialSanitizedLessons }: AppProps) {
             return combined;
           });
         }
+        setAttemptsSyncedForUid(currentUser.uid);
       },
-      (err) => console.warn('Attempts listener warning:', err)
+      (err) => {
+        console.warn('Attempts listener warning:', err);
+        setAttemptsSyncedForUid(currentUser.uid);
+      }
     );
 
     const vocabQ = query(collection(db, 'vocabulary'), where('userId', '==', currentUser.uid));
@@ -1353,6 +1440,20 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       )
     : undefined;
 
+  const hasLoadedLessonsCatalog =
+    publishedLessons.length > 0 ||
+    lessonsLoadedForUid === 'initial' ||
+    Boolean(currentUser && lessonsLoadedForUid === currentUser.uid);
+
+  const hasSyncedAttemptsForCurrentUser =
+    !currentUser ||
+    currentUser.isAnonymous ||
+    attemptsSyncedForUid === currentUser.uid;
+
+  const isDashboardPassageLoading =
+    !lessonsLoadError &&
+    (!hasLoadedLessonsCatalog || !hasSyncedAttemptsForCurrentUser);
+
   const savedVocabWordsForActiveLesson = useMemo(() => {
     if (!activeLesson) return new Set<string>();
     const savedSet = new Set<string>();
@@ -1493,6 +1594,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
     setShowPlacementAssessment(false);
     setPendingStepFeedback(null);
     setAuthenticatedLessons([]);
+    setLessonsLoadedForUid(null);
+    setLessonsLoadError(null);
+    setAttemptsSyncedForUid(null);
     attemptsRef.current = [];
     setAttempts([]);
     setSavedVocab([]);
@@ -2677,6 +2781,8 @@ export default function App({ initialSanitizedLessons }: AppProps) {
         if (lessonsData && Array.isArray(lessonsData.lessons)) {
           newlyLoadedLessons = lessonsData.lessons;
           setAuthenticatedLessons(lessonsData.lessons);
+          setLessonsLoadedForUid(finalUid);
+          setLessonsLoadError(null);
         }
       }
     } catch {}
@@ -2939,6 +3045,29 @@ export default function App({ initialSanitizedLessons }: AppProps) {
       window.speechSynthesis.speak(utterance);
     }
   };
+
+  const [activeLessonPhotoMeta, setActiveLessonPhotoMeta] = useState<{
+    photographer: string;
+    sourceUrl: string;
+    sourceName: string;
+    license: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (activeTab !== 'reader' || !activeLessonId) {
+      setActiveLessonPhotoMeta(null);
+      return;
+    }
+    let cancelled = false;
+    void import('./utils/illustrations').then((mod) => {
+      if (!cancelled) {
+        setActiveLessonPhotoMeta(mod.getPassagePhotoMetadata(activeLessonId) ?? null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeLessonId]);
 
   const questionAccuracy = useMemo(() => {
     const totals: Record<string, { correct: number; total: number; accuracy: number }> = {};
@@ -3737,6 +3866,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                       <img
                         src={sample.photo}
                         alt={sample.title}
+                        width={1200}
+                        height={675}
+                        loading="lazy"
+                        decoding="async"
                         className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />
                       <span className="absolute top-3 left-3 rounded-full bg-[#FAF7F1]/95 px-2.5 py-1 font-mono-code text-[11px] font-bold text-[#A63816]">
@@ -3988,9 +4121,72 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                   </div>
                 </section>
 
-                {/* Prominent Next Passage Card */}
-                {dashboardLesson && (
-                  <section className="group overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-sm transition-shadow hover:shadow-md">
+                {/* Prominent Next Passage Card (Skeleton -> Real Card / Error / Empty State) */}
+                {isDashboardPassageLoading ? (
+                  <section
+                    role="status"
+                    aria-busy="true"
+                    aria-label="Loading your reading passage"
+                    data-testid="dashboard-passage-skeleton"
+                    className="overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-sm"
+                  >
+                    <div className="grid md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+                      {/* Left Column: Image Placeholder */}
+                      <div className="relative min-h-56 w-full overflow-hidden bg-[#F2EDE3] md:min-h-72 fl-skeleton-pulse">
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#171615]/10 via-transparent to-transparent" />
+                        <div className="absolute bottom-4 left-5 h-6 w-28 rounded-full border border-[#E3D7C3]/80 bg-[#FAF7F1]/90" />
+                      </div>
+
+                      {/* Right Column: Eyebrow, Title, Description, Button & Metadata Placeholders */}
+                      <div className="flex flex-col justify-center p-6 sm:p-8">
+                        <div className="h-3.5 w-44 rounded-md bg-[#F7E9DC] fl-skeleton-pulse" />
+                        <div className="mt-3.5 space-y-2">
+                          <div className="h-7 sm:h-8 w-5/6 rounded-lg bg-[#E3D7C3]/75 fl-skeleton-pulse" />
+                          <div className="h-7 sm:h-8 w-3/5 rounded-lg bg-[#E3D7C3]/75 fl-skeleton-pulse" />
+                        </div>
+                        <div className="mt-3.5 space-y-2">
+                          <div className="h-4 w-full rounded-md bg-[#F2EDE3] fl-skeleton-pulse" />
+                          <div className="h-4 w-11/12 rounded-md bg-[#F2EDE3] fl-skeleton-pulse" />
+                          <div className="h-4 w-2/3 rounded-md bg-[#F2EDE3] fl-skeleton-pulse" />
+                        </div>
+                        <div className="mt-6 flex flex-wrap items-center gap-3">
+                          <div className="h-12 w-48 rounded-xl border border-[#A63816]/25 bg-[#F7E9DC] fl-skeleton-pulse" />
+                        </div>
+                        <div className="mt-3 h-3.5 w-36 rounded-md bg-[#F2EDE3] fl-skeleton-pulse" />
+                        <span className="sr-only">Loading your reading passage…</span>
+                      </div>
+                    </div>
+                  </section>
+                ) : lessonsLoadError && !dashboardLesson ? (
+                  <section
+                    role="alert"
+                    data-testid="dashboard-passage-error"
+                    className="overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-8 shadow-sm"
+                  >
+                    <div className="max-w-xl space-y-3">
+                      <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#A63816]">
+                        Connection Issue
+                      </span>
+                      <h2 className="font-display text-2xl font-bold text-[#171615]">
+                        Unable to load your reading passage
+                      </h2>
+                      <p className="text-sm leading-relaxed text-[#76675B]">
+                        {lessonsLoadError}
+                      </p>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setLessonsRetryCount((count) => count + 1)}
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#A63816] px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow-xs transition-colors hover:bg-[#842B12] cursor-pointer"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          <span>Try Again</span>
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                ) : dashboardLesson ? (
+                  <section className="group overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] shadow-sm transition-shadow hover:shadow-md fl-passage-card-reveal">
                     <div className="grid md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
                       <button
                         type="button"
@@ -4009,6 +4205,9 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                         <img
                           src={dashboardLesson.illustrationUrl}
                           alt={dashboardLesson.illustrationAlt || dashboardLesson.title}
+                          width={1200}
+                          height={675}
+                          decoding="async"
                           className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
@@ -4050,6 +4249,34 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                             dashboardLesson.passage.split(/\s+/).length}{' '}
                           words
                         </p>
+                      </div>
+                    </div>
+                  </section>
+                ) : (
+                  <section
+                    data-testid="dashboard-passage-empty"
+                    className="overflow-hidden rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-8 shadow-sm fl-passage-card-reveal"
+                  >
+                    <div className="max-w-xl space-y-3">
+                      <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#A63816]">
+                        Reading Queue Complete
+                      </span>
+                      <h2 className="font-display text-2xl font-bold text-[#171615]">
+                        You have explored the available passages at CEFR {currentLevel}
+                      </h2>
+                      <p className="text-sm leading-relaxed text-[#76675B]">
+                        Review any completed passage in your Reading History to revisit vocabulary
+                        in context or practice comprehension questions again.
+                      </p>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('history')}
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#A63816] px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow-xs transition-colors hover:bg-[#842B12] cursor-pointer"
+                        >
+                          <Clock className="h-4 w-4" />
+                          <span>Open Reading History</span>
+                        </button>
                       </div>
                     </div>
                   </section>
@@ -4148,6 +4375,10 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                                 <img
                                   src={lesson.illustrationUrl}
                                   alt={lesson.illustrationAlt || lesson.title}
+                                  width={1200}
+                                  height={675}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                                 />
                                 <div className="absolute top-3 left-3 flex items-center gap-1.5">
@@ -4307,23 +4538,19 @@ export default function App({ initialSanitizedLessons }: AppProps) {
                           className="h-full w-full object-cover"
                         />
                       </div>
-                      {(() => {
-                        const photoMeta = getPassagePhotoMetadata(activeLesson.id);
-                        if (!photoMeta) return null;
-                        return (
-                          <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E3D7C3] bg-[#FAF7F1] px-4 py-2 text-[11px] text-[#76675B]">
-                            <span>Photo: {photoMeta.photographer}</span>
-                            <a
-                              href={photoMeta.sourceUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="hover:text-[#A63816] hover:underline"
-                            >
-                              {photoMeta.sourceName} ({photoMeta.license})
-                            </a>
-                          </figcaption>
-                        );
-                      })()}
+                      {activeLessonPhotoMeta && (
+                        <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E3D7C3] bg-[#FAF7F1] px-4 py-2 text-[11px] text-[#76675B]">
+                          <span>Photo: {activeLessonPhotoMeta.photographer}</span>
+                          <a
+                            href={activeLessonPhotoMeta.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:text-[#A63816] hover:underline"
+                          >
+                            {activeLessonPhotoMeta.sourceName} ({activeLessonPhotoMeta.license})
+                          </a>
+                        </figcaption>
+                      )}
                     </figure>
 
                     <div className="rounded-2xl border border-[#E3D7C3] bg-[#FFFDFA] p-6 sm:p-8 shadow-xs">

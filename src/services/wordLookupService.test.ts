@@ -14,8 +14,14 @@ import {
   detectMultiWordExpressionsInText,
   formatPartOfSpeechLabel,
   computeDictionaryCoverageReport,
+  registerPrecomputedDictionaries,
 } from './wordLookupService';
 import { tokenizePlainSegment } from '../components/InteractivePassage';
+
+registerPrecomputedDictionaries(
+  PRECOMPUTED_PASSAGE_DICTIONARY,
+  PRECOMPUTED_MULTI_WORD_EXPRESSIONS
+);
 
 describe('FluentLoop Contextual Vocabulary Dictionary & Lookup Service', () => {
   it('1. Audits every single-word dictionary entry for valid general definition, part of speech, and contextual explanation', () => {

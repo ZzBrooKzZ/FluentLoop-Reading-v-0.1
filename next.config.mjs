@@ -17,6 +17,28 @@ const nextConfig = {
     '127.0.0.1',
     '0.0.0.0',
   ],
+  async headers() {
+    return [
+      {
+        source: '/photos/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+      {
+        source: '/assets/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

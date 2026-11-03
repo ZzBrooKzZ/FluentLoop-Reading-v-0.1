@@ -1,16 +1,149 @@
-import {
-  PRECOMPUTED_PASSAGE_DICTIONARY,
+import type {
   PrecomputedWordEntry,
   PrecomputedWordSense,
 } from '../data/precomputedPassageDictionary';
-import {
-  PRECOMPUTED_MULTI_WORD_EXPRESSIONS,
-  MULTI_WORD_MODIFIER_TOKENS,
-  SEPARABLE_OBJECT_PRONOUNS,
+import type {
   MultiWordExpressionEntry,
   MultiWordExpressionCategory,
 } from '../data/multiWordExpressions';
 import { CEFRLevel, ReadingLesson, VocabularyAnnotation } from '../types/reading';
+
+const MULTI_WORD_MODIFIER_TOKENS = new Set([
+  'key',
+  'vital',
+  'major',
+  'important',
+  'crucial',
+  'central',
+  'critical',
+  'significant',
+  'essential',
+  'direct',
+  'strong',
+  'profound',
+  'lasting',
+  'positive',
+  'negative',
+  'active',
+  'leading',
+  'primary',
+  'fundamental',
+  'decisive',
+  'close',
+  'careful',
+  'special',
+  'particular',
+  'greater',
+  'public',
+  'global',
+  'new',
+  'final',
+  'informed',
+  'better',
+]);
+
+const SEPARABLE_OBJECT_PRONOUNS = new Set([
+  'it',
+  'them',
+  'him',
+  'her',
+  'us',
+  'me',
+  'you',
+  'this',
+  'that',
+  'these',
+  'those',
+  'everything',
+  'something',
+  'nothing',
+  'anything',
+  'himself',
+  'herself',
+  'itself',
+  'themselves',
+]);
+
+let cachedPassageDictionary: Record<string, PrecomputedWordEntry> | null = null;
+let cachedMultiWordExpressions: MultiWordExpressionEntry[] | null = null;
+let dictionaryLoadPromise: Promise<void> | null = null;
+
+export function registerPrecomputedDictionaries(
+  passageDictionary: Record<string, PrecomputedWordEntry>,
+  multiWordExpressions: MultiWordExpressionEntry[]
+): void {
+  cachedPassageDictionary = passageDictionary;
+  cachedMultiWordExpressions = multiWordExpressions;
+}
+
+function ensureNodeDictionariesSync(): void {
+  if (cachedPassageDictionary !== null && cachedMultiWordExpressions !== null) {
+    return;
+  }
+  if (typeof window !== 'undefined' || typeof process === 'undefined') {
+    return;
+  }
+  try {
+    const getBuiltin = (
+      process as unknown as {
+        getBuiltinModule?: (id: string) => { createRequire: (url: string) => (id: string) => any };
+      }
+    ).getBuiltinModule;
+    if (typeof getBuiltin === 'function') {
+      const nodeModule = getBuiltin('module');
+      const req = nodeModule.createRequire(import.meta.url);
+      if (!cachedPassageDictionary) {
+        const dictMod = req('../data/precomputedPassageDictionary');
+        cachedPassageDictionary = dictMod.PRECOMPUTED_PASSAGE_DICTIONARY;
+      }
+      if (!cachedMultiWordExpressions) {
+        const mweMod = req('../data/multiWordExpressions');
+        cachedMultiWordExpressions = mweMod.PRECOMPUTED_MULTI_WORD_EXPRESSIONS;
+      }
+    }
+  } catch {
+    // Browser / bundler environments use ensureWordLookupDictionariesLoaded()
+  }
+}
+
+function getPrecomputedPassageDictionary(): Record<string, PrecomputedWordEntry> {
+  if (!cachedPassageDictionary) {
+    ensureNodeDictionariesSync();
+  }
+  return cachedPassageDictionary ?? {};
+}
+
+function getPrecomputedMultiWordExpressions(): MultiWordExpressionEntry[] {
+  if (!cachedMultiWordExpressions) {
+    ensureNodeDictionariesSync();
+  }
+  return cachedMultiWordExpressions ?? [];
+}
+
+export function areWordLookupDictionariesLoaded(): boolean {
+  return cachedPassageDictionary !== null && cachedMultiWordExpressions !== null;
+}
+
+export async function ensureWordLookupDictionariesLoaded(): Promise<void> {
+  if (cachedPassageDictionary !== null && cachedMultiWordExpressions !== null) {
+    return;
+  }
+  if (!dictionaryLoadPromise) {
+    dictionaryLoadPromise = Promise.all([
+      import('../data/precomputedPassageDictionary'),
+      import('../data/multiWordExpressions'),
+    ])
+      .then(([dictMod, mweMod]) => {
+        cachedPassageDictionary = dictMod.PRECOMPUTED_PASSAGE_DICTIONARY;
+        cachedMultiWordExpressions = mweMod.PRECOMPUTED_MULTI_WORD_EXPRESSIONS;
+      })
+      .catch((error) => {
+        dictionaryLoadPromise = null;
+        throw error;
+      });
+  }
+  await dictionaryLoadPromise;
+}
 
 export interface SplitWordToken {
   leading: string;
@@ -1512,8 +1645,9 @@ export function detectMultiWordExpressionsInText(
 
   const candidates: DetectedMultiWordExpression[] = [];
 
+  const multiWordExpressions = getPrecomputedMultiWordExpressions();
   for (let startIdx = 0; startIdx < tokens.length; startIdx++) {
-    for (const entry of PRECOMPUTED_MULTI_WORD_EXPRESSIONS) {
+    for (const entry of multiWordExpressions) {
       const firstPat = entry.tokens[0];
       const isFirstHead = entry.headWordIndex === 0;
       if (!doesTokenMatchPattern(tokens[startIdx], firstPat, isFirstHead, entry.headInflections)) {
@@ -1897,6 +2031,7 @@ function buildDeterministicFallbackAnnotation(
   sentence: string | undefined,
   lessonId: string | undefined
 ): VocabularyAnnotation {
+  const precomputedDict = getPrecomputedPassageDictionary();
   // 1. Check prefix + known dictionary stem
   for (const { prefix, gloss } of FALLBACK_PREFIX_MEANINGS) {
     if (normalizedKey.startsWith(prefix) && normalizedKey.length >= prefix.length + 4) {
@@ -1904,7 +2039,7 @@ function buildDeterministicFallbackAnnotation(
       const candidates = getMorphologicalCandidates(rest);
       for (const cand of candidates) {
         const baseEntry =
-          PRECOMPUTED_PASSAGE_DICTIONARY[cand] || SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[cand];
+          precomputedDict[cand] || SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[cand];
         if (baseEntry) {
           const baseShort = extractShortMeaningGloss(baseEntry.def);
           const pos = formatPartOfSpeechLabel(baseEntry.pos);
@@ -1974,7 +2109,7 @@ function buildDeterministicFallbackAnnotation(
       const stemVariants = [stem, `${stem}e`, stem.endsWith('i') ? `${stem.slice(0, -1)}y` : ''].filter(Boolean);
       for (const sv of stemVariants) {
         const baseEntry =
-          PRECOMPUTED_PASSAGE_DICTIONARY[sv] || SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[sv];
+          precomputedDict[sv] || SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[sv];
         if (baseEntry) {
           const rootGloss = extractShortMeaningGloss(baseEntry.def);
           const simpleDefinition = rule.template(sv, rootGloss);
@@ -2193,7 +2328,7 @@ export function lookupPassageWord({
     if (directMWEs.length > 0) {
       return buildAnnotationFromDetectedMWE(directMWEs[0], sentence, lessonId);
     }
-    const exactEntry = PRECOMPUTED_MULTI_WORD_EXPRESSIONS.find(
+    const exactEntry = getPrecomputedMultiWordExpressions().find(
       (e) => e.canonical.toLowerCase() === normalizedKey
     );
     if (exactEntry) {
@@ -2247,8 +2382,9 @@ export function lookupPassageWord({
   }
 
   // 2. Direct lookup in precomputed passage dictionary
+  const precomputedDict = getPrecomputedPassageDictionary();
   let entry: PrecomputedWordEntry | undefined =
-    PRECOMPUTED_PASSAGE_DICTIONARY[normalizedKey] ||
+    precomputedDict[normalizedKey] ||
     SUPPLEMENTAL_SINGLE_WORD_DICTIONARY[normalizedKey];
   let matchedCandidate = normalizedKey;
 
@@ -2256,8 +2392,8 @@ export function lookupPassageWord({
   if (!entry) {
     const candidates = getMorphologicalCandidates(normalizedKey);
     for (const candidate of candidates) {
-      if (PRECOMPUTED_PASSAGE_DICTIONARY[candidate]) {
-        entry = PRECOMPUTED_PASSAGE_DICTIONARY[candidate];
+      if (precomputedDict[candidate]) {
+        entry = precomputedDict[candidate];
         matchedCandidate = candidate;
         break;
       }
@@ -2279,7 +2415,7 @@ export function lookupPassageWord({
       .map((p) => {
         const cands = getMorphologicalCandidates(p);
         for (const c of cands) {
-          if (PRECOMPUTED_PASSAGE_DICTIONARY[c]) return { part: p, data: PRECOMPUTED_PASSAGE_DICTIONARY[c] };
+          if (precomputedDict[c]) return { part: p, data: precomputedDict[c] };
         }
         return null;
       })
@@ -2509,7 +2645,7 @@ export function computeDictionaryCoverageReport(
         globalDefinedSet.add(norm);
         bucket.definedSet.add(norm);
 
-        const dictEntry = PRECOMPUTED_PASSAGE_DICTIONARY[norm];
+        const dictEntry = getPrecomputedPassageDictionary()[norm];
         if (dictEntry?.senses && dictEntry.senses.length > 1) {
           lessonAmbiguous.add(norm);
         }
@@ -2542,7 +2678,8 @@ export function computeDictionaryCoverageReport(
     });
   }
 
-  const ambiguousEntries = Object.entries(PRECOMPUTED_PASSAGE_DICTIONARY).filter(
+  const precomputedDict = getPrecomputedPassageDictionary();
+  const ambiguousEntries = Object.entries(precomputedDict).filter(
     ([, val]) => val.senses && val.senses.length > 1
   );
 
@@ -2568,9 +2705,9 @@ export function computeDictionaryCoverageReport(
   ];
 
   const sampleAmbiguousWords = showcaseWords
-    .filter((w) => PRECOMPUTED_PASSAGE_DICTIONARY[w]?.senses && PRECOMPUTED_PASSAGE_DICTIONARY[w].senses!.length > 1)
+    .filter((w) => precomputedDict[w]?.senses && precomputedDict[w].senses!.length > 1)
     .map((w) => {
-      const entry = PRECOMPUTED_PASSAGE_DICTIONARY[w];
+      const entry = precomputedDict[w];
       return {
         word: w,
         senseCount: entry.senses!.length,
@@ -2647,8 +2784,9 @@ export function computeMultiWordExpressionCoverageReport(
     'Compound expression': 0,
   };
 
+  const multiWordExpressions = getPrecomputedMultiWordExpressions();
   let polysemousExpressionsCount = 0;
-  for (const entry of PRECOMPUTED_MULTI_WORD_EXPRESSIONS) {
+  for (const entry of multiWordExpressions) {
     byCategoryDictionaryCount[entry.category] += 1;
     if (entry.senses && entry.senses.length > 1) {
       polysemousExpressionsCount += 1;
@@ -2695,7 +2833,7 @@ export function computeMultiWordExpressionCoverageReport(
   }
 
   return {
-    totalDictionaryExpressions: PRECOMPUTED_MULTI_WORD_EXPRESSIONS.length,
+    totalDictionaryExpressions: multiWordExpressions.length,
     polysemousExpressionsCount,
     byCategoryDictionaryCount,
     totalPassagesScanned: regularLessons.length + diagnosticPassages.length,

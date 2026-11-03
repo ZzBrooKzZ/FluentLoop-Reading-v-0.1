@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Bookmark, Check, Volume2, X, Sparkles, BookOpen } from 'lucide-react';
 import { CEFRLevel, VocabularyAnnotation } from '../types/reading';
 import {
+  areWordLookupDictionariesLoaded,
+  ensureWordLookupDictionariesLoaded,
   extractSentenceWithOffset,
   formatPartOfSpeechLabel,
   lookupPassageWord,
@@ -189,6 +191,9 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
   const [activeVocab, setActiveVocab] = useState<VocabularyAnnotation | null>(null);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [pinnedByClick, setPinnedByClick] = useState<boolean>(false);
+  const [dictionariesReady, setDictionariesReady] = useState<boolean>(() =>
+    areWordLookupDictionariesLoaded()
+  );
   const [popupPos, setPopupPos] = useState<PopupPosition>({
     top: 0,
     left: 0,
@@ -202,6 +207,31 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
   const hoverOpenTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+  const selectionIdRef = useRef<number>(0);
+  const activePlainWordTargetRef = useRef<{
+    selectionId: number;
+    rawWord: string;
+    paragraphText: string;
+    charOffset: number;
+    anchorEl: HTMLElement;
+  } | null>(null);
+
+  const requestDictionaryLoad = useCallback(() => {
+    if (areWordLookupDictionariesLoaded()) {
+      setDictionariesReady(true);
+      return;
+    }
+    ensureWordLookupDictionariesLoaded()
+      .then(() => {
+        if (isMountedRef.current) {
+          setDictionariesReady(true);
+        }
+      })
+      .catch(() => {
+        // Keep fallback active if network load fails; subsequent interactions can retry
+      });
+  }, []);
 
   const clearHoverOpenTimer = useCallback(() => {
     if (hoverOpenTimerRef.current !== null) {
@@ -220,6 +250,8 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
   const closePopup = useCallback(() => {
     clearHoverOpenTimer();
     clearCloseTimer();
+    selectionIdRef.current += 1;
+    activePlainWordTargetRef.current = null;
     setActiveVocab(null);
     setAnchorEl(null);
     setPinnedByClick(false);
@@ -231,6 +263,8 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
     clearHoverOpenTimer();
     clearCloseTimer();
     closeTimerRef.current = window.setTimeout(() => {
+      selectionIdRef.current += 1;
+      activePlainWordTargetRef.current = null;
       setActiveVocab(null);
       setAnchorEl(null);
       setPinnedByClick(false);
@@ -243,6 +277,15 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
   useEffect(() => {
     closePopup();
   }, [lessonId, closePopup]);
+
+  // Preload offline word & MWE dictionaries asynchronously when InteractivePassage mounts
+  useEffect(() => {
+    isMountedRef.current = true;
+    requestDictionaryLoad();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [requestDictionaryLoad]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -538,24 +581,104 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
     [lessonId, lessonLevel, vocabulary]
   );
 
+  const applyVocabSelection = useCallback(
+    (
+      targetEl: HTMLElement,
+      resolved: VocabularyAnnotation,
+      options?: {
+        pin?: boolean;
+        plainLookup?: {
+          rawWord: string;
+          paragraphText: string;
+          charOffset: number;
+          dictionaryWasLoaded: boolean;
+        };
+      }
+    ) => {
+      selectionIdRef.current += 1;
+      const currentSelectionId = selectionIdRef.current;
+
+      const isCuratedMatch = vocabulary.some((v) => v.id === resolved.id);
+      if (
+        options?.plainLookup &&
+        !options.plainLookup.dictionaryWasLoaded &&
+        !isCuratedMatch
+      ) {
+        activePlainWordTargetRef.current = {
+          selectionId: currentSelectionId,
+          rawWord: options.plainLookup.rawWord,
+          paragraphText: options.plainLookup.paragraphText,
+          charOffset: options.plainLookup.charOffset,
+          anchorEl: targetEl,
+        };
+        requestDictionaryLoad();
+      } else {
+        activePlainWordTargetRef.current = null;
+      }
+
+      anchorElRef.current = targetEl;
+      setAnchorEl(targetEl);
+      setActiveVocab(resolved);
+      if (options?.pin) {
+        setPinnedByClick(true);
+      }
+    },
+    [requestDictionaryLoad, vocabulary]
+  );
+
+  // When dictionary loading completes, re-resolve the currently open non-curated word popup once
+  useEffect(() => {
+    if (!dictionariesReady) return;
+    const pending = activePlainWordTargetRef.current;
+    if (!pending) return;
+
+    activePlainWordTargetRef.current = null;
+    if (
+      pending.selectionId !== selectionIdRef.current ||
+      anchorElRef.current !== pending.anchorEl
+    ) {
+      return;
+    }
+
+    const refreshed = resolveWordAnnotation(
+      pending.rawWord,
+      pending.paragraphText,
+      pending.charOffset
+    );
+    if (
+      refreshed &&
+      pending.selectionId === selectionIdRef.current &&
+      anchorElRef.current === pending.anchorEl
+    ) {
+      setActiveVocab(refreshed);
+    }
+  }, [dictionariesReady, resolveWordAnnotation]);
+
   // Desktop hover (350–500ms delay -> 400ms) for curated vocabulary or any passage word
   const scheduleHoverOpen = useCallback(
-    (targetEl: HTMLElement, resolveVocab: () => VocabularyAnnotation | null) => {
+    (
+      targetEl: HTMLElement,
+      resolveVocab: () => VocabularyAnnotation | null,
+      plainContext?: { rawWord: string; paragraphText: string; charOffset: number }
+    ) => {
       clearCloseTimer();
       clearHoverOpenTimer();
 
       hoverOpenTimerRef.current = window.setTimeout(() => {
+        const dictionaryWasLoaded = areWordLookupDictionariesLoaded();
         const resolved = resolveVocab();
         if (!resolved) return;
         if (pinnedByClick && activeVocab?.id !== resolved.id) {
           return;
         }
-        anchorElRef.current = targetEl;
-        setAnchorEl(targetEl);
-        setActiveVocab(resolved);
+        applyVocabSelection(targetEl, resolved, {
+          plainLookup: plainContext
+            ? { ...plainContext, dictionaryWasLoaded }
+            : undefined,
+        });
       }, HOVER_OPEN_DELAY_MS);
     },
-    [activeVocab?.id, clearCloseTimer, clearHoverOpenTimer, pinnedByClick]
+    [activeVocab?.id, applyVocabSelection, clearCloseTimer, clearHoverOpenTimer, pinnedByClick]
   );
 
   const handlePointerEnterCuratedWord = (
@@ -596,8 +719,10 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
       }
     }
     const targetEl = e.currentTarget;
-    scheduleHoverOpen(targetEl, () =>
-      resolveWordAnnotation(rawWord, paragraphText, charOffset)
+    scheduleHoverOpen(
+      targetEl,
+      () => resolveWordAnnotation(rawWord, paragraphText, charOffset),
+      { rawWord, paragraphText, charOffset }
     );
   };
 
@@ -616,9 +741,7 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
     clearHoverOpenTimer();
     if (pinnedByClick && activeVocab?.id !== vocab.id) return;
     const targetEl = e.currentTarget;
-    anchorElRef.current = targetEl;
-    setAnchorEl(targetEl);
-    setActiveVocab(vocab);
+    applyVocabSelection(targetEl, vocab);
   };
 
   const handleBlurWord = (e: React.FocusEvent<HTMLElement>) => {
@@ -642,10 +765,7 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
     if (activeVocab?.id === vocab.id && pinnedByClick && anchorElRef.current === targetEl) {
       closePopup();
     } else {
-      anchorElRef.current = targetEl;
-      setAnchorEl(targetEl);
-      setActiveVocab(vocab);
-      setPinnedByClick(true);
+      applyVocabSelection(targetEl, vocab, { pin: true });
     }
   };
 
@@ -658,27 +778,30 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
     clearHoverOpenTimer();
     clearCloseTimer();
     const targetEl = e.currentTarget;
+    const dictionaryWasLoaded = areWordLookupDictionariesLoaded();
     const resolved = resolveWordAnnotation(rawWord, paragraphText, charOffset);
     if (!resolved) return;
 
     if (activeVocab?.id === resolved.id && pinnedByClick && anchorElRef.current === targetEl) {
       closePopup();
     } else {
-      anchorElRef.current = targetEl;
-      setAnchorEl(targetEl);
-      setActiveVocab(resolved);
-      setPinnedByClick(true);
+      applyVocabSelection(targetEl, resolved, {
+        pin: true,
+        plainLookup: { rawWord, paragraphText, charOffset, dictionaryWasLoaded },
+      });
     }
   };
 
   const handleDoubleClickWord = (
     e: React.MouseEvent<HTMLElement>,
-    resolveVocab: () => VocabularyAnnotation | null
+    resolveVocab: () => VocabularyAnnotation | null,
+    plainContext?: { rawWord: string; paragraphText: string; charOffset: number }
   ) => {
     e.preventDefault();
     clearHoverOpenTimer();
     clearCloseTimer();
     const targetEl = e.currentTarget;
+    const dictionaryWasLoaded = areWordLookupDictionariesLoaded();
     const resolved = resolveVocab();
     if (!resolved) return;
 
@@ -686,10 +809,12 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
       window.getSelection()?.removeAllRanges();
     }
 
-    anchorElRef.current = targetEl;
-    setAnchorEl(targetEl);
-    setActiveVocab(resolved);
-    setPinnedByClick(true);
+    applyVocabSelection(targetEl, resolved, {
+      pin: true,
+      plainLookup: plainContext
+        ? { ...plainContext, dictionaryWasLoaded }
+        : undefined,
+    });
   };
 
   const activeWordSaved = isVocabSaved(activeVocab);
@@ -958,12 +1083,19 @@ export const InteractivePassage: React.FC<InteractivePassageProps> = ({
                               )
                             }
                             onDoubleClick={(e) =>
-                              handleDoubleClickWord(e, () =>
-                                resolveWordAnnotation(
-                                  piece.core,
-                                  fullParagraphText,
-                                  piece.charOffset
-                                )
+                              handleDoubleClickWord(
+                                e,
+                                () =>
+                                  resolveWordAnnotation(
+                                    piece.core,
+                                    fullParagraphText,
+                                    piece.charOffset
+                                  ),
+                                {
+                                  rawWord: piece.core,
+                                  paragraphText: fullParagraphText,
+                                  charOffset: piece.charOffset,
+                                }
                               )
                             }
                             className="cursor-pointer"

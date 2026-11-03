@@ -1,9 +1,45 @@
 import type { Metadata } from 'next';
 import React from 'react';
+import {
+  Fraunces,
+  JetBrains_Mono,
+  Plus_Jakarta_Sans,
+  Source_Serif_4,
+} from 'next/font/google';
 import '@/src/index.css';
 import { buildCanonicalUrl, resolveCanonicalSiteUrl } from '@/src/utils/seoUrl';
 import { FluentLoopAnalytics } from '@/src/components/FluentLoopAnalytics';
 import { resolveGaMeasurementId } from '@/src/utils/analytics';
+
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-fraunces',
+  weight: ['400', '600', '700'],
+  style: ['normal', 'italic'],
+});
+
+const sourceSerif = Source_Serif_4({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-source-serif',
+  weight: ['400', '600'],
+  style: ['normal', 'italic'],
+});
+
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-plus-jakarta',
+  weight: ['400', '500', '600', '700'],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-jetbrains-mono',
+  weight: ['400', '500', '600'],
+});
 
 const CANONICAL_BASE_URL = resolveCanonicalSiteUrl();
 const GA_MEASUREMENT_ID = resolveGaMeasurementId();
@@ -82,14 +118,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   };
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${fraunces.variable} ${sourceSerif.variable} ${plusJakarta.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..600;1,8..60,400..600&display=swap"
-          rel="stylesheet"
-        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(webAppSchema) }}

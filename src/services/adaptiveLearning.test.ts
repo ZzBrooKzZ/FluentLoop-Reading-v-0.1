@@ -374,11 +374,14 @@ test('conservative recommendation chooses lower safer level on contradictory or 
 
 test('server placement repository strips diagnostic answer keys, prevents duplicate submissions, and supports refresh recovery + user linking', async () => {
   const {
+    resetServerPlacementRepositoryForTests,
     startOrResumePlacementSessionOnServer,
     submitPlacementPassageOnServer,
     linkPlacementSessionToUserOnServer,
   } = await import('../server/placementRepository');
   const { getDiagnosticPassageById } = await import('../server/lessonRepository');
+
+  resetServerPlacementRepositoryForTests();
 
   // 1. Start session and verify answer keys are stripped from activePassage
   const started = startOrResumePlacementSessionOnServer({
